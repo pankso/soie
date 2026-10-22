@@ -300,6 +300,7 @@ static void relayout(void)
 	so.base_url = page.url;
 	so.fetch = page_fetch;
 	so.user_css = page.user_css;
+	so.request = net_request;	/* audio and video */
 	soie_style_document(page.doc, &so);
 	soie_layout_document(page.doc, win_w, win_h - BAR);
 	layout_done();
@@ -770,6 +771,10 @@ static void click_page(int x, int y, int mods)
 		fire(n, "mousedown", (float)x, cy, NULL, mods);
 		fire(n, "mouseup", (float)x, cy, NULL, mods);
 		if (fire(n, "click", (float)x, cy, NULL, mods) || pending_nav)
+			return;
+		/* play, pause, seek */
+		if (((a = ancestor(n, "video")) || (a = ancestor(n, "audio"))) &&
+		    soie_media_click(a, (float)x, (float)(y - BAR + page.scroll)))
 			return;
 	}
 	if (is_text_control(n)) {
@@ -1251,8 +1256,13 @@ int main(int argc, char **argv)
 		while (!XPending(dpy)) {
 			struct pollfd p;
 			int t = page.doc ? soie_script_tick(page.doc) : -1;
+			int m = -1, repaint = 0;
 
-			if (after_scripts())
+			if (page.doc)
+				m = soie_media_tick(page.doc, &repaint);
+			if (m >= 0 && (t < 0 || m < t))
+				t = m;
+			if (after_scripts() || repaint)
 				redraw();
 			if (XPending(dpy))
 				break;

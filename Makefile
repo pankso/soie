@@ -163,9 +163,13 @@ check: tests/unit tests/html5lib tests/painttest tests/exttest $(EXTS)
 	./tests/html5lib tests/tree/*.dat tests/style/*.dat tests/layout/*.dat
 
 # Scripts: each tests/js page's console output against its .out file.
+# media-* pages need the media extension, played silently.
 check-js: tools/soie-render ext/script.so
 	@fail=0; for f in tests/js/*.html; do \
-		tools/soie-render -S -x ext/script.so -j $$f 2>&1 >/dev/null | \
+		x="-x ext/script.so"; \
+		case $$f in */media-*) [ -f ext/media.so ] || continue; \
+			x="$$x -x ext/media.so";; esac; \
+		SOIE_AUDIO=none tools/soie-render -S $$x -j $$f 2>&1 >/dev/null | \
 			cmp -s - $${f%.html}.out || { echo "FAIL $$f"; fail=1; }; \
 	done; [ $$fail = 0 ] && echo "js: all passed"
 

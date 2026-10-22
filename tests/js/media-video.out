@@ -1,0 +1,7 @@
+log: canPlayType maybe true
+log: before true 0 true 300 150
+log: play resolved
+log: ended true true true
+log: events durationchange,loadedmetadata,play,playing,seeked,seeking,timeupdate
+log: size 160 120 2.0 4
+log: box 160 120

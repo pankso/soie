@@ -2065,27 +2065,89 @@ html('HTMLDialogElement', ['dialog'], (B) => class extends B {
 	}
 });
 reflect(HTMLDialogElement, ['open'], 'bool');
+/* Media: the engine's players (SOIE_MEDIA_* operations) */
+const M_PLAY = 0, M_PAUSE = 1, M_SEEK = 3, M_VOLUME = 4, M_MUTE = 5;
 html('HTMLMediaElement', [], (B) => class extends B {
-	get paused() { return this._paused !== false; }
-	get currentTime() { return this._time || 0; }
-	set currentTime(v) { this._time = +v || 0; }
-	get duration() { return NaN; }
-	get readyState() { return 0; }
-	get ended() { return false; }
-	get volume() { return 1; }
-	set volume(v) {}
+	get _st() { return api.playerState(this); }
+	get paused() {
+		const s = this._st;
+		return !s || s.paused;
+	}
+	get ended() {
+		const s = this._st;
+		return !!(s && s.ended);
+	}
+	get currentTime() {
+		const s = this._st;
+		return s ? s.time : this._seekTo || 0;
+	}
+	set currentTime(v) {
+		this._seekTo = +v || 0;
+		if (api.playerState(this))
+			api.player(this, M_SEEK, this._seekTo);
+		addTimer(() => {
+			dispatch(this, new Event('seeking'));
+			dispatch(this, new Event('seeked'));
+		}, 0, [], false);
+	}
+	get duration() {
+		const s = this._st;
+		return s && s.duration > 0 ? s.duration : NaN;
+	}
+	get readyState() {
+		const s = this._st;
+		return s && (s.duration > 0 || s.width) ? 4 : 0;
+	}
+	get networkState() { return this._st ? 1 : 0; }
+	get videoWidth() {
+		const s = this._st;
+		return s ? s.width : 0;
+	}
+	get videoHeight() {
+		const s = this._st;
+		return s ? s.height : 0;
+	}
+	get volume() { return this._volume === undefined ? 1 : this._volume; }
+	set volume(v) {
+		this._volume = Math.min(1, Math.max(0, +v));
+		api.player(this, M_VOLUME, this._volume);
+		dispatch(this, new Event('volumechange'));
+	}
 	get muted() { return this.hasAttribute('muted'); }
-	set muted(v) { this.toggleAttribute('muted', !!v); }
-	get error() { return null; }
-	get buffered() { return { length: 0, start() { return 0; },
-		end() { return 0; } }; }
-	canPlayType() { return ''; }
+	set muted(v) {
+		this.toggleAttribute('muted', !!v);
+		api.player(this, M_MUTE, v ? 1 : 0);
+		dispatch(this, new Event('volumechange'));
+	}
+	get playbackRate() { return 1; }
+	set playbackRate(v) {}
+	get error() {
+		const s = this._st;
+		return s && s.error ? { code: 4, message: 'cannot play' } : null;
+	}
+	get buffered() {
+		const d = this.duration;
+		return { length: isNaN(d) ? 0 : 1, start: () => 0,
+			end: () => isNaN(d) ? 0 : d };
+	}
+	get seekable() { return this.buffered; }
+	get currentSrc() { return this.src; }
+	canPlayType(t) { return api.canPlay(String(t)) ? 'maybe' : ''; }
 	load() {}
 	play() {
-		return Promise.reject(new DOMException('no media support',
-			'NotSupportedError'));
+		if (!api.player(this, M_PLAY, 0))
+			return Promise.reject(new DOMException('cannot play',
+				'NotSupportedError'));
+		if (this._seekTo)
+			api.player(this, M_SEEK, this._seekTo);
+		this._seekTo = 0;
+		dispatch(this, new Event('play'));
+		return Promise.resolve();
 	}
-	pause() { this._paused = true; }
+	pause() {
+		api.player(this, M_PAUSE, 0);
+	}
+	fastSeek(t) { this.currentTime = t; }
 });
 reflect(HTMLMediaElement, ['src'], 'url');
 reflect(HTMLMediaElement, ['preload', 'crossOrigin']);

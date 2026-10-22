@@ -1,0 +1,18 @@
+<!DOCTYPE html>
+<video id=v src="../media/clip.webm"></video>
+<script>
+var log = (...a) => console.log(a.map(String).join(' '));
+var v = document.getElementById('v'), seen = new Set();
+for (const e of ['play', 'playing', 'loadedmetadata', 'durationchange', 'timeupdate', 'seeking', 'seeked'])
+  v.addEventListener(e, () => seen.add(e));
+v.addEventListener('ended', () => {
+  log('ended', v.ended, v.paused, v.currentTime > 1.9);
+  log('events', [...seen].sort().join());
+  log('size', v.videoWidth, v.videoHeight, v.duration.toFixed(1), v.readyState);
+  log('box', v.offsetWidth, v.offsetHeight);
+});
+log('canPlayType', v.canPlayType('video/webm'), v.canPlayType('application/x-mpegurl') === '');
+log('before', v.paused, v.readyState, isNaN(v.duration), v.offsetWidth, v.offsetHeight);
+v.play().then(() => log('play resolved'));
+setTimeout(() => { v.currentTime = 1.6; }, 300);
+</script>

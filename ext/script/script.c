@@ -917,6 +917,55 @@ static JSValue n_current(JSContext *js, JSValueConst this, int argc,
 	return wrap(c, soie_script_current(c->doc));
 }
 
+/* Audio and video elements */
+static JSValue n_player(JSContext *js, JSValueConst this, int argc,
+	JSValueConst *argv)
+{
+	int32_t op = 0;
+	double v = 0;
+	NODE(0, el);
+
+	(void)this;
+	if (argc > 1)
+		JS_ToInt32(js, &op, argv[1]);
+	if (argc > 2)
+		JS_ToFloat64(js, &v, argv[2]);
+	return JS_NewBool(js, soie_media_control(el, op, v) == 0);
+}
+
+static JSValue n_player_state(JSContext *js, JSValueConst this, int argc,
+	JSValueConst *argv)
+{
+	soie_media_state st;
+	JSValue o;
+	NODE(0, el);
+
+	(void)this;
+	if (soie_media_get_state(el, &st))
+		return JS_NULL;
+	o = JS_NewObject(js);
+	JS_SetPropertyStr(js, o, "duration", JS_NewFloat64(js, st.duration));
+	JS_SetPropertyStr(js, o, "time", JS_NewFloat64(js, st.time));
+	JS_SetPropertyStr(js, o, "paused", JS_NewBool(js, st.paused));
+	JS_SetPropertyStr(js, o, "ended", JS_NewBool(js, st.ended));
+	JS_SetPropertyStr(js, o, "width", JS_NewInt32(js, st.width));
+	JS_SetPropertyStr(js, o, "height", JS_NewInt32(js, st.height));
+	JS_SetPropertyStr(js, o, "error", JS_NewBool(js, st.error));
+	return o;
+}
+
+static JSValue n_can_play(JSContext *js, JSValueConst this, int argc,
+	JSValueConst *argv)
+{
+	int r;
+	STR(0, type);
+
+	(void)this;
+	r = soie_media_can_play(type);
+	JS_FreeCString(js, type);
+	return JS_NewBool(js, r);
+}
+
 /* Bytes from the kernel, for crypto.getRandomValues() */
 static JSValue n_random(JSContext *js, JSValueConst this, int argc,
 	JSValueConst *argv)
@@ -1009,6 +1058,9 @@ static const JSCFunctionListEntry natives[] = {
 	JS_CFUNC_DEF("now", 0, n_now),
 	JS_CFUNC_DEF("currentScript", 0, n_current),
 	JS_CFUNC_DEF("random", 1, n_random),
+	JS_CFUNC_DEF("player", 3, n_player),
+	JS_CFUNC_DEF("playerState", 1, n_player_state),
+	JS_CFUNC_DEF("canPlay", 1, n_can_play),
 	JS_CFUNC_DEF("mapModule", 2, n_map_module),
 };
 

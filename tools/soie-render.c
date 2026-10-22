@@ -166,7 +166,15 @@ static void run_scripts(soie_node *doc, const char *url, int ms)
 		return;
 	}
 	clock_gettime(CLOCK_MONOTONIC, &t0);
-	while ((d = soie_script_tick(doc)) >= 0) {
+	for (;;) {
+		int m, repaint;
+
+		d = soie_script_tick(doc);
+		m = soie_media_tick(doc, &repaint);
+		if (m >= 0 && (d < 0 || m < d))
+			d = m;
+		if (d < 0)
+			break;
 		clock_gettime(CLOCK_MONOTONIC, &t);
 		spent = (int)((t.tv_sec - t0.tv_sec) * 1000 +
 			(t.tv_nsec - t0.tv_nsec) / 1000000);
@@ -287,6 +295,7 @@ int main(int argc, char **argv)
 		soie_ext_document(doc, base);
 	if (scripts && root == doc) {
 		so.user_css = user_css = soie_ext_user_css(NULL, base);
+		so.request = request;	/* media players */
 		vp_w = so.width > 0 ? so.width : 1024;
 		vp_h = so.height > 0 ? so.height : 768;
 		soie_style_document(doc, &so);
