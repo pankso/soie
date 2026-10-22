@@ -61,6 +61,14 @@ reversed, edit the entry and say why; do not leave stale rules here.
   the tree is detached and becomes the caller's to free (or reinsert).
   An arena would be faster, but mutation from scripts needs
   individual frees.
+- Allocation failure aborts the process with a message, like glib.
+  Checking every malloc in a parser doubles its size for a case
+  Linux overcommit almost never reports; API functions therefore do
+  not return NULL for lack of memory.
+- The parser can leave nodes out of the tree (a `<body>` replaced by
+  a `<frameset>`, misnested markup in the adoption agency). It keeps
+  them in an orphan list and frees those still without a parent at
+  the end of the parse, so a parse never leaks.
 - Known element names point to a static atom table; only unknown
   names are allocated. The tree builder compares atom ids, not
   strings.
@@ -89,10 +97,15 @@ reversed, edit the entry and say why; do not leave stale rules here.
 ## Character encoding
 
 - The tokenizer only ever sees valid UTF-8 with normalized newlines.
-  A decode step in front of it does BOM sniffing, then a prescan of
-  the first 1024 bytes for `<meta charset>` / `http-equiv`, then
-  falls back to windows-1252. The host can force a charset (from the
-  HTTP `Content-Type` header).
+  A decode step in front of it does BOM sniffing, then the
+  transport charset given by the host (HTTP `Content-Type`), then a
+  prescan of the first 1024 bytes for `<meta charset>` /
+  `http-equiv`.
+- Without any declaration, a page whose first 64 KiB are valid UTF-8
+  is read as UTF-8, otherwise as windows-1252. The spec allows such
+  detection; random windows-1252 text with accents is almost never
+  valid UTF-8, and undeclared pages today (local files, sloppy
+  servers) are mostly UTF-8.
 - Built-in decoders: UTF-8, UTF-16LE/BE, windows-1252 (which also
   covers ISO-8859-1 and US-ASCII per the Encoding spec),
   ISO-8859-15, ISO-8859-2. Other labels fall back to windows-1252.
@@ -110,8 +123,16 @@ reversed, edit the entry and say why; do not leave stale rules here.
   by `make check-html5lib` into `tests/html5lib-tests/` and is not
   committed. `make check` only runs our own small corpus and needs
   no network.
-- `soie-render --dump` prints the DOM in the html5lib test format,
-  so any page can be compared with what a browser's parser gives.
+- `soie_node_dump()` (public, for hosts and tests) and
+  `soie-render -d` print the DOM in the html5lib test format, so any
+  page can be compared with another parser's output.
+- `tests/html5lib-known` lists the expected failures of that corpus
+  with the reason. Today: the four `<selectedcontent>` tests, which
+  need form state (option selectedness), not parsing.
+- No valgrind or ASan on the SliTaz toolchain: leaks are checked with
+  glibc `mtrace()` through an `LD_PRELOAD` shim, crashes with a random
+  tag-soup fuzzer under `MALLOC_CHECK_=3`. Both live outside the repo
+  for now.
 
 ## Build
 
