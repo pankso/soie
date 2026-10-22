@@ -486,6 +486,44 @@ reversed, edit the entry and say why; do not leave stale rules here.
   their console output; `soie-render -j` runs a page's scripts.
 - Cost: Wikipedia takes 0.3 s more CPU and 11 MB more with scripts.
 
+## Audio and video (phase 11)
+
+- The engine owns the `<video>`/`<audio>` side (`lib/player.c`):
+  when to open a player, painting its frames (object-fit, default
+  contain), drawing controls (play/pause, seek bar) for `controls`,
+  clicks on them, the element's intrinsic size once the video's is
+  known, and the media events to scripts (play, playing, pause,
+  timeupdate, ended, loadedmetadata...). The extension only plays:
+  open, play, pause, seek, volume, state, current frame.
+- `ext/media.so` uses FFmpeg (libavformat, libavcodec, libswscale,
+  libswresample), already packaged and able to read about anything,
+  and ALSA directly for sound: no PulseAudio needed, SliTaz's
+  default. One decoding thread per player, one sound thread; the
+  sound card's clock leads when there is sound, the system's
+  otherwise; the host's thread picks the frame due when it paints.
+- A player opens when the element is first played (click, script),
+  not when the page loads, and `autoplay` is ignored: a news page
+  full of muted videos stays a page on an old machine. A poster, or
+  a black box with a play button, shows meanwhile.
+- Bytes come through the host's request function (a new
+  `request` field in `soie_style_options`, called from the player's
+  thread) by ranges of 1 MB: a long video is never all in memory.
+  Servers without ranges give the whole file. So the browser's
+  networking and the cookie jar became thread-safe (TLS set up once
+  with pthread_once, the jar behind a mutex).
+- Frames are converted to RGBA and scaled down to 1280x720 at most:
+  four waiting frames and the one on screen cost under 20 MB.
+- Streaming playlists (HLS, DASH, what most video sites serve)
+  are refused: they need a segment loader and adaptive bitrate,
+  another extension's job. Progressive files (mp4, webm, ogg, mp3,
+  wav, flac...) play.
+- The host calls `soie_media_tick()` in its event loop: it says when
+  to repaint and fires the events. The browser repaints the page for
+  each new frame, which is simple and costs a full paint per frame;
+  painting only the video's rectangle would be cheaper.
+- `SOIE_AUDIO=none` plays without sound (tests, no sound card),
+  `SOIE_AUDIO=hw:0` picks an ALSA device.
+
 ## Character encoding
 
 - The tokenizer only ever sees valid UTF-8 with normalized newlines.

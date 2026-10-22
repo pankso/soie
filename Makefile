@@ -47,6 +47,11 @@ EXTS = ext/cookies.so ext/block.so
 ifeq ($(shell pkg-config --exists libwebp && echo y),y)
 EXTS += ext/webp.so
 endif
+# Audio and video: FFmpeg and ALSA.
+MEDIA_PKGS = libavformat libavcodec libswscale libswresample libavutil alsa
+ifeq ($(shell pkg-config --exists $(MEDIA_PKGS) && echo y),y)
+EXTS += ext/media.so
+endif
 # JavaScript: QuickJS sources (an unpacked release), built in.
 QUICKJS_SRC ?=
 ifneq ($(QUICKJS_SRC),)
@@ -85,6 +90,9 @@ ext/%.so: ext/%.c lib/libsoie.so.$(SOVERSION) $(HEADERS)
 		lib/libsoie.so.$(SOVERSION) $(EXT_LIBS)
 
 ext/cookies.so: EXT_LIBS = -lpthread
+ext/media.so: CPPFLAGS += $(shell pkg-config --cflags $(MEDIA_PKGS))
+ext/media.so: EXT_LIBS = $(shell pkg-config --libs $(MEDIA_PKGS)) -lpthread \
+	-lm
 ext/webp.so: CPPFLAGS += $(shell pkg-config --cflags libwebp)
 ext/webp.so: EXT_LIBS = $(shell pkg-config --libs libwebp)
 
