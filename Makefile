@@ -69,7 +69,7 @@ tests/csstest.o tests/cssvalue.o: CPPFLAGS += -Ilib
 # Our own corpus, no network needed.
 check: tests/unit tests/html5lib
 	./tests/unit
-	./tests/html5lib tests/tree/*.dat tests/style/*.dat
+	./tests/html5lib tests/tree/*.dat tests/style/*.dat tests/layout/*.dat
 
 # The html5lib tree construction corpus, fetched on demand.
 $(H5TESTS):

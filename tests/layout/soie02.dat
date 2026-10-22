@@ -1,0 +1,109 @@
+#data
+<!DOCTYPE html><body style="margin:0"><span>a<div>b</div>c</span>
+#errors
+#layout
+width=100
+#document
+| block <html> 0,0 100x60
+|   block <body> 0,0 100x60
+|     block anonymous 0,0 100x20
+|       line 0,0 100x20
+|         text "a" 0,2 8x16
+|         inline <span> 0,2 8x16
+|     block <div> 0,20 100x20
+|       line 0,20 100x20
+|         text "b" 0,22 8x16
+|     block anonymous 0,40 100x20
+|       line 0,40 100x20
+|         text "c" 0,42 8x16
+|         inline <span> 0,42 8x16
+
+#data
+<!DOCTYPE html><body style="margin:0"><ol start=3 style="margin:0;padding-left:30px"><li>x<li style="list-style-position:inside">y</ol>
+#errors
+#layout
+width=100
+#document
+| block <html> 0,0 100x40
+|   block <body> 0,0 100x40
+|     block <ol> 0,0 100x40
+|       block <li> 30,0 70x20
+|         line 30,0 70x20
+|           text "3. " 6,2 24x16
+|           text "x" 30,2 8x16
+|       block <li> 30,20 70x20
+|         line 30,20 70x20
+|           text "4. " 30,22 24x16
+|           inline ::marker 30,22 24x16
+|           text "y" 54,22 8x16
+
+#data
+<!DOCTYPE html><body style="margin:0"><p style="margin:0;white-space:pre-line">a   b
+c</p><p style="margin:0;white-space:nowrap">aaa bbb ccc</p><p style="margin:0;overflow-wrap:anywhere">abcdefghijkl</p>
+#errors
+#layout
+width=40
+#document
+| block <html> 0,0 40x120
+|   block <body> 0,0 40x120
+|     block <p> 0,0 40x40
+|       line 0,0 40x20
+|         text "a b" 0,2 24x16
+|       line 0,20 40x20
+|         text "c" 0,22 8x16
+|     block <p> 0,40 40x20
+|       line 0,40 40x20
+|         text "aaa bbb ccc" 0,42 88x16
+|     block <p> 0,60 40x60
+|       line 0,60 40x20
+|         text "abcde" 0,62 40x16
+|       line 0,80 40x20
+|         text "fghij" 0,82 40x16
+|       line 0,100 40x20
+|         text "kl" 0,102 16x16
+
+#data
+<!DOCTYPE html><style>p::before{content:"[" attr(id)}p::after{content:"]"}</style><body style="margin:0"><p id=k style="margin:0">t<span style="display:contents">u</span></p>
+#errors
+#layout
+width=100
+#document
+| block <html> 0,0 100x20
+|   block <body> 0,0 100x20
+|     block <p> 0,0 100x20
+|       line 0,0 100x20
+|         text "[k" 0,2 16x16
+|         inline ::before 0,2 16x16
+|         text "t" 16,2 8x16
+|         text "u" 24,2 8x16
+|         text "]" 32,2 8x16
+|         inline ::after 32,2 8x16
+
+#data
+<!DOCTYPE html><body style="margin:0"><div style="height:100px"><div style="height:50%"></div><p style="margin:10px 0"></p><img width=40 height=20 style="width:20px;display:block"></div>
+#errors
+#layout
+width=100
+#document
+| block <html> 0,0 100x100
+|   block <body> 0,0 100x100
+|     block <div> 0,0 100x100
+|       block <div> 0,0 100x50
+|       block <p> 0,60 100x0
+|       replaced <img> 0,60 20x20
+
+#data
+<!DOCTYPE html><body style="margin:0"><p style="margin:0">aa <img width=16 height=16 style="float:right"> bb cc dd</p>
+#errors
+#layout
+width=72
+#document
+| block <html> 0,0 72x40
+|   block <body> 0,0 72x40
+|     block <p> 0,0 72x40
+|       line 0,0 56x20
+|         text "aa " 0,2 24x16
+|         text "bb" 24,2 16x16
+|       line 0,20 72x20
+|         text "cc dd" 0,22 40x16
+|       replaced float <img> 56,0 16x16

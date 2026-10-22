@@ -17,6 +17,7 @@ static void usage(void)
 	      "  -s          scripting flag on (<noscript> as raw text)\n"
 	      "  -p PROPS    run the cascade, dump these computed properties\n"
 	      "              (comma separated, e.g. display,color)\n"
+	      "  -l          run cascade and layout, dump the box tree\n"
 	      "  -w WIDTH    viewport width (1024), -H HEIGHT (768)\n"
 	      "  -D          prefers-color-scheme: dark\n"
 	      "  -b URL      base URL (default: the file's file:// URL)\n"
@@ -91,6 +92,7 @@ int main(int argc, char **argv)
 	soie_html_options opts = { NULL, 0 };
 	soie_style_options so;
 	const char *context = NULL, *props = NULL, *base = NULL;
+	int layout = 0;
 	char cwd[4096], file_url[8192];
 	soie_node *doc, *root;
 	char *buf, *dump;
@@ -107,6 +109,8 @@ int main(int argc, char **argv)
 			context = argv[++i];
 		else if (!strcmp(argv[i], "-s"))
 			opts.scripting = so.scripting = 1;
+		else if (!strcmp(argv[i], "-l"))
+			layout = 1;
 		else if (!strcmp(argv[i], "-p") && i + 1 < argc)
 			props = argv[++i];
 		else if (!strcmp(argv[i], "-w") && i + 1 < argc)
@@ -134,7 +138,7 @@ int main(int argc, char **argv)
 		doc = soie_html_parse(buf, len, &opts);
 		root = doc;
 	}
-	if (props) {
+	if (props || layout) {
 		if (!base && strcmp(argv[i], "-")) {
 			if (argv[i][0] == '/')
 				snprintf(file_url, sizeof(file_url), "file://%s",
@@ -147,7 +151,12 @@ int main(int argc, char **argv)
 		so.base_url = base;
 		so.fetch = fetch;
 		soie_style_document(doc, &so);
-		dump = soie_node_dump_style(root, props, &len);
+		if (layout) {
+			soie_layout_document(doc, so.width, so.height);
+			dump = soie_layout_dump(doc, &len);
+		} else {
+			dump = soie_node_dump_style(root, props, &len);
+		}
 	} else {
 		dump = soie_node_dump(root, &len);
 	}

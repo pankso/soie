@@ -1,0 +1,102 @@
+#data
+<!DOCTYPE html><body style="margin:0"><div style="margin:10px 0"><p style="margin:20px 0">a</p></div><div style="margin-top:5px;padding-top:1px">b</div>
+#errors
+#layout
+width=100
+#document
+| block <html> 0,0 100x81
+|   block <body> 0,20 100x61
+|     block <div> 0,20 100x20
+|       block <p> 0,20 100x20
+|         line 0,20 100x20
+|           text "a" 0,22 8x16
+|     block <div> 0,60 100x21
+|       line 0,61 100x20
+|         text "b" 0,63 8x16
+
+#data
+<!DOCTYPE html><body style="margin:0"><div style="width:50px;margin:0 auto;padding:5px;border:2px solid"></div><div style="width:50%;box-sizing:border-box;padding:10px"></div><div style="max-width:30px;min-height:7px"></div>
+#errors
+#layout
+width=200
+#document
+| block <html> 0,0 200x41
+|   block <body> 0,0 200x41
+|     block <div> 68,0 64x14
+|     block <div> 0,14 100x20
+|     block <div> 0,34 30x7
+
+#data
+<!DOCTYPE html><body style="margin:0"><div style="float:left;width:60px;height:30px"></div><div style="float:right;width:40px;height:50px"></div><div style="overflow:hidden">ab</div><p style="margin:0;clear:left">c</p>
+#errors
+#layout
+width=200
+#document
+| block <html> 0,0 200x50
+|   block <body> 0,0 200x50
+|     block float <div> 0,0 60x30
+|     block float <div> 160,0 40x50
+|     block <div> 60,0 100x20
+|       line 60,0 100x20
+|         text "ab" 60,2 16x16
+|     block <p> 0,30 200x20
+|       line 0,30 160x20
+|         text "c" 0,32 8x16
+
+#data
+<!DOCTYPE html><body style="margin:0"><p style="margin:0;text-align:center">ab</p><p style="margin:0;text-align:right">ab</p><p style="margin:0;text-align:justify">aa bb cc dd</p><p style="margin:0;text-indent:16px">a<br>b</p>
+#errors
+#layout
+width=80
+#document
+| block <html> 0,0 80x120
+|   block <body> 0,0 80x120
+|     block <p> 0,0 80x20
+|       line 0,0 80x20
+|         text "ab" 32,2 16x16
+|     block <p> 0,20 80x20
+|       line 0,20 80x20
+|         text "ab" 64,22 16x16
+|     block <p> 0,40 80x40
+|       line 0,40 80x20
+|         text "aa bb cc" 0,42 80x16
+|       line 0,60 80x20
+|         text "dd" 0,62 16x16
+|     block <p> 0,80 80x40
+|       line 0,80 80x20
+|         text "a" 16,82 8x16
+|       line 0,100 80x20
+|         text "b" 0,102 8x16
+
+#data
+<!DOCTYPE html><body style="margin:0"><p style="margin:0;line-height:30px">x<span style="padding:2px;border:1px solid;vertical-align:10px">y</span>z</p>
+#errors
+#layout
+width=200
+#document
+| block <html> 0,0 200x40
+|   block <body> 0,0 200x40
+|     block <p> 0,0 200x40
+|       line 0,0 200x40
+|         text "x" 0,17 8x16
+|         text "y" 11,7 8x16
+|         inline <span> 8,4 14x22
+|         text "z" 22,17 8x16
+
+#data
+<!DOCTYPE html><body style="margin:0"><div style="position:relative;left:10px;top:5px;height:20px"><span style="position:absolute;top:0;right:0">ab</span></div><span style="display:inline-block;padding:1px">abc def</span>
+#errors
+#layout
+width=100
+#document
+| block <html> 0,0 100x42
+|   block <body> 0,0 100x42
+|     block <div> 10,5 100x20
+|       block abs <span> 94,5 16x20
+|         line 94,5 16x20
+|           text "ab" 94,7 16x16
+|     block anonymous 0,20 100x22
+|       line 0,20 100x22
+|         inline-block <span> 0,20 58x22
+|           line 1,21 56x20
+|             text "abc def" 1,23 56x16

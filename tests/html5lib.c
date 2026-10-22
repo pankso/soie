@@ -153,8 +153,17 @@ static int run_one(const char *file, int num, char *s, char *end,
 	}
 	{
 		char *props = section(s, end, "#properties");
+		char *lay = section(s, end, "#layout");
 
-		if (props) {
+		if (lay) {
+			int w = 800;
+
+			if (!strncmp(lay, "width=", 6))
+				w = atoi(lay + 6);
+			soie_style_document(doc, NULL);
+			soie_layout_document(doc, w, 600);
+			got = soie_layout_dump(doc, &got_len);
+		} else if (props) {
 			size_t n = section_len(props, end);
 			char *list = malloc(n + 1);
 
