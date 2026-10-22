@@ -148,6 +148,10 @@ struct styledb {
 	char **fontfaces;		/* @font-face blocks, for later */
 	int nfontfaces;
 	struct sval initial[NPROPS];
+	struct {
+		const struct style *parent, *style;
+	} *anon;			/* anonymous box styles, by parent */
+	int nanon;
 	const soie_style_options *opts;
 	const char *base;		/* document base URL */
 	const char *doc_charset;
@@ -299,6 +303,7 @@ void styledb_free(struct styledb *db)
 	free(db->fontfaces);
 	for (i = 0; i < NPROPS; i++)
 		sval_free(&db->initial[i]);
+	free(db->anon);
 	free(db);
 }
 
@@ -1964,6 +1969,44 @@ static void style_element(struct styledb *db, soie_node *el,
 	free(inl.custom);
 }
 
+/*
+ * Style of an anonymous block box: inherited properties from parent,
+ * initial values for the others, display: block.
+ */
+const struct style *anon_style(struct styledb *db, const struct style *parent)
+{
+	struct style s;
+	struct cctx c;
+	int i;
+
+	for (i = 0; i < db->nanon; i++)
+		if (db->anon[i].parent == parent)
+			return db->anon[i].style;
+	memset(&s, 0, sizeof(s));
+	s.vars = parent ? parent->vars : NULL;
+	memset(&c, 0, sizeof(c));
+	c.db = db;
+	c.parent = parent;
+	c.self = &s;
+	c.u = db->vp;
+	c.u.em = parent ? parent->v[P_FONT_SIZE].u.len.px : 16;
+	c.u.ex = c.u.ch = c.u.em / 2;
+	c.u.rem = 16;
+	for (i = 0; i < NPROPS; i++) {
+		if (props[i].inherited && parent)
+			s.v[i] = parent->v[i];
+		else
+			compute_value(i, &db->initial[i], &c, &s.v[i]);
+	}
+	s.v[P_DISPLAY].kw = (unsigned char)display_kw("block");
+	fixups(&s, parent, 0);
+	db->anon = xrealloc(db->anon, (size_t)(db->nanon + 1) *
+		sizeof(*db->anon));
+	db->anon[db->nanon].parent = parent;
+	db->anon[db->nanon].style = intern_style(db, &s);
+	return db->anon[db->nanon++].style;
+}
+
 /* Entry points */
 
 static void parse_initial(struct styledb *db)
@@ -2017,6 +2060,11 @@ int soie_style_document(soie_node *doc, const soie_style_options *opts)
 
 	if (doc->type != SOIE_DOCUMENT)
 		return -1;
+	if (doc->u.doc.layout) {
+		/* boxes point to the old styles */
+		layout_free(doc->u.doc.layout);
+		doc->u.doc.layout = NULL;
+	}
 	if (doc->u.doc.styles)
 		styledb_free(doc->u.doc.styles);
 	db = xmalloc(sizeof(*db));

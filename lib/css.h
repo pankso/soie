@@ -316,6 +316,7 @@ void serialize_value(int prop, const struct cval *v, struct buf *b);
 int has_var(const struct cv *v, int n);
 
 /* Interning (cascade.c) */
+const struct style *anon_style(struct styledb *db, const struct style *parent);
 const char *db_string(struct styledb *db, const char *s, size_t len);
 const struct color *db_color(struct styledb *db, const struct color *c);
 struct calc *db_calc(struct styledb *db, struct calc *k);

@@ -44,6 +44,7 @@ struct attr {
 
 struct style;
 struct styledb;
+struct layout;
 
 struct soie_node {
 	unsigned char type;
@@ -75,6 +76,7 @@ struct soie_node {
 			unsigned char quirks;
 			const char *charset;
 			struct styledb *styles;
+			struct layout *layout;
 		} doc;
 	} u;
 };
@@ -98,6 +100,7 @@ static inline int is_html(const struct soie_node *n, int tag)
 }
 
 void styledb_free(struct styledb *db);
+void layout_free(struct layout *l);
 
 /* Encoding: decode bytes to UTF-8 with normalized newlines. */
 const char *charset_sniff(const unsigned char *s, size_t len,

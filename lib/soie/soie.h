@@ -12,6 +12,7 @@
 #include "dom.h"
 #include "html.h"
 #include "style.h"
+#include "layout.h"
 
 /* Version of the library actually linked, "major.minor.patch". */
 const char *soie_version(void);
