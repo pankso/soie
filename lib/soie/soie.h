@@ -10,6 +10,7 @@
 #define SOIE_VERSION_PATCH 0
 
 #include "dom.h"
+#include "html.h"
 
 /* Version of the library actually linked, "major.minor.patch". */
 const char *soie_version(void);

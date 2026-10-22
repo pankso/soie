@@ -10,7 +10,11 @@ CFLAGS ?= -O2 -g
 CFLAGS += -std=c99 -Wall -Wextra -pedantic -fPIC
 CPPFLAGS += -Ilib
 
-LIB_OBJS = lib/dom.o lib/dump.o lib/encoding.o
+LIB_OBJS = lib/dom.o lib/dump.o lib/encoding.o lib/tokenizer.o \
+	lib/treebuilder.o
+HEADERS = lib/soie/soie.h lib/soie/dom.h lib/soie/html.h
+INTERNAL = lib/internal.h lib/parser.h lib/tags.h
+
 all: lib/libsoie.a lib/libsoie.so.$(SOVERSION)
 
 lib/libsoie.a: $(LIB_OBJS)
@@ -22,6 +26,7 @@ lib/libsoie.so.$(SOVERSION): $(LIB_OBJS)
 		-o $@ $(LIB_OBJS)
 
 $(LIB_OBJS): $(HEADERS) $(INTERNAL)
+lib/tokenizer.o: lib/entities.inc
 
 install: all
 	mkdir -p $(DESTDIR)$(PREFIX)/lib $(DESTDIR)$(PREFIX)/include/soie
