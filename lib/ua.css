@@ -125,6 +125,11 @@ button, input[type=button i], input[type=submit i], input[type=reset i] {
   background-color: ButtonFace; color: ButtonText;
   border: 2px outset ButtonBorder; padding: 1px 6px;
 }
+/* what browsers do: a button's or a select's size includes its border */
+button, select, input[type=button i], input[type=submit i],
+input[type=reset i], input[type=image i] {
+  box-sizing: border-box;
+}
 button { text-align: center; }
 textarea { white-space: pre-wrap; font-family: monospace; }
 fieldset {

@@ -414,6 +414,23 @@ void rel_offset(const struct box *b, float cbw, float *dx, float *dy)
 		*dx = *dy = 0;	/* sticky needs scrolling: static here */
 }
 
+/* Form controls, <audio> and <iframe> have a size, not a ratio: a
+ * button given a height keeps its width. */
+static int has_ratio(const struct box *b)
+{
+	const soie_node *n = b->node;
+	const char *t;
+
+	if (!n || n->ns != SOIE_NS_HTML)
+		return 1;
+	if (!strcmp(n->name, "input")) {
+		t = soie_element_get_attr(n, "type");
+		return t && ascii_ieq(t, "image");
+	}
+	return strcmp(n->name, "textarea") && strcmp(n->name, "select") &&
+		strcmp(n->name, "audio") && strcmp(n->name, "iframe");
+}
+
 /* Replaced elements: CSS 2 10.3.2 and 10.6.2 */
 static void replaced_size(struct box *b, float cbw, float cbh)
 {
@@ -425,9 +442,9 @@ static void replaced_size(struct box *b, float cbw, float cbh)
 		w = iw;
 		h = ih;
 	} else if (w < 0) {
-		w = ih > 0 ? h * iw / ih : iw;
+		w = ih > 0 && has_ratio(b) ? h * iw / ih : iw;
 	} else if (h < 0) {
-		h = iw > 0 ? w * ih / iw : ih;
+		h = iw > 0 && has_ratio(b) ? w * ih / iw : ih;
 	}
 	b->w = clamp_w(b, w, cbw);
 	b->h = clamp_h(b, h, cbh);

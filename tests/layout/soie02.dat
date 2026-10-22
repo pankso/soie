@@ -107,3 +107,14 @@ width=72
 |       line 0,20 72x20
 |         text "cc dd" 0,22 40x16
 |       replaced float <img> 56,0 16x16
+
+#data
+<!DOCTYPE html><body style="margin:0"><input type=submit value=Go style="height:40px;border:0;padding:0;font:16px sans-serif">
+#errors
+#layout
+width=100
+#document
+| block <html> 0,0 100x46
+|   block <body> 0,0 100x46
+|     line 0,0 100x46
+|       replaced <input> 0,0 16x40
