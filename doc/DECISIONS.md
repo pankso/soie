@@ -396,7 +396,7 @@ reversed, edit the entry and say why; do not leave stale rules here.
   the page is painted into, cursors, keyboard and mouse. Its toolbar
   (back, forward, reload, address) is itself a small HTML page laid
   out and painted by Soie, hit-tested like any page.
-- Networking (browser/net.c): HTTP/1.1 with Connection: close,
+- Networking (browser/net.c): HTTP/1.1 with persistent connections,
   redirects (10 at most; 303 and old 301/302 become GET), chunked
   bodies, gzip and deflate (zlib), 20 s timeouts, file:// URLs. TLS
   through GnuTLS with the system trust store, SNI, certificate and
@@ -419,8 +419,15 @@ reversed, edit the entry and say why; do not leave stale rules here.
   PNG: Wikipedia 12.2 s to 3.7, Le Monde 38 to 15, GitHub 44 to 6.7
   (most of it was its 84 ES modules, fetched one by one by the module
   loader before; now preloaded). Same memory without scripts.
-- Still HTTP/1.1 with a new connection per request: keep-alive would
-  save a TLS handshake per resource.
+- Connections stay open: responses are read exactly (Content-Length,
+  chunked, nothing for HEAD/204/304; otherwise until the server closes,
+  and that connection is not kept), and idle connections wait in a
+  pool of 16, by scheme, host and port, for 30 s. A pooled connection
+  the server has dropped meanwhile (readable while idle, or no
+  answer) is closed and the request goes once more on a new one.
+  Saving a TCP and TLS handshake per resource: Le Monde 9.7 to 3.8 s,
+  Wikipedia 2.4 to 1.7, GitHub 4.2 to 2.9 (without scripts); renders
+  identical.
 - Forms: text-like inputs, password, textarea, checkbox, radio,
   select (a click cycles the options), submit buttons and Enter;
   GET and POST in application/x-www-form-urlencoded. No file upload,

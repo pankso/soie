@@ -15,6 +15,7 @@
 #include <string.h>
 #include <strings.h>
 #include <pthread.h>
+#include <time.h>
 #include <unistd.h>
 #include <sys/socket.h>
 #include <gnutls/gnutls.h>
@@ -249,20 +250,6 @@ static void adds(struct response *r, const char *s)
 	add(r, s, strlen(s));
 }
 
-/* Read everything until the peer closes (headers and body raw). */
-static int read_all(struct conn *c, struct response *raw, size_t max)
-{
-	char buf[16384];
-	ssize_t k;
-
-	while ((k = conn_read(c, buf, sizeof(buf))) > 0) {
-		add(raw, buf, (size_t)k);
-		if (raw->len > max)
-			return -1;
-	}
-	return k < 0 && !raw->len ? -1 : 0;
-}
-
 static const char *header(const char *h, const char *name)
 {
 	size_t n = strlen(name);
@@ -284,6 +271,194 @@ static size_t header_len(const char *v)
 	while (n && (v[n - 1] == ' ' || v[n - 1] == '\t'))
 		n--;
 	return n;
+}
+
+/*
+ * Where a chunked body ends (just past its last CRLF), or 0 while it is
+ * incomplete; *pos keeps the parsing between calls.
+ */
+static size_t chunked_end(const char *s, size_t n, size_t *pos)
+{
+	size_t p = *pos, size;
+	const char *e;
+	char *num_end;
+
+	for (;;) {
+		e = memchr(s + p, '\n', n - p);
+		if (!e)
+			return 0;
+		size = strtoul(s + p, &num_end, 16);
+		if (num_end == s + p)
+			return (size_t)-1;	/* not a chunk size */
+		if (!size) {
+			/* trailers, then an empty line */
+			p = (size_t)(e - s) + 1;
+			for (;;) {
+				e = memchr(s + p, '\n', n - p);
+				if (!e)
+					return 0;
+				if (e == s + p || (e == s + p + 1 &&
+				    s[p] == '\r'))
+					return (size_t)(e - s) + 1;
+				p = (size_t)(e - s) + 1;
+			}
+		}
+		p = (size_t)(e - s) + 1;
+		if (n - p < size + 2)
+			return 0;
+		p += size + 2;		/* data and its CRLF */
+		*pos = p;
+	}
+}
+
+/*
+ * Read one response, headers and raw body, framed as HTTP/1.1 says:
+ * Content-Length, chunked, nothing (HEAD, 204, 304), or until the peer
+ * closes. *reuse: the connection can carry another request.
+ */
+static int read_response(struct conn *c, struct response *raw,
+	const char *method, int *reuse)
+{
+	char buf[16384];
+	const char *hend = NULL, *v;
+	size_t head = 0, want = 0, pos = 0, end;
+	ssize_t k;
+	int status = 0, mode = 0, http11;	/* 0 close, 1 length, 2 chunked */
+
+	*reuse = 0;
+	for (;;) {
+		if (!hend) {
+			hend = raw->len ? strstr(raw->body, "\r\n\r\n") : NULL;
+			if (hend) {
+				head = (size_t)(hend - raw->body) + 4;
+				if (sscanf(raw->body, "HTTP/%*s %d", &status) == 1 &&
+				    status >= 100 && status < 200) {
+					/* 100 Continue and friends: skip */
+					memmove(raw->body, raw->body + head,
+						raw->len - head + 1);
+					raw->len -= head;
+					hend = NULL;
+					continue;
+				}
+				http11 = !strncmp(raw->body, "HTTP/1.1", 8);
+				v = header(raw->body, "Connection");
+				*reuse = v ? !strncasecmp(v, "keep-alive", 10) :
+					http11;
+				if (!strcmp(method, "HEAD") || status == 204 ||
+				    status == 304) {
+					mode = 1;
+					want = 0;
+				} else if ((v = header(raw->body,
+					    "Transfer-Encoding")) &&
+					   !strncasecmp(v, "chunked", 7)) {
+					mode = 2;
+				} else if ((v = header(raw->body,
+					    "Content-Length"))) {
+					mode = 1;
+					want = strtoul(v, NULL, 10);
+				} else {
+					mode = 0;
+					*reuse = 0;
+				}
+			}
+		}
+		if (hend && mode == 1 && raw->len - head >= want) {
+			raw->len = head + want;	/* nothing more is ours */
+			raw->body[raw->len] = '\0';
+			return 0;
+		}
+		if (hend && mode == 2) {
+			end = chunked_end(raw->body + head, raw->len - head,
+				&pos);
+			if (end == (size_t)-1) {
+				*reuse = 0;
+				return 0;
+			}
+			if (end) {
+				raw->len = head + end;
+				raw->body[raw->len] = '\0';
+				return 0;
+			}
+		}
+		k = conn_read(c, buf, sizeof(buf));
+		if (k <= 0) {
+			/* the peer closed: fine when that frames the body */
+			*reuse = 0;
+			return raw->len && hend ? 0 : -1;
+		}
+		add(raw, buf, (size_t)k);
+		if (raw->len > (256u << 20)) {
+			*reuse = 0;
+			return -1;
+		}
+	}
+}
+
+/* Idle connections, kept for the next request to the same server */
+#define POOL 16
+#define POOL_IDLE 30		/* seconds */
+
+static struct {
+	char key[300];
+	struct conn c;
+	time_t since;
+} pool[POOL];
+static int npool;
+static pthread_mutex_t pool_lock = PTHREAD_MUTEX_INITIALIZER;
+
+static void conn_close(struct conn *c);
+
+/* A pooled connection to key, still open, or -1. */
+static int pool_take(const char *key, struct conn *c)
+{
+	struct pollfd p;
+	time_t now = time(NULL);
+	int i, found = -1;
+
+	pthread_mutex_lock(&pool_lock);
+	for (i = npool - 1; i >= 0; i--) {
+		if (now - pool[i].since > POOL_IDLE) {
+			conn_close(&pool[i].c);
+			pool[i] = pool[--npool];
+			continue;
+		}
+		if (found < 0 && !strcmp(pool[i].key, key))
+			found = i;
+	}
+	if (found >= 0) {
+		*c = pool[found].c;
+		pool[found] = pool[--npool];
+	}
+	pthread_mutex_unlock(&pool_lock);
+	if (found < 0)
+		return -1;
+	/* readable while idle: closed by the server, or garbage */
+	p.fd = c->fd;
+	p.events = POLLIN;
+	if (poll(&p, 1, 0) != 0) {
+		conn_close(c);
+		return -1;
+	}
+	return 0;
+}
+
+static void pool_put(const char *key, struct conn *c)
+{
+	int i, old = 0;
+
+	pthread_mutex_lock(&pool_lock);
+	if (npool == POOL) {
+		for (i = 1; i < npool; i++)
+			if (pool[i].since < pool[old].since)
+				old = i;
+		conn_close(&pool[old].c);
+		pool[old] = pool[--npool];
+	}
+	snprintf(pool[npool].key, sizeof(pool[npool].key), "%s", key);
+	pool[npool].c = *c;
+	pool[npool].since = time(NULL);
+	npool++;
+	pthread_mutex_unlock(&pool_lock);
 }
 
 static int dechunk(struct response *r, const char *s, size_t n)
@@ -442,8 +617,8 @@ static int request(const char *url, const soie_request *rq,
 	struct conn c = { -1, NULL };
 	struct response raw, req;
 	const char *body, *v, *fp = rq->first_party ? rq->first_party : url;
-	char *cookie, *hend;
-	int ret = -1;
+	char *cookie, *hend, key[300];
+	int ret = -1, reused, reuse = 0, tries;
 
 	*location = NULL;
 	if (parse_url(url, &u)) {
@@ -452,11 +627,7 @@ static int request(const char *url, const soie_request *rq,
 	}
 	memset(&raw, 0, sizeof(raw));
 	memset(&req, 0, sizeof(req));
-	c.fd = dial(u.host, u.port, r);
-	if (c.fd < 0)
-		goto out;
-	if (!strcmp(u.scheme, "https") && tls_start(&c, u.host, r))
-		goto out;
+	snprintf(key, sizeof(key), "%s://%s:%s", u.scheme, u.host, u.port);
 	{
 		char line[1024];
 
@@ -465,8 +636,7 @@ static int request(const char *url, const soie_request *rq,
 		adds(&req, u.path);
 		snprintf(line, sizeof(line), " HTTP/1.1\r\nHost: %s\r\n"
 			"User-Agent: Mozilla/5.0 (X11; Linux) Soie/0.1\r\n"
-			"Accept-Encoding: gzip, deflate\r\n"
-			"Connection: close\r\n", u.host);
+			"Accept-Encoding: gzip, deflate\r\n", u.host);
 		adds(&req, line);
 	}
 	if (!has_header(rq->headers, "Accept"))
@@ -493,11 +663,31 @@ static int request(const char *url, const soie_request *rq,
 	adds(&req, "\r\n");
 	if (body_in)
 		add(&req, body_in, body_len);
-	if (conn_write(&c, req.body, req.len)) {
-		set_error(r, "write failed");
-		goto out;
+	/* a pooled connection the server dropped gets one more try, on
+	 * a new connection */
+	for (tries = 0; tries < 2; tries++) {
+		reused = pool_take(key, &c) == 0;
+		if (!reused) {
+			c.fd = dial(u.host, u.port, r);
+			if (c.fd < 0)
+				goto out;
+			if (!strcmp(u.scheme, "https") &&
+			    tls_start(&c, u.host, r))
+				goto out;
+		}
+		raw.len = 0;
+		if (!conn_write(&c, req.body, req.len) &&
+		    !read_response(&c, &raw, method, &reuse) && raw.len)
+			break;
+		conn_close(&c);
+		c.fd = -1;
+		c.tls = NULL;
+		if (!reused) {
+			set_error(r, "no response");
+			goto out;
+		}
 	}
-	if (read_all(&c, &raw, 256 << 20) || !raw.len) {
+	if (tries == 2) {
 		set_error(r, "no response");
 		goto out;
 	}
@@ -546,6 +736,11 @@ static int request(const char *url, const soie_request *rq,
 		inflate_body(r);
 	ret = 0;
 out:
+	if (ret == 0 && reuse && c.fd >= 0) {
+		pool_put(key, &c);
+		c.fd = -1;
+		c.tls = NULL;
+	}
 	conn_close(&c);
 	free(raw.body);
 	free(req.body);
