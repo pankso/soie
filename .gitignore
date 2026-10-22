@@ -1,0 +1,7 @@
+*.o
+*.a
+*.so.*
+tools/soie-render
+tests/html5lib
+tests/unit
+tests/html5lib-tests/
