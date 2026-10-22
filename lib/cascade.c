@@ -2211,7 +2211,7 @@ static void save_options(struct styledb *db, const soie_style_options *o)
 		base = xstrndup(o->base_url, strlen(o->base_url));
 	if (o && o->user_css)
 		css = xstrndup(o->user_css, strlen(o->user_css));
-	/* o may be db->saved itself (soie_document_update) */
+	/* o may point into the previous db: copy the strings first */
 	free((char *)db->saved.base_url);
 	free((char *)db->saved.user_css);
 	if (o)
@@ -2373,7 +2373,18 @@ int soie_document_update(soie_node *doc)
 	if (doc->type != SOIE_DOCUMENT || !db)
 		return 0;
 	if (doc->u.doc.gen != doc->u.doc.styled_gen) {
-		soie_style_document(doc, &db->saved);
+		/* a copy: a new style sheet frees db, and db->saved with it */
+		soie_style_options o = db->saved;
+		char *base = o.base_url ? xstrndup(o.base_url,
+			strlen(o.base_url)) : NULL;
+		char *css = o.user_css ? xstrndup(o.user_css,
+			strlen(o.user_css)) : NULL;
+
+		o.base_url = base;
+		o.user_css = css;
+		soie_style_document(doc, &o);
+		free(base);
+		free(css);
 		done = 1;
 	}
 	if (doc->u.doc.lay_w && (done || !doc->u.doc.layout)) {

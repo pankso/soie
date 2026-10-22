@@ -347,6 +347,18 @@ static void test_script_api(void)
 	CHECK(!soie_element_rect(a, &x, &y, &w, &h) && w == 50);
 	CHECK(soie_media_matches(doc, "(max-width: 400px)") == 1);
 	CHECK(soie_media_matches(doc, "print") == 0);
+
+	/* a new style sheet: the update must keep the options it had */
+	{
+		soie_node *st = soie_element_new(doc, SOIE_NS_HTML, "style");
+		const char css[] = ".w{width:70px}";
+
+		soie_node_append(st, soie_text_new(doc, css, sizeof(css) - 1));
+		soie_node_append(soie_document_element(doc), st);
+	}
+	CHECK(soie_document_update(doc) == 1);
+	CHECK(!soie_element_rect(a, &x, &y, &w, &h) && w == 70);
+	CHECK(soie_media_matches(doc, "(max-width: 400px)") == 1);
 	soie_node_free(doc);
 }
 
