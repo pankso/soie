@@ -10,6 +10,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
+#include <poll.h>
+#include <time.h>
 #include <unistd.h>
 #include <png.h>
 #include <X11/Xlib.h>
@@ -79,6 +81,9 @@ static int caret;
 static int url_focus, url_caret;
 static int win_w = 1024, win_h = 768;
 static char status[4096];
+static int scripts = 1;		/* -s turns JavaScript off */
+static char *pending_nav;	/* a script's navigation, done after it */
+static int pending_replace;
 
 static Display *dpy;
 static Window win;
@@ -201,6 +206,88 @@ static soie_node *ancestor(soie_node *n, const char *tag)
 	return NULL;
 }
 
+/* Scripts */
+
+static void clamp_scroll(void);
+static void set_title(void);
+static void navigate_to(const char *href, int replace);
+
+static void js_navigate(void *data, const char *url, int replace)
+{
+	(void)data;
+	free(pending_nav);
+	pending_nav = strdup(url);
+	pending_replace = replace;
+}
+
+static void js_message(void *data, int kind, const char *text)
+{
+	(void)data;
+	if (kind == SOIE_MSG_ALERT) {
+		snprintf(status, sizeof(status), "%s", text);
+		fprintf(stderr, "alert: %s\n", text);
+	} else if (getenv("SOIE_DEBUG")) {
+		fprintf(stderr, "%s: %s\n", kind == SOIE_MSG_ERROR ? "error" :
+			kind == SOIE_MSG_WARN ? "warn" : "log", text);
+	}
+}
+
+static void js_viewport(void *data, int *w, int *h, float *sx, float *sy)
+{
+	(void)data;
+	*w = win_w;
+	*h = win_h - BAR;
+	*sx = 0;
+	*sy = (float)page.scroll;
+}
+
+static void js_scroll(void *data, float x, float y)
+{
+	(void)data;
+	(void)x;
+	page.scroll = (int)y;
+}
+
+static const soie_script_host js_host = { NULL, net_request, js_navigate,
+	js_message, js_viewport, js_scroll };
+
+/* Send a DOM event to the page; 1 when a script cancelled it. */
+static int fire(soie_node *target, const char *type, float x, float y,
+	const char *key, int mods)
+{
+	soie_event ev;
+
+	if (!page.doc)
+		return 0;
+	memset(&ev, 0, sizeof(ev));
+	ev.type = type;
+	ev.x = x;
+	ev.y = y;
+	ev.key = key;
+	ev.mods = mods;
+	return soie_script_event(page.doc, target, &ev);
+}
+
+static void layout_done(void);
+
+/* After scripts ran: their navigation, or their changes on screen. */
+static int after_scripts(void)
+{
+	if (pending_nav) {
+		char *u = pending_nav;
+
+		pending_nav = NULL;
+		navigate_to(u, pending_replace);
+		free(u);
+		return 1;
+	}
+	if (page.doc && soie_document_update(page.doc)) {
+		layout_done();
+		return 1;
+	}
+	return 0;
+}
+
 /* Layout and drawing */
 
 static void relayout(void)
@@ -215,8 +302,15 @@ static void relayout(void)
 	so.user_css = page.user_css;
 	soie_style_document(page.doc, &so);
 	soie_layout_document(page.doc, win_w, win_h - BAR);
+	layout_done();
+}
+
+static void layout_done(void)
+{
 	page.height = soie_layout_height(page.doc);
 	soie_set_focus(page.doc, focus, caret);
+	clamp_scroll();
+	set_title();
 }
 
 static void chrome_update(void)
@@ -332,11 +426,13 @@ static void scroll_to_fragment(void)
 	clamp_scroll();
 }
 
+/* push: 1 adds a history entry, 2 replaces the current one */
 static void load(const char *url, const char *post, int push)
 {
 	soie_request rq = { NULL, NULL, NULL, NULL, 0, NULL };
 	struct response r;
 	soie_html_options ho = { NULL, 0 };
+	int js = scripts && soie_ext_get(SOIE_EXT_SCRIPT, 0) != NULL;
 	char *html = NULL;
 	const char *src;
 	size_t len;
@@ -370,6 +466,7 @@ static void load(const char *url, const char *post, int push)
 	} else {
 		snprintf(page.url, sizeof(page.url), "%s", r.url);
 		ho.charset = *r.charset ? r.charset : NULL;
+		ho.scripting = js;
 		src = r.body ? r.body : "";
 		len = r.len;
 		if (!strncmp(r.type, "image/", 6)) {
@@ -406,7 +503,11 @@ static void load(const char *url, const char *post, int push)
 	free(page.user_css);
 	page.user_css = soie_ext_user_css(NULL, page.url);
 	soie_ext_document(page.doc, page.url);
-	if (push) {
+	if (push == 2 && hist.cur >= 0) {
+		free(hist.url[hist.cur]);
+		hist.url[hist.cur] = strdup(page.url);
+		hist.scroll[hist.cur] = 0;
+	} else if (push) {
 		int i;
 
 		for (i = hist.cur + 1; i < hist.n; i++)
@@ -423,6 +524,9 @@ static void load(const char *url, const char *post, int push)
 		hist.n = hist.cur + 1;
 	}
 	relayout();
+	if (js && strcmp(page.url, HOME) &&
+	    !soie_script_start(page.doc, page.url, &js_host))
+		after_scripts();
 	scroll_to_fragment();
 	if (!push && hist.cur >= 0 && hist.cur < hist.n)
 		page.scroll = hist.scroll[hist.cur];
@@ -450,11 +554,15 @@ static void go_history(int delta)
 
 static void navigate(const char *href)
 {
-	char *abs;
-
 	if (!href || !strncasecmp(href, "javascript:", 11))
 		return;
-	abs = soie_url_resolve(page.url, href);
+	navigate_to(href, 0);
+}
+
+static void navigate_to(const char *href, int replace)
+{
+	char *abs = soie_url_resolve(page.url, href);
+
 	/* same document, other fragment: just scroll */
 	{
 		const char *h = strchr(abs, '#');
@@ -474,7 +582,7 @@ static void navigate(const char *href)
 			return;
 		}
 	}
-	load(abs, NULL, 1);
+	load(abs, NULL, replace ? 2 : 1);
 	free(abs);
 }
 
@@ -582,11 +690,15 @@ static void collect(soie_node *n, soie_node *submitter, char **q, size_t *len)
 
 static void submit(soie_node *form, soie_node *submitter)
 {
-	const char *action = soie_element_get_attr(form, "action");
-	const char *method = soie_element_get_attr(form, "method");
-	char *q = calloc(1, 1), *abs, *url;
+	const char *action, *method;
+	char *q, *abs, *url;
 	size_t len = 0;
 
+	if (fire(form, "submit", 0, 0, NULL, 0) || pending_nav)
+		return;
+	action = soie_element_get_attr(form, "action");
+	method = soie_element_get_attr(form, "method");
+	q = calloc(1, 1);
 	collect(form, submitter, &q, &len);
 	abs = soie_url_resolve(page.url, action && *action ? action :
 		page.url);
@@ -625,26 +737,50 @@ static int is_text_control(soie_node *n)
 		!strcasecmp(t, "tel");
 }
 
-static void click_page(int x, int y)
+static void set_page_focus(soie_node *n, int c)
+{
+	soie_node *old = focus;
+
+	focus = n;
+	caret = c;
+	soie_set_focus(page.doc, focus, caret);
+	if (old != n) {
+		if (old)
+			fire(old, "blur", 0, 0, NULL, 0);
+		if (n)
+			fire(n, "focus", 0, 0, NULL, 0);
+	}
+}
+
+/* A control changed by the user: input and change events. */
+static void changed(soie_node *n)
+{
+	fire(n, "input", 0, 0, NULL, 0);
+	fire(n, "change", 0, 0, NULL, 0);
+}
+
+static void click_page(int x, int y, int mods)
 {
 	soie_node *n = soie_hit_test(page.doc, (float)x,
 		(float)(y - BAR + page.scroll)), *a, *form;
 	const char *t;
+	float cy = (float)(y - BAR);
 
-	focus = NULL;
-	if (!n) {
-		soie_set_focus(page.doc, NULL, 0);
-		return;
+	if (n) {
+		fire(n, "mousedown", (float)x, cy, NULL, mods);
+		fire(n, "mouseup", (float)x, cy, NULL, mods);
+		if (fire(n, "click", (float)x, cy, NULL, mods) || pending_nav)
+			return;
 	}
 	if (is_text_control(n)) {
 		const char *v = soie_element_get_attr(n, "value");
 
-		focus = n;
-		caret = v ? (int)strlen(v) : 0;
-		soie_set_focus(page.doc, focus, caret);
+		set_page_focus(n, v ? (int)strlen(v) : 0);
 		return;
 	}
-	soie_set_focus(page.doc, NULL, 0);
+	set_page_focus(NULL, 0);
+	if (!n)
+		return;
 	form = ancestor(n, "form");
 	if (!strcmp(soie_element_name(n), "input")) {
 		t = soie_element_get_attr(n, "type");
@@ -653,6 +789,7 @@ static void click_page(int x, int y)
 				soie_element_remove_attr(n, "checked");
 			else
 				soie_element_set_attr(n, "checked", "");
+			changed(n);
 			relayout();
 			return;
 		}
@@ -676,6 +813,7 @@ static void click_page(int x, int y)
 				o = o && o != s ? soie_node_next_sibling(o) : NULL;
 			}
 			soie_element_set_attr(n, "checked", "");
+			changed(n);
 			relayout();
 			return;
 		}
@@ -706,6 +844,7 @@ static void click_page(int x, int y)
 				first) : NULL);
 		if (next)
 			soie_element_set_attr(next, "selected", "");
+		changed(n);
 		relayout();
 		return;
 	}
@@ -809,6 +948,41 @@ static int to_utf8(const char *in, int n, char *out)
 	return k;
 }
 
+/* The DOM key value of a key press. */
+static const char *key_name(KeySym ks, const char *txt, int n)
+{
+	static char buf[8];
+
+	switch (ks) {
+	case XK_Return: case XK_KP_Enter: return "Enter";
+	case XK_BackSpace: return "Backspace";
+	case XK_Tab: return "Tab";
+	case XK_Escape: return "Escape";
+	case XK_Delete: return "Delete";
+	case XK_Left: return "ArrowLeft";
+	case XK_Right: return "ArrowRight";
+	case XK_Up: return "ArrowUp";
+	case XK_Down: return "ArrowDown";
+	case XK_Home: return "Home";
+	case XK_End: return "End";
+	case XK_Prior: return "PageUp";
+	case XK_Next: return "PageDown";
+	case XK_Shift_L: case XK_Shift_R: return "Shift";
+	case XK_Control_L: case XK_Control_R: return "Control";
+	case XK_Alt_L: case XK_Alt_R: return "Alt";
+	}
+	if (ks >= XK_F1 && ks <= XK_F12) {
+		snprintf(buf, sizeof(buf), "F%d", (int)(ks - XK_F1 + 1));
+		return buf;
+	}
+	if (n > 0 && n < (int)sizeof(buf) && (unsigned char)txt[0] >= 0x20) {
+		memcpy(buf, txt, (size_t)n);
+		buf[n] = 0;
+		return buf;
+	}
+	return "Unidentified";
+}
+
 static void key(XKeyEvent *e)
 {
 	char raw[32], txt[64];
@@ -822,8 +996,7 @@ static void key(XKeyEvent *e)
 		exit(0);
 	if ((ctrl && ks == XK_l) || ks == XK_F6) {
 		url_focus = 1;
-		focus = NULL;
-		soie_set_focus(page.doc, NULL, 0);
+		set_page_focus(NULL, 0);
 		url_caret = (int)strlen(soie_element_get_attr(
 			find_id(chrome, "url"), "value"));
 		chrome_update();
@@ -840,6 +1013,15 @@ static void key(XKeyEvent *e)
 	if (alt && ks == XK_Right) {
 		go_history(1);
 		return;
+	}
+	if (!url_focus && page.doc) {
+		int mods = (e->state & ShiftMask ? SOIE_MOD_SHIFT : 0) |
+			(ctrl ? SOIE_MOD_CTRL : 0) | (alt ? SOIE_MOD_ALT : 0);
+		soie_node *t = focus ? focus : find_tag(page.doc, "body");
+
+		if (fire(t, "keydown", 0, 0, key_name(ks, txt, n), mods) ||
+		    pending_nav)
+			return;
 	}
 	if (url_focus) {
 		soie_node *u = find_id(chrome, "url");
@@ -874,12 +1056,15 @@ static void key(XKeyEvent *e)
 			}
 		}
 		if (ks == XK_Escape) {
-			focus = NULL;
-			soie_set_focus(page.doc, NULL, 0);
+			set_page_focus(NULL, 0);
 			return;
 		}
-		if (edit(focus, &caret, ks, txt, n))
+		if (edit(focus, &caret, ks, txt, n)) {
 			soie_set_focus(page.doc, focus, caret);
+			if (ks != XK_Left && ks != XK_Right && ks != XK_Home &&
+			    ks != XK_End)
+				fire(focus, "input", 0, 0, NULL, 0);
+		}
 		return;
 	}
 	switch (ks) {
@@ -951,6 +1136,31 @@ static void resize(int w, int h)
 	}
 }
 
+/* Offscreen: let scripts navigate and their timers run, 3 s at most. */
+static void settle_offscreen(void)
+{
+	struct timespec t0, t;
+	int d, spent, hops = 0;
+
+	clock_gettime(CLOCK_MONOTONIC, &t0);
+	for (;;) {
+		if (pending_nav && hops++ < 5) {
+			after_scripts();
+			continue;
+		}
+		d = page.doc ? soie_script_tick(page.doc) : -1;
+		after_scripts();
+		clock_gettime(CLOCK_MONOTONIC, &t);
+		spent = (int)((t.tv_sec - t0.tv_sec) * 1000 +
+			(t.tv_nsec - t0.tv_nsec) / 1000000);
+		if (d < 0 || spent + d > 3000)
+			break;
+		t.tv_sec = d / 1000;
+		t.tv_nsec = (long)(d % 1000) * 1000000;
+		nanosleep(&t, NULL);
+	}
+}
+
 /* Offscreen: render the page to a PNG, for tests and scripts. */
 static int render_png(const char *path)
 {
@@ -995,8 +1205,10 @@ int main(int argc, char **argv)
 			win_h = atoi(argv[++i]);
 		else if (!strcmp(argv[i], "-o") && i + 1 < argc)
 			out = argv[++i];
+		else if (!strcmp(argv[i], "-s"))
+			scripts = 0;
 		else if (argv[i][0] == '-') {
-			fprintf(stderr, "usage: soie [-w W] [-H H] "
+			fprintf(stderr, "usage: soie [-s] [-w W] [-H H] "
 				"[-o out.png] [URL]\n");
 			return 2;
 		} else
@@ -1012,6 +1224,7 @@ int main(int argc, char **argv)
 	if (out) {
 		chrome_update();
 		load(start, NULL, 1);
+		settle_offscreen();
 		return render_png(out);
 	}
 	dpy = XOpenDisplay(NULL);
@@ -1034,6 +1247,21 @@ int main(int argc, char **argv)
 	load(start, NULL, 1);
 	redraw();
 	for (;;) {
+		/* timers run while no X event waits */
+		while (!XPending(dpy)) {
+			struct pollfd p;
+			int t = page.doc ? soie_script_tick(page.doc) : -1;
+
+			if (after_scripts())
+				redraw();
+			if (XPending(dpy))
+				break;
+			p.fd = ConnectionNumber(dpy);
+			p.events = POLLIN;
+			if (pending_nav)
+				t = 0;
+			poll(&p, 1, t);
+		}
 		XNextEvent(dpy, &ev);
 		switch (ev.type) {
 		case Expose:
@@ -1064,9 +1292,14 @@ int main(int argc, char **argv)
 						url_focus = 0;
 						chrome_update();
 					}
-					click_page(ev.xbutton.x, ev.xbutton.y);
+					click_page(ev.xbutton.x, ev.xbutton.y,
+						(ev.xbutton.state & ShiftMask ?
+						 SOIE_MOD_SHIFT : 0) |
+						(ev.xbutton.state & ControlMask ?
+						 SOIE_MOD_CTRL : 0));
 				}
 			}
+			after_scripts();
 			clamp_scroll();
 			redraw();
 			break;
@@ -1077,6 +1310,7 @@ int main(int argc, char **argv)
 			break;
 		case KeyPress:
 			key(&ev.xkey);
+			after_scripts();
 			redraw();
 			break;
 		case ClientMessage:
