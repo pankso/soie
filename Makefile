@@ -96,6 +96,9 @@ ext/media.so: EXT_LIBS = $(shell pkg-config --libs $(MEDIA_PKGS)) -lpthread \
 ext/webp.so: CPPFLAGS += $(shell pkg-config --cflags libwebp)
 ext/webp.so: EXT_LIBS = $(shell pkg-config --libs libwebp)
 
+# 64-bit atomics (Atomics, SharedArrayBuffer) need libatomic on i486
+QJS_ATOMIC = $(shell echo 'int main(void){return 0;}' | \
+	$(CC) -x c - -latomic -o /dev/null 2>/dev/null && echo -latomic)
 QJS_OBJS = ext/script/qjs-quickjs.o ext/script/qjs-libregexp.o \
 	ext/script/qjs-libunicode.o ext/script/qjs-cutils.o ext/script/qjs-libbf.o
 ext/script/qjs-%.o: $(QUICKJS_SRC)/%.c
@@ -115,7 +118,7 @@ ext/script.so: ext/script/script.o ext/script/dom-js.o $(QJS_OBJS) \
 	lib/libsoie.so.$(SOVERSION)
 	$(CC) -shared $(LDFLAGS) -o $@ ext/script/script.o \
 		ext/script/dom-js.o $(QJS_OBJS) lib/libsoie.so.$(SOVERSION) \
-		-lm -lpthread
+		-lm -lpthread $(QJS_ATOMIC)
 
 tests/html5lib: tests/html5lib.o lib/libsoie.a
 	$(CC) $(LDFLAGS) -o $@ tests/html5lib.o lib/libsoie.a $(LIBS)
