@@ -223,4 +223,111 @@ int parse_anb(struct cur *c, int *a, int *b);
 #define L_UNITLESS0 4	/* plain 0 allowed (always, except in calc) */
 #define L_NUMBER 8	/* a bare number is accepted (line-height) */
 
+/* Properties (props.c) */
+
+enum {
+	K_KW, K_LEN, K_COLOR, K_NUM, K_INT, K_ALPHA, K_FSIZE, K_FWEIGHT,
+	K_LH, K_FAMILY, K_RAW, K_BWIDTH, K_LIST, K_DECO, K_DISPLAY
+};
+
+#define BORDER_STYLES "none|hidden|dotted|dashed|solid|double|groove|" \
+	"ridge|inset|outset"
+
+enum {
+#define PROP(id, name, inh, kind, flags, kw, init) P_##id,
+#include "props.h"
+#undef PROP
+	NPROPS
+};
+
+struct propdef {
+	const char *name;
+	unsigned char inherited, kind, flags;
+	const char *keywords, *initial;
+};
+
+extern const struct propdef props[NPROPS];
+
+/* Specified value of one longhand. */
+enum { SV_VALUE, SV_INHERIT, SV_INITIAL, SV_UNSET, SV_REVERT, SV_PENDING };
+
+struct sval {
+	short prop;
+	short shorthand;	/* SV_PENDING: shorthand id, or -1 */
+	unsigned char type;
+	unsigned char important;
+	unsigned char kw;	/* 1 + keyword index, 0 if a value */
+	unsigned char flag;
+	double num;
+	struct slen *len;
+	struct color color;
+	char *str;		/* raw text, family list, pending text */
+};
+
+struct svec {
+	struct sval *v;
+	int n, cap;
+};
+
+/* A computed value: 24 bytes, so that styles stay small. */
+struct cval {
+	unsigned char kw;	/* 1 + keyword index, 0 if a value */
+	unsigned char flag;	/* K_LH: 1 number, 2 length */
+	unsigned char pad[6];
+	union {
+		struct len len;
+		double num;
+		const struct color *color;
+		const char *str;
+	} u;
+};
+
+struct styledb;
+
+struct style {
+	struct style *chain;		/* intern table bucket */
+	unsigned hash;
+	const struct vars *vars;	/* custom properties */
+	struct cval v[NPROPS];
+};
+
+/* Everything a value needs to be computed. */
+struct cctx {
+	struct styledb *db;
+	const struct style *parent;	/* NULL for the root */
+	struct style *self;		/* values computed so far */
+	struct ucontext u;		/* em is the parent's until font-size */
+	int is_root;
+};
+
+int prop_lookup(const char *name);
+int shorthand_lookup(const char *name);
+int parse_declaration(const char *name, const struct cvlist *value,
+	int important, struct svec *out);
+int parse_shorthand_value(int sh, const struct cvlist *value,
+	struct svec *out);
+int parse_longhand_value(int prop, const struct cvlist *value,
+	struct sval *out);
+void svec_free(struct svec *v);
+void sval_free(struct sval *v);
+void compute_value(int prop, const struct sval *sv, struct cctx *c,
+	struct cval *out);
+void serialize_value(int prop, const struct cval *v, struct buf *b);
+int has_var(const struct cv *v, int n);
+
+/* Interning (cascade.c) */
+const char *db_string(struct styledb *db, const char *s, size_t len);
+const struct color *db_color(struct styledb *db, const struct color *c);
+struct calc *db_calc(struct styledb *db, struct calc *k);
+
+/* Media queries and @supports (media.c) */
+struct env {
+	float width, height;
+	int dark, print, scripting;
+};
+
+int media_match(const struct cvlist *l, int from, int to,
+	const struct env *e);
+int supports_match(const struct cvlist *l, int from, int to);
+
 #endif
