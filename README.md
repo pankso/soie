@@ -5,11 +5,11 @@ reference browser. No toolkit, no JavaScript in the core, built to
 render modern pages on old machines. See `doc/DECISIONS.md` for what
 Soie is and is not, and how extensions plug in.
 
-Status: phase 3 done. The HTML parser follows the WHATWG algorithm
+Status: phase 4 done. The HTML parser follows the WHATWG algorithm
 and passes the html5lib tree-construction tests; the CSS parser,
 selectors, cascade and computed values pass css-parsing-tests,
 including all of CSS Color 4; block and inline layout work, with a
-fixed-advance stub font until FreeType arrives (phase 4).
+FreeType/HarfBuzz text (phase 4) and tables.
 
 ## Build
 
@@ -19,7 +19,8 @@ fixed-advance stub font until FreeType arrives (phase 4).
     make check-css      # fetches css-parsing-tests, runs it (Python 3)
     make install PREFIX=/usr DESTDIR=...
 
-Only a C99 compiler, POSIX make and libm are needed for now.
+Needs a C99 compiler, GNU make, pkg-config, FreeType and (optional,
+`make HARFBUZZ=0`) HarfBuzz.
 
 ## Try it
 

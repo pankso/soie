@@ -101,6 +101,7 @@ static inline int is_html(const struct soie_node *n, int tag)
 
 void styledb_free(struct styledb *db);
 void layout_free(struct layout *l);
+void fonts_drop_document(const void *doc);
 
 /* Encoding: decode bytes to UTF-8 with normalized newlines. */
 const char *charset_sniff(const unsigned char *s, size_t len,

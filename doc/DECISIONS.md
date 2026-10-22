@@ -213,6 +213,32 @@ reversed, edit the entry and say why; do not leave stale rules here.
   Deeper content is kept as plain text flowing in the box at the
   limit, collected without recursion. Blink caps its DOM at 512 too.
 
+## Fonts and text (phase 4)
+
+- System fonts are found by scanning /usr/share/fonts,
+  /usr/local/share/fonts, ~/.fonts and ~/.local/share/fonts with
+  FreeType (no fontconfig: not in the dependency list, and SliTaz
+  ships few fonts). The scan is lazy and done once per process.
+- Matching follows CSS Fonts 4 loosely: family names case-insensitive,
+  generic families mapped to DejaVu, Liberation, Noto or the usual
+  Windows names, weight by the spec's nearest-weight rules, italic
+  over normal. No family found: serif, like browsers.
+- Per-character fallback: the font-family chain first, then any face
+  that has the glyph. Runs are split by face before shaping.
+- Measurement uses unhinted design units scaled to the font size, so
+  layout does not depend on the screen resolution. HarfBuzz shapes
+  when built in; without it, FreeType gives cmap glyphs, advances and
+  legacy kerning. Word widths are cached per style.
+- Metrics: OS/2 typo metrics when USE_TYPO_METRICS is set, else hhea,
+  as browsers do; normal line-height = ascent + descent + line gap.
+- Web fonts: @font-face fonts are fetched through the host callback
+  during the cascade and opened from memory. FreeType here has zlib
+  but no brotli, so WOFF2 (most web fonts today) is skipped and the
+  page falls back to system fonts. A small brotli decoder would fix
+  that; not done yet.
+- `soie_fonts_stub(1)` keeps the 0.5em stub font: the test runner and
+  `soie-render -S` use it, so layout tests do not depend on fonts.
+
 ## Character encoding
 
 - The tokenizer only ever sees valid UTF-8 with normalized newlines.

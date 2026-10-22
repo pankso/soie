@@ -520,6 +520,7 @@ static void node_free_one(soie_node *n)
 			layout_free(n->u.doc.layout);
 		if (n->u.doc.styles)
 			styledb_free(n->u.doc.styles);
+		fonts_drop_document(n);
 		break;
 	}
 	if (n->name_owned)

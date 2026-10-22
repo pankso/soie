@@ -216,6 +216,8 @@ int main(int argc, char **argv)
 {
 	int i, pass = 0, fail = 0, skip = 0, xfail = 0;
 
+	/* layout expectations are computed with the stub font */
+	soie_fonts_stub(1);
 	for (i = 1; i < argc; i++) {
 		char *buf, *s, *next, *end;
 		size_t len;

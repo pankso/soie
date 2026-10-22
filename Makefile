@@ -10,6 +10,15 @@ CFLAGS ?= -O2 -g
 CFLAGS += -std=c99 -Wall -Wextra -pedantic -fPIC
 CPPFLAGS += -Ilib
 
+# FreeType is needed; HarfBuzz is optional (make HARFBUZZ=0).
+HARFBUZZ ?= 1
+FONT_PKGS = freetype2
+ifeq ($(HARFBUZZ),1)
+FONT_PKGS += harfbuzz
+CPPFLAGS += -DSOIE_HARFBUZZ
+endif
+CPPFLAGS += $(shell pkg-config --cflags $(FONT_PKGS))
+
 H5TESTS = tests/html5lib-tests
 H5TESTS_URL = https://github.com/html5lib/html5lib-tests.git
 H5TESTS_REV = 9329e64694e7835d0dcff9811e22856ef6ad16f9
@@ -20,12 +29,12 @@ CSSTESTS_REV = 203ce36bffd617db7f118c551e32794561fb273d
 LIB_OBJS = lib/dom.o lib/dump.o lib/encoding.o lib/tokenizer.o \
 	lib/treebuilder.o lib/csssyntax.o lib/selector.o lib/values.o \
 	lib/props.o lib/media.o lib/cascade.o lib/url.o lib/ua-css.o \
-	lib/text.o lib/boxes.o lib/block.o lib/inline.o lib/table.o
-LIBS = -lm
+	lib/text.o lib/boxes.o lib/block.o lib/inline.o lib/table.o lib/font.o
+LIBS = $(shell pkg-config --libs $(FONT_PKGS)) -lm
 HEADERS = lib/soie/soie.h lib/soie/dom.h lib/soie/html.h lib/soie/style.h \
 	lib/soie/layout.h
 INTERNAL = lib/internal.h lib/parser.h lib/tags.h lib/css.h lib/props.h \
-	lib/layout.h
+	lib/layout.h lib/font.h
 
 all: lib/libsoie.a lib/libsoie.so.$(SOVERSION) tools/soie-render
 
@@ -65,6 +74,15 @@ tests/csstest.o tests/cssvalue.o: $(INTERNAL)
 
 tools/soie-render.o tests/html5lib.o tests/unit.o: $(HEADERS)
 tests/csstest.o tests/cssvalue.o: CPPFLAGS += -Ilib
+
+# FreeType is needed; HarfBuzz is optional (make HARFBUZZ=0).
+HARFBUZZ ?= 1
+FONT_PKGS = freetype2
+ifeq ($(HARFBUZZ),1)
+FONT_PKGS += harfbuzz
+CPPFLAGS += -DSOIE_HARFBUZZ
+endif
+CPPFLAGS += $(shell pkg-config --cflags $(FONT_PKGS))
 
 # Our own corpus, no network needed.
 check: tests/unit tests/html5lib

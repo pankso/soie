@@ -7,6 +7,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "layout.h"
+#include "font.h"
 
 /* Keyword test with a small cache: callers pass string literals. */
 int kw(const struct style *st, int prop, const char *name)
@@ -816,6 +817,8 @@ int soie_layout_document(soie_node *doc, int width, int height)
 	memset(l, 0, sizeof(*l));
 	l->width = width > 0 ? (float)width : 1024;
 	l->height = height > 0 ? (float)height : 768;
+	font_doc = doc;
+	font_cache_clear();
 	l->root = build_boxes(doc);
 	if (l->root)
 		layout_root(l);

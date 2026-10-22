@@ -7,6 +7,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "css.h"
+#include "font.h"
 
 /* Lines of lib/ua.css (C99 string literals are short). */
 extern const char *const ua_css[];
@@ -466,6 +467,7 @@ struct pctx {
 
 static void process_rules(struct styledb *db, struct crule **rules, int n,
 	const struct pctx *pc);
+static void load_fonts(struct styledb *db, const void *doc);
 
 /* Make url() values absolute against the sheet's URL. */
 static void resolve_urls(struct cv *v, int n, const char *base)
@@ -1969,6 +1971,91 @@ static void style_element(struct styledb *db, soie_node *el,
 	free(inl.custom);
 }
 
+/* @font-face (CSS Fonts 4 4): fetch the first usable src. */
+static void load_font_face(struct styledb *db, const void *doc,
+	const char *block)
+{
+	struct cvlist l;
+	struct crule tmp;
+	struct buf fam = { 0 };
+	int i, weight = 0, italic = 0;
+	const struct decl *src = NULL;
+
+	memset(&tmp, 0, sizeof(tmp));
+	css_component_values(block, strlen(block), &l);
+	css_parse_block(&l, &tmp, 1);
+	buf_add(&fam, "", 0);
+	for (i = 0; i < tmp.ndecls; i++) {
+		const struct decl *d = &tmp.decls[i];
+		const struct cv *v = d->value.n ? &d->value.v[0] : NULL;
+
+		if (ascii_ieq(d->name, "font-family") && v) {
+			if (v->type == CT_STRING)
+				buf_add(&fam, v->str, strlen(v->str));
+			else
+				css_serialize(&fam, d->value.v, d->value.n);
+		} else if (ascii_ieq(d->name, "src")) {
+			src = d;
+		} else if (ascii_ieq(d->name, "font-weight") && v) {
+			weight = v->type == CT_NUMBER ? (int)v->num :
+				cv_ident(v, "bold") ? 700 : 400;
+		} else if (ascii_ieq(d->name, "font-style") && v) {
+			italic = !cv_ident(v, "normal");
+		}
+	}
+	for (i = 0; src && fam.len && i < src->value.n; i++) {
+		const struct cv *v = &src->value.v[i], *f;
+		const char *url = NULL;
+		char *buf = NULL;
+		size_t len = 0;
+		int k;
+
+		if (v->type == CT_URL)
+			url = v->str;
+		else if (cv_func(v, "url") && v->kids.n &&
+			 v->kids.v[0].type == CT_STRING)
+			url = v->kids.v[0].str;
+		if (!url)
+			continue;
+		/* skip formats FreeType cannot read here (woff2: brotli) */
+		for (k = i + 1; k < src->value.n &&
+		     src->value.v[k].type != CT_COMMA; k++) {
+			f = &src->value.v[k];
+			if (cv_func(f, "format") && f->kids.n &&
+			    f->kids.v[0].str && (ascii_ieq(f->kids.v[0].str,
+				"woff2") || ascii_ieq(f->kids.v[0].str,
+				"embedded-opentype") ||
+				ascii_ieq(f->kids.v[0].str, "svg")))
+				url = NULL;
+		}
+		if (!url || !db->opts || !db->opts->fetch ||
+		    db->opts->fetch(db->opts->fetch_data, url, &buf, &len) ||
+		    !buf)
+			continue;
+		if (font_add_memory(doc, fam.s, (unsigned char *)buf, len,
+				    weight, italic))
+			break;
+	}
+	buf_free(&fam);
+	cvlist_free(&l);
+	for (i = 0; i < tmp.ndecls; i++) {
+		free(tmp.decls[i].name);
+		cvlist_free(&tmp.decls[i].value);
+	}
+	free(tmp.decls);
+	for (i = 0; i < tmp.nrules; i++)
+		crule_free(tmp.rules[i]);
+	free(tmp.rules);
+}
+
+static void load_fonts(struct styledb *db, const void *doc)
+{
+	int i;
+
+	for (i = 0; i < db->nfontfaces; i++)
+		load_font_face(db, doc, db->fontfaces[i]);
+}
+
 /*
  * Style of an anonymous block box: inherited properties from parent,
  * initial values for the others, display: block.
@@ -2112,6 +2199,8 @@ int soie_style_document(soie_node *doc, const soie_style_options *opts)
 	base = document_base(doc, opts ? opts->base_url : NULL);
 	db->base = base;
 	collect_sheets(db, doc, base);
+	fonts_drop_document(doc);
+	load_fonts(db, doc);
 	for (i = 0; i < 3; i++) {
 		next = 1;
 		layer_rank(&db->roots[i], &next);

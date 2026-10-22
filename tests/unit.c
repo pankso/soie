@@ -309,6 +309,7 @@ static void test_deep(void)
 
 int main(void)
 {
+	soie_fonts_stub(1);
 	test_dom();
 	test_parse_api();
 	test_charsets();

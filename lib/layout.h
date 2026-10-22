@@ -2,8 +2,8 @@
  * Layout internals: the box tree, line boxes and text measurement.
  * Never installed.
  */
-#ifndef SOIE_LAYOUT_H
-#define SOIE_LAYOUT_H
+#ifndef SOIE_INTERNAL_LAYOUT_H
+#define SOIE_INTERNAL_LAYOUT_H
 
 #include "css.h"
 

@@ -20,6 +20,7 @@ static void usage(void)
 	      "  -l          run cascade and layout, dump the box tree\n"
 	      "  -w WIDTH    viewport width (1024), -H HEIGHT (768)\n"
 	      "  -D          prefers-color-scheme: dark\n"
+	      "  -S          stub font (0.5em per character), as the tests\n"
 	      "  -b URL      base URL (default: the file's file:// URL)\n"
 	      "  -V          print the library version\n", stderr);
 	exit(2);
@@ -119,6 +120,8 @@ int main(int argc, char **argv)
 			so.height = atoi(argv[++i]);
 		else if (!strcmp(argv[i], "-D"))
 			so.dark = 1;
+		else if (!strcmp(argv[i], "-S"))
+			soie_fonts_stub(1);
 		else if (!strcmp(argv[i], "-b") && i + 1 < argc)
 			base = argv[++i];
 		else if (!strcmp(argv[i], "-V")) {

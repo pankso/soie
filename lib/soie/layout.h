@@ -24,4 +24,13 @@ float soie_layout_height(const soie_node *doc);
  */
 char *soie_layout_dump(const soie_node *doc, size_t *len);
 
+/*
+ * Fonts: system fonts are found under /usr/share/fonts and ~/.fonts;
+ * add_dir() adds a directory (returns the number of faces found).
+ * stub(1) replaces every font by a fixed-advance stub (0.5em per
+ * character), for layout tests that must not depend on the fonts.
+ */
+int soie_fonts_add_dir(const char *dir);
+void soie_fonts_stub(int on);
+
 #endif
