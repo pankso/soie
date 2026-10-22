@@ -384,6 +384,7 @@ int soie_element_set_attr(soie_node *n, const char *name, const char *value)
 		element_add_attr(n, SOIE_NS_NONE, name, value, strlen(value));
 	}
 	n->doc->u.doc.gen++;
+	style_changed(n, CH_ATTR);
 	return 0;
 }
 
@@ -400,6 +401,7 @@ int soie_element_remove_attr(soie_node *n, const char *name)
 	memmove(a, a + 1, (n->u.el.nattrs - i - 1) * sizeof(*a));
 	n->u.el.nattrs--;
 	n->doc->u.doc.gen++;
+	style_changed(n, CH_ATTR);
 	return 0;
 }
 
@@ -429,6 +431,8 @@ int soie_node_set_data(soie_node *n, const char *s, size_t len)
 	n->u.text.len = 0;
 	text_append(n, s, len);
 	n->doc->u.doc.gen++;
+	if (n->type == SOIE_TEXT)
+		style_changed(n, CH_INSERT);	/* :empty */
 	return 0;
 }
 
@@ -520,6 +524,7 @@ void node_detach(struct soie_node *n)
 
 	if (!p)
 		return;
+	style_changed(n, CH_REMOVE);
 	if (n->prev)
 		n->prev->next = n->next;
 	else
@@ -549,6 +554,7 @@ void node_insert(struct soie_node *parent, struct soie_node *child,
 	else
 		parent->last = child;
 	parent->doc->u.doc.gen++;
+	style_changed(child, CH_INSERT);
 }
 
 int soie_node_insert_before(soie_node *parent, soie_node *child,
@@ -590,6 +596,8 @@ static void node_free_one(soie_node *n)
 	soie_node *a;
 	unsigned i;
 
+	if (n->dirty)
+		style_forget(n);
 	switch (n->type) {
 	case SOIE_ELEMENT:
 		for (i = 0; i < n->u.el.nattrs; i++) {
@@ -618,6 +626,9 @@ static void node_free_one(soie_node *n)
 		fonts_drop_document(n);
 		if (n->u.doc.images)
 			images_free(n->u.doc.images);
+		free(n->u.doc.dirty);
+		n->u.doc.dirty = NULL;
+		n->u.doc.ndirty = 0;
 		/* every node left, attached or not; template contents
 		 * are on the list too */
 		for (a = n->u.doc.all; a; a = a->anext)

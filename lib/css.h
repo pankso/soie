@@ -167,6 +167,21 @@ void sellist_free(struct sellist *s);
 int selector_match(const struct sellist *l, int i, const soie_node *el);
 int sellist_match(const struct sellist *l, const soie_node *el);
 unsigned sellist_max_spec(const struct sellist *s, const soie_node *el);
+/*
+ * What a change can affect beyond the changed element's subtree. The
+ * low bits are dependencies of the selector's subject itself (restyle
+ * the sibling or ancestor alone, its subtree only if its style
+ * changed); the same bits << SF_DEEP come from compounds further left
+ * (`li:first-child a`): their whole subtree depends on them.
+ */
+#define SF_FORWARD 1	/* later siblings: +, ~, :first-child, :nth-child */
+#define SF_BACKWARD 2	/* earlier siblings: :last-child, :nth-last-* */
+#define SF_EMPTY 4	/* the parent: :empty */
+#define SF_HAS 8	/* ancestors: :has() */
+#define SF_HAS_SIB 16	/* their earlier siblings: :has(+ x), :has(~ x) */
+#define SF_DEEP 8	/* shift */
+int sellist_flags(const struct sellist *s);
+int sellist_has_anchor(const struct sellist *l, const soie_node *el);
 
 /* Values (values.c) */
 

@@ -616,6 +616,70 @@ struct sellist *selector_parse(const struct cvlist *l, int from, int to,
 	return parse_list(l, from, to, parent, forgiving, 0, 1);
 }
 
+/* Dependencies, for incremental restyling */
+
+static int compound_flags(const struct compound *c)
+{
+	const struct simple *s;
+	int f = 0, k, i;
+
+	for (k = 0; k < c->n; k++) {
+		s = &c->s[k];
+		if (s->type != SEL_PSEUDO)
+			continue;
+		switch (s->pseudo) {
+		case PC_FIRST_CHILD: case PC_FIRST_OF_TYPE:
+		case PC_NTH_CHILD: case PC_NTH_OF_TYPE:
+			f |= SF_FORWARD;
+			break;
+		case PC_LAST_CHILD: case PC_LAST_OF_TYPE:
+		case PC_NTH_LAST_CHILD: case PC_NTH_LAST_OF_TYPE:
+			f |= SF_BACKWARD;
+			break;
+		case PC_ONLY_CHILD: case PC_ONLY_OF_TYPE:
+			f |= SF_FORWARD | SF_BACKWARD;
+			break;
+		case PC_EMPTY:
+			f |= SF_EMPTY;
+			break;
+		case PC_HAS:
+			f |= SF_HAS;
+			for (i = 0; s->args && i < s->args->n; i++)
+				if (s->args->c[i].n && (s->args->c[i].c[0].comb ==
+				    COMB_NEXT || s->args->c[i].c[0].comb ==
+				    COMB_SUBSEQ))
+					f |= SF_HAS_SIB;
+			continue;	/* what is inside :has() is
+					 * reached through its ancestors */
+		}
+		/* :is(), :not(), :where(), :nth-child(of S): as here */
+		if (s->args)
+			f |= sellist_flags(s->args);
+	}
+	return f;
+}
+
+int sellist_flags(const struct sellist *l)
+{
+	const struct compound *c;
+	int f = 0, g, i, j;
+
+	for (i = 0; l && i < l->n; i++)
+		for (j = 0; j < l->c[i].n; j++) {
+			c = &l->c[i].c[j];
+			g = compound_flags(c);
+			if (c->comb == COMB_NEXT || c->comb == COMB_SUBSEQ)
+				g |= SF_FORWARD;
+			/* the subject is the last compound; further left,
+			 * everything is deep */
+			if (j == l->c[i].n - 1)
+				f |= g;
+			else
+				f |= (g & 0xff) << SF_DEEP | (g & ~0xff);
+		}
+	return f;
+}
+
 /* Matching */
 
 static soie_node *prev_el(const soie_node *n)
@@ -962,6 +1026,53 @@ static int match_compound(const struct compound *c, const soie_node *el,
 		}
 	}
 	return 1;
+}
+
+/*
+ * Incremental restyling: is el the anchor of a :has() left of a
+ * subject (`.wrap:has(.label) .input`)? The compound is matched alone
+ * and without its :has(), which can only say yes too often: a change
+ * below el may change what el's subtree and later siblings match.
+ */
+static int compound_has(const struct compound *c)
+{
+	int k;
+
+	for (k = 0; k < c->n; k++)
+		if (c->s[k].type == SEL_PSEUDO && c->s[k].pseudo == PC_HAS)
+			return 1;
+	return 0;
+}
+
+int sellist_has_anchor(const struct sellist *l, const soie_node *el)
+{
+	const struct compound *c;
+	struct compound one;
+	int i, j, k, ok;
+
+	for (i = 0; l && i < l->n; i++)
+		for (j = 0; j < l->c[i].n; j++) {
+			c = &l->c[i].c[j];
+			for (k = 0; k < c->n; k++)
+				if (c->s[k].args && c->s[k].pseudo != PC_HAS &&
+				    sellist_has_anchor(c->s[k].args, el))
+					return 1;
+			if (j == l->c[i].n - 1 || !compound_has(c))
+				continue;
+			ok = 1;
+			for (k = 0; k < c->n && ok; k++) {
+				if (c->s[k].type == SEL_PSEUDO &&
+				    c->s[k].pseudo == PC_HAS)
+					continue;
+				one.s = &c->s[k];
+				one.n = 1;
+				one.comb = COMB_NONE;
+				ok = match_compound(&one, el, l->parent);
+			}
+			if (ok)
+				return 1;
+		}
+	return 0;
 }
 
 /* Does the relation comb hold between el (right) and x (left)? */

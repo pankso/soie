@@ -160,6 +160,10 @@ struct styledb {
 	int quirks;
 	/* What the rules were built from, to reuse them on a restyle */
 	unsigned sig;
+	int sel_flags;		/* SF_*: what changes can reach */
+	struct sellist **anchors;	/* selectors with a deep :has() */
+	int nanchors, capanchors;
+	float rem;		/* the root's font size */
 	soie_style_options saved;	/* a copy, for soie_document_update */
 };
 
@@ -280,6 +284,7 @@ void styledb_free(struct styledb *db)
 	}
 	free((char *)db->saved.base_url);
 	free((char *)db->saved.user_css);
+	free(db->anchors);
 	for (i = 0; i < db->ncalcs; i++)
 		calc_release(db->calcs[i]);
 	free(db->calcs);
@@ -575,12 +580,25 @@ static void add_rule(struct styledb *db, struct srule *r)
 
 static void keep_sel(struct styledb *db, struct sellist *s)
 {
+	int f;
+
 	if (db->nsels == db->capsels) {
 		db->capsels = db->capsels ? db->capsels * 2 : 64;
 		db->sels = xrealloc(db->sels,
 			(size_t)db->capsels * sizeof(*db->sels));
 	}
 	db->sels[db->nsels++] = s;
+	f = sellist_flags(s);
+	db->sel_flags |= f;
+	if (f & (SF_HAS << SF_DEEP)) {
+		if (db->nanchors == db->capanchors) {
+			db->capanchors = db->capanchors ?
+				db->capanchors * 2 : 16;
+			db->anchors = xrealloc(db->anchors,
+				(size_t)db->capanchors * sizeof(*db->anchors));
+		}
+		db->anchors[db->nanchors++] = s;
+	}
 }
 
 static void load_sheet(struct styledb *db, const char *css, size_t len,
@@ -2141,6 +2159,200 @@ char *document_base(soie_node *doc, const char *base)
 	return base ? xstrndup(base, strlen(base)) : NULL;
 }
 
+/*
+ * Incremental restyling. Changes mark elements: SUBTREE when their
+ * whole subtree must be restyled (the changed element, siblings a
+ * deep selector looks at), SELF when only their own match may have
+ * changed (an ancestor for a subject :has(), a sibling for a subject
+ * :first-child or +): restyled alone, their subtree follows only when
+ * their style changed. Past MAX_DIRTY marks, or for a deep :has(),
+ * everything restyles.
+ */
+#define MAX_DIRTY 512
+enum { SELF = 1, SUBTREE = 2 };
+
+static int connected(const soie_node *n)
+{
+	while (n->parent)
+		n = n->parent;
+	return n->type == SOIE_DOCUMENT;
+}
+
+static void mark(soie_node *n, int how)
+{
+	soie_node *doc = n->doc;
+
+	if (n->type != SOIE_ELEMENT || n->dirty >= how ||
+	    doc->u.doc.restyle_all)
+		return;
+	if (!n->dirty) {
+		if (doc->u.doc.ndirty == MAX_DIRTY) {
+			doc->u.doc.restyle_all = 1;
+			return;
+		}
+		if (doc->u.doc.ndirty == doc->u.doc.capdirty) {
+			doc->u.doc.capdirty = doc->u.doc.capdirty ?
+				doc->u.doc.capdirty * 2 : 32;
+			doc->u.doc.dirty = xrealloc(doc->u.doc.dirty,
+				(size_t)doc->u.doc.capdirty *
+				sizeof(soie_node *));
+		}
+		doc->u.doc.dirty[doc->u.doc.ndirty++] = n;
+	}
+	n->dirty = (unsigned char)how;
+}
+
+/* Siblings of n in one direction, as the flags say. */
+static void mark_siblings(soie_node *n, int f, int bit, int next)
+{
+	int how = f & (bit << SF_DEEP) ? SUBTREE : f & bit ? SELF : 0;
+	soie_node *k;
+
+	if (!how)
+		return;
+	for (k = next ? n->next : n->prev; k; k = next ? k->next : k->prev)
+		mark(k, how);
+}
+
+void style_changed(soie_node *n, int kind)
+{
+	soie_node *doc = n->doc, *a, *k;
+	const struct styledb *db = doc->u.doc.styles;
+	int f, i;
+
+	if (!db || doc->u.doc.restyle_all || !n->parent || !connected(n))
+		return;
+	f = db->sel_flags;
+	if (f & (SF_HAS << SF_DEEP))
+		for (a = n->parent; a && a->type == SOIE_ELEMENT; a = a->parent)
+			for (i = 0; i < db->nanchors; i++)
+				if (sellist_has_anchor(db->anchors[i], a)) {
+					mark(a, SUBTREE);
+					for (k = a->next; k; k = k->next)
+						mark(k, SUBTREE);
+					break;
+				}
+	if (f & SF_HAS)
+		for (a = n->parent; a && a->type == SOIE_ELEMENT; a = a->parent) {
+			mark(a, SELF);
+			if (f & SF_HAS_SIB)
+				mark_siblings(a, SF_FORWARD, SF_FORWARD, 0);
+		}
+	if (kind != CH_ATTR && (f & (SF_EMPTY | SF_EMPTY << SF_DEEP)))
+		mark(n->parent, f & (SF_EMPTY << SF_DEEP) ? SUBTREE : SELF);
+	if (n->type != SOIE_ELEMENT)
+		return;		/* text: only :empty and :has() see it */
+	if (kind != CH_REMOVE)
+		mark(n, SUBTREE);
+	if (f & SF_HAS_SIB)
+		mark_siblings(n, SF_FORWARD, SF_FORWARD, 0);
+	mark_siblings(n, f, SF_FORWARD, 1);
+	mark_siblings(n, f, SF_BACKWARD, 0);
+}
+
+/* A node freed while marked */
+void style_forget(soie_node *n)
+{
+	soie_node *doc = n->doc;
+	int i;
+
+	for (i = 0; i < doc->u.doc.ndirty; i++)
+		if (doc->u.doc.dirty[i] == n) {
+			doc->u.doc.dirty[i] =
+				doc->u.doc.dirty[--doc->u.doc.ndirty];
+			break;
+		}
+	n->dirty = 0;
+}
+
+static void clear_marks(soie_node *doc)
+{
+	int i;
+
+	for (i = 0; i < doc->u.doc.ndirty; i++)
+		doc->u.doc.dirty[i]->dirty = 0;
+	doc->u.doc.ndirty = 0;
+	doc->u.doc.restyle_all = 0;
+}
+
+static void style_one(struct styledb *db, soie_node *n)
+{
+	const struct style *ps = n->parent && n->parent->type ==
+		SOIE_ELEMENT ? n->parent->u.el.style : NULL;
+
+	n->u.el.before = n->u.el.after = NULL;
+	style_element(db, n, ps, db->rem);
+	if (n->parent && n->parent->type == SOIE_DOCUMENT)
+		db->rem = n->u.el.style->v[P_FONT_SIZE].u.len.px;
+}
+
+/* Elements in tree order from top (top itself unless skip_top), each
+ * after its parent. */
+static void style_tree(struct styledb *db, soie_node *top, int skip_top)
+{
+	soie_node *n = top;
+
+	while (n) {
+		if (n->type == SOIE_ELEMENT && (n != top || !skip_top))
+			style_one(db, n);
+		if (n->first && n->type == SOIE_ELEMENT) {
+			n = n->first;
+			continue;
+		}
+		while (n && n != top && !n->next)
+			n = n->parent;
+		if (!n || n == top)
+			break;
+		n = n->next;
+	}
+}
+
+/* The marked elements, unless an ancestor's subtree covers them.
+ * Ancestors first: their subtree may cover more marks. */
+static void style_marked(struct styledb *db, soie_node *doc)
+{
+	const struct style *st, *before, *after;
+	soie_node *n, *a;
+	int i, depth, maxd = 0, d;
+
+	for (i = 0; i < doc->u.doc.ndirty; i++) {
+		for (d = 0, a = doc->u.doc.dirty[i]; a->parent; a = a->parent)
+			d++;
+		if (d > maxd)
+			maxd = d;
+	}
+	for (depth = 0; depth <= maxd; depth++)
+		for (i = 0; i < doc->u.doc.ndirty; i++) {
+			n = doc->u.doc.dirty[i];
+			if (!n->dirty || !connected(n))
+				continue;
+			for (d = 0, a = n; a->parent; a = a->parent)
+				d++;
+			if (d != depth)
+				continue;
+			for (a = n->parent; a && a->type == SOIE_ELEMENT;
+			     a = a->parent)
+				if (a->dirty == SUBTREE)
+					break;
+			if (a && a->type == SOIE_ELEMENT)
+				continue;
+			if (n->dirty == SELF) {
+				st = n->u.el.style;
+				before = n->u.el.before;
+				after = n->u.el.after;
+				style_one(db, n);
+				if (st == n->u.el.style &&
+				    before == n->u.el.before &&
+				    after == n->u.el.after)
+					continue;
+				n->dirty = SUBTREE;	/* covers the marks below */
+				style_tree(db, n, 1);
+			} else {
+				style_tree(db, n, 0);
+			}
+		}
+}
+
 static unsigned hash_str(const char *s, unsigned h)
 {
 	return s ? hash_bytes(s, strlen(s) + 1, h) : hash_bytes("", 0, h ^ 1);
@@ -2229,8 +2441,7 @@ int soie_style_document(soie_node *doc, const soie_style_options *opts)
 	soie_node *n;
 	char *base;
 	unsigned next, sig;
-	int i;
-	float rem = 16;
+	int i, reuse = 0;
 
 	if (doc->type != SOIE_DOCUMENT)
 		return -1;
@@ -2248,6 +2459,7 @@ int soie_style_document(soie_node *doc, const soie_style_options *opts)
 		db->base = base;
 		images_setup(doc, opts ? opts->fetch : NULL,
 			opts ? opts->fetch_data : NULL, base);
+		reuse = 1;
 		goto cascade;
 	}
 	if (db)
@@ -2308,28 +2520,18 @@ int soie_style_document(soie_node *doc, const soie_style_options *opts)
 	}
 
 cascade:
-	/* Every element, in tree order, after its parent. */
-	n = doc->first;
-	while (n) {
-		if (n->type == SOIE_ELEMENT) {
-			const struct style *ps = n->parent &&
-				n->parent->type == SOIE_ELEMENT ?
-				n->parent->u.el.style : NULL;
-
-			n->u.el.before = n->u.el.after = NULL;
-			style_element(db, n, ps, rem);
-			if (n->parent && n->parent->type == SOIE_DOCUMENT)
-				rem = n->u.el.style->v[P_FONT_SIZE].u.len.px;
-		}
-		if (n->first && n->type == SOIE_ELEMENT) {
-			n = n->first;
-			continue;
-		}
-		while (n && !n->next)
-			n = n->parent;
-		if (n)
-			n = n->next;
+	if (reuse && !doc->u.doc.restyle_all && doc->u.doc.ndirty &&
+	    !(soie_document_element(doc) &&
+	      soie_document_element(doc)->dirty == SUBTREE)) {
+		/* only what changed */
+		style_marked(db, doc);
+	} else if (!reuse || doc->u.doc.ndirty || doc->u.doc.restyle_all) {
+		/* every element, in tree order, after its parent */
+		db->rem = 16;
+		for (n = doc->first; n; n = n->next)
+			style_tree(db, n, 0);
 	}
+	clear_marks(doc);
 	save_options(db, opts);
 	doc->u.doc.styled_gen = doc->u.doc.gen;
 	db->opts = NULL;

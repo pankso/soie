@@ -57,6 +57,7 @@ struct soie_node {
 	 * (MathML annotation-xml with an HTML encoding). */
 	unsigned char html_ip;
 	unsigned char started;	/* <script>: already started */
+	unsigned char dirty;	/* its subtree needs restyling */
 	unsigned short tag;
 	struct soie_node *doc;
 	struct soie_node *parent, *first, *last, *prev, *next;
@@ -92,6 +93,9 @@ struct soie_node {
 			unsigned long gen;	/* bumped by every change */
 			/* what soie_document_update() redoes */
 			unsigned long styled_gen;
+			/* subtrees to restyle, or all of them */
+			struct soie_node **dirty;
+			int ndirty, capdirty, restyle_all;
 			struct script *script;	/* soie_script_start() */
 			struct media *media;	/* audio and video players */
 			int lay_w, lay_h;
@@ -121,6 +125,11 @@ void styledb_free(struct styledb *db);
 void layout_free(struct layout *l);
 void fonts_drop_document(const void *doc);
 void images_free(struct images *im);
+/* A change for incremental restyling (cascade.c) */
+enum { CH_ATTR, CH_INSERT, CH_REMOVE };
+void style_changed(soie_node *n, int kind);
+void style_forget(soie_node *n);
+
 /* The options of the last cascade (player.c) */
 const soie_style_options *style_saved_options(const soie_node *doc);
 /* Players (player.c) */

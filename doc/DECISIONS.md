@@ -230,8 +230,28 @@ reversed, edit the entry and say why; do not leave stale rules here.
   hash is the same as last time, the parsed rules are kept and only
   the cascade runs again. Scripts change the tree all the time and
   rarely the style sheets: GitHub's restyle went from 0.65 to 0.41 s.
-  The cascade itself still covers the whole document; incremental
-  restyling (only what changed) is future work.
+- Then only what changed is restyled. Every change marks elements:
+  the changed one's subtree; siblings when the sheets have sibling
+  selectors (`+`, `~`, `:first-child`, `:nth-*`, `:last-child`...);
+  the parent for `:empty`; the ancestors for `:has()`. When such a
+  selector part sits on the rule's subject (`li:first-child`,
+  `.card:has(img)`), the marked element is restyled alone and its
+  subtree only if its style changed: computed styles are interned, so
+  that is a pointer comparison. When it sits further left
+  (`li:first-child a`, `.wrap:has(.label) .input`), the subtree is
+  restyled; for such a `:has()`, only the ancestors that match its
+  compound (taken alone, without the `:has()`, which can only say yes
+  too often) and their later siblings. Past 512 marks, everything is
+  restyled. A class change on GitHub's home page restyles 46 elements
+  instead of 1823: 0.05 s for style and layout instead of 0.43.
+- Text changes only mark for `:empty` and `:has()`.
+- Checked by a differential test (outside the tree): random class,
+  style, insertion and removal changes on live pages (GitHub,
+  Wikipedia, Bootstrap, Tailwind, Le Monde), each incremental result
+  compared with a full restyle of the same document; no difference
+  in 375 changes.
+- Layout is still redone whole after any change (the box tree is
+  rebuilt): 0.02 to 0.03 s on those pages, not worth more yet.
 - `soie_document_update()` redoes cascade and layout with the last
   options and viewport (the library keeps a copy) when the document's
   change counter moved: the host calls it after scripts ran, and the
