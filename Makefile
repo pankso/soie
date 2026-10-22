@@ -18,7 +18,7 @@ CSSTESTS_URL = https://github.com/SimonSapin/css-parsing-tests.git
 CSSTESTS_REV = 203ce36bffd617db7f118c551e32794561fb273d
 
 LIB_OBJS = lib/dom.o lib/dump.o lib/encoding.o lib/tokenizer.o \
-	lib/treebuilder.o lib/csssyntax.o lib/values.o
+	lib/treebuilder.o lib/csssyntax.o lib/values.o lib/selector.o
 LIBS = -lm
 HEADERS = lib/soie/soie.h lib/soie/dom.h lib/soie/html.h
 INTERNAL = lib/internal.h lib/parser.h lib/tags.h lib/css.h
