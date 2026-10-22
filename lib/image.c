@@ -543,6 +543,15 @@ void paint_replaced(struct canvas *c, const struct box *b)
 
 	if (!b->node)
 		return;
+	if (b->node->ns == SOIE_NS_HTML && (b->node->tag == TAG_INPUT ||
+	    b->node->tag == TAG_TEXTAREA || b->node->tag == TAG_SELECT)) {
+		const char *t = soie_element_get_attr(b->node, "type");
+
+		if (b->node->tag != TAG_INPUT || !t || !ascii_ieq(t, "image")) {
+			paint_control(c, b);
+			return;
+		}
+	}
 	color_to_rgba(st->v[P_COLOR].u.color, cur);
 	if (b->node->ns == SOIE_NS_SVG) {
 		svg_render(c, b->node, x, y, w, h, cur);

@@ -292,6 +292,33 @@ reversed, edit the entry and say why; do not leave stale rules here.
   keeps each layer's position, size and repeat. Images are scaled
   bilinearly; object-fit is honored.
 
+## The browser (phase 7)
+
+- `browser/soie` uses Xlib directly: no toolkit, a window, an XImage
+  the page is painted into, cursors, keyboard and mouse. Its toolbar
+  (back, forward, reload, address) is itself a small HTML page laid
+  out and painted by Soie, hit-tested like any page.
+- Networking (browser/net.c): HTTP/1.1 with Connection: close,
+  redirects (10 at most; 303 and old 301/302 become GET), chunked
+  bodies, gzip and deflate (zlib), 20 s timeouts, file:// URLs. TLS
+  through GnuTLS with the system trust store, SNI, certificate and
+  host name verification. One request at a time and the UI waits:
+  simple first; parallel and progressive loading can come later.
+- Sub-resources (style sheets, images, fonts) go through the engine's
+  fetch callback and are cached per page.
+- Forms: text-like inputs, password, textarea, checkbox, radio,
+  select (a click cycles the options), submit buttons and Enter;
+  GET and POST in application/x-www-form-urlencoded. No file upload,
+  no multipart yet. The engine paints the controls (value, caret,
+  placeholder, checks) and keeps the focus (soie_set_focus()).
+- History: a list of URLs and scroll positions; same-document
+  fragments scroll without reloading.
+- `soie -o page.png URL` loads and renders without a display: the
+  network and the engine can be tested headless.
+- The engine gained soie_hit_test(), soie_element_rect() and
+  soie_set_focus() for this. No cookies and no JavaScript: phase 9
+  and 10 extensions.
+
 ## Character encoding
 
 - The tokenizer only ever sees valid UTF-8 with normalized newlines.

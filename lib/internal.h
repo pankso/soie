@@ -79,6 +79,8 @@ struct soie_node {
 			struct styledb *styles;
 			struct layout *layout;
 			struct images *images;
+			struct soie_node *focus;	/* form control */
+			int caret;
 		} doc;
 	} u;
 };

@@ -33,6 +33,22 @@ char *soie_layout_dump(const soie_node *doc, size_t *len);
 int soie_paint(soie_node *doc, unsigned char *rgba, int width, int height,
 	int stride, int sx, int sy);
 
+/* Deepest element under page point (x, y), or NULL. */
+soie_node *soie_hit_test(soie_node *doc, float x, float y);
+
+/*
+ * Border box of el in page coordinates; for an inline element, the
+ * union of its fragments. Returns -1 when el has no box.
+ */
+int soie_element_rect(const soie_node *el, float *x, float *y, float *w,
+	float *h);
+
+/*
+ * The focused form control (or NULL) and the caret, a byte offset in
+ * its value: soie_paint() draws the caret there.
+ */
+void soie_set_focus(soie_node *doc, soie_node *el, int caret);
+
 /*
  * Fonts: system fonts are found under /usr/share/fonts and ~/.fonts;
  * add_dir() adds a directory (returns the number of faces found).

@@ -22,5 +22,8 @@ void paint_replaced(struct canvas *c, const struct box *b);
 void paint_bg_image(struct canvas *c, const struct box *b, float x,
 	float y, float w, float h);
 void glyph_cache_clear(void);
+void paint_text(struct canvas *c, const struct style *st, const char *s,
+	size_t len, float x, float base);
+void paint_control(struct canvas *c, const struct box *b);
 
 #endif

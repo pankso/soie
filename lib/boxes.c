@@ -137,8 +137,26 @@ static void intrinsic(struct box *b, const soie_node *n)
 		b->iw = attr_num(n, "width", 0);
 		b->ih = attr_num(n, "height", 0);
 	} else if (n->ns == SOIE_NS_HTML && n->tag == TAG_INPUT) {
-		b->iw = attr_num(n, "size", 20) * em * 0.5f + 4;
-		b->ih = em * 1.25f + 2;
+		const char *t = soie_element_get_attr(n, "type");
+		struct fontm fm;
+
+		font_metrics(b->style, &fm);
+		if (t && (ascii_ieq(t, "checkbox") || ascii_ieq(t, "radio"))) {
+			b->iw = b->ih = 13;
+		} else if (t && (ascii_ieq(t, "submit") ||
+				 ascii_ieq(t, "reset") ||
+				 ascii_ieq(t, "button"))) {
+			const char *v = soie_element_get_attr(n, "value");
+
+			if (!v)
+				v = ascii_ieq(t, "reset") ? "Reset" :
+					ascii_ieq(t, "submit") ? "Submit" : "";
+			b->iw = text_width(b->style, v, strlen(v));
+			b->ih = fm.normal_lh;
+		} else {
+			b->iw = attr_num(n, "size", 20) * em * 0.5f;
+			b->ih = fm.normal_lh;
+		}
 	} else if (n->ns == SOIE_NS_HTML && n->tag == TAG_TEXTAREA) {
 		b->iw = attr_num(n, "cols", 20) * em * 0.5f + 4;
 		b->ih = attr_num(n, "rows", 2) * em * 1.25f + 2;
@@ -849,4 +867,132 @@ char *soie_layout_dump(const soie_node *doc, size_t *len)
 {
 	return layout_dump(doc->type == SOIE_DOCUMENT && doc->u.doc.layout ?
 		doc->u.doc.layout->root : NULL, len);
+}
+
+/* Hit testing and geometry */
+
+static soie_node *node_of(const struct box *b)
+{
+	for (; b; b = b->parent)
+		if (b->node)
+			return b->node;
+	return NULL;
+}
+
+static int inside(float x, float y, float bx, float by, float bw, float bh)
+{
+	return x >= bx && y >= by && x < bx + bw && y < by + bh;
+}
+
+static soie_node *hit(struct box *b, float x, float y)
+{
+	struct box *c, *kids[4096];
+	int i, n = 0;
+	soie_node *r;
+
+	for (c = b->first; c && n < 4096; c = c->next)
+		kids[n++] = c;
+	/* floats and positioned children are over the rest */
+	for (i = n - 1; i >= 0; i--)
+		if ((kids[i]->flags & (BF_FLOAT | BF_ABS)) &&
+		    (r = hit(kids[i], x, y)))
+			return r;
+	if (b->flags & BF_INLINE_KIDS) {
+		for (i = b->nfrags - 1; i >= 0; i--) {
+			struct frag *f = &b->frags[i];
+
+			if (f->kind == F_ATOMIC) {
+				if ((r = hit(f->box, x, y)))
+					return r;
+			} else if (inside(x, y, f->x, f->y, f->w, f->h)) {
+				return node_of(f->kind == F_TEXT ?
+					f->box->parent : f->box);
+			}
+		}
+	} else {
+		for (i = n - 1; i >= 0; i--)
+			if (!(kids[i]->flags & (BF_FLOAT | BF_ABS)) &&
+			    (r = hit(kids[i], x, y)))
+				return r;
+	}
+	if (b->type != B_INLINE && b->node &&
+	    inside(x, y, b->x - b->p[3] - b->b[3], b->y - b->p[0] - b->b[0],
+		   b->w + b->p[1] + b->p[3] + b->b[1] + b->b[3],
+		   b->h + b->p[0] + b->p[2] + b->b[0] + b->b[2]))
+		return b->node;
+	return NULL;
+}
+
+soie_node *soie_hit_test(soie_node *doc, float x, float y)
+{
+	if (doc->type != SOIE_DOCUMENT || !doc->u.doc.layout ||
+	    !doc->u.doc.layout->root)
+		return NULL;
+	return hit(doc->u.doc.layout->root, x, y);
+}
+
+static struct box *find_box(struct box *b, const soie_node *el)
+{
+	struct box *c, *r;
+
+	if (b->node == el)
+		return b;
+	for (c = b->first; c; c = c->next)
+		if ((r = find_box(c, el)))
+			return r;
+	return NULL;
+}
+
+int soie_element_rect(const soie_node *el, float *x, float *y, float *w,
+	float *h)
+{
+	const soie_node *doc = el->doc;
+	struct box *b, *p;
+	float x0 = 1e30f, y0 = 1e30f, x1 = -1e30f, y1 = -1e30f;
+	int i;
+
+	if (!doc->u.doc.layout || !doc->u.doc.layout->root ||
+	    !(b = find_box(doc->u.doc.layout->root, el)))
+		return -1;
+	if (b->type != B_INLINE) {
+		*x = b->x - b->p[3] - b->b[3];
+		*y = b->y - b->p[0] - b->b[0];
+		*w = b->w + b->p[1] + b->p[3] + b->b[1] + b->b[3];
+		*h = b->h + b->p[0] + b->p[2] + b->b[0] + b->b[2];
+		return 0;
+	}
+	for (p = b->parent; p && !(p->flags & BF_INLINE_KIDS); p = p->parent)
+		;
+	for (i = 0; p && i < p->nfrags; i++) {
+		struct frag *f = &p->frags[i];
+		const struct box *k;
+
+		for (k = f->box; k && k != b && k != p; k = k->parent)
+			;
+		if (k != b)
+			continue;
+		if (f->x < x0)
+			x0 = f->x;
+		if (f->y < y0)
+			y0 = f->y;
+		if (f->x + f->w > x1)
+			x1 = f->x + f->w;
+		if (f->y + f->h > y1)
+			y1 = f->y + f->h;
+	}
+	if (x1 < x0)
+		return -1;
+	*x = x0;
+	*y = y0;
+	*w = x1 - x0;
+	*h = y1 - y0;
+	return 0;
+}
+
+void soie_set_focus(soie_node *doc, soie_node *el, int caret)
+{
+	if (doc->type != SOIE_DOCUMENT)
+		return;
+	doc->u.doc.focus = el;
+	doc->u.doc.caret = caret;
 }

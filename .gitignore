@@ -11,3 +11,4 @@ tests/css-parsing-tests/
 lib/ua-css.c
 tests/painttest
 tests/paint/*.out.png
+browser/soie

@@ -555,6 +555,15 @@ int parse_color(struct cur *c, struct color *out)
 		ok = lab_func(&v->kids, out, CS_OKLCH);
 	else if (cv_func(v, "color"))
 		ok = color_func(&v->kids, out);
+	else if (cv_func(v, "light-dark")) {
+		/* CSS Color 5: the light one, the engine renders light */
+		struct cur in;
+		struct color dark;
+
+		cur_init(&in, &v->kids);
+		ok = parse_color(&in, out) && cur_next(&in) &&
+			parse_color(&in, &dark) && cur_end(&in);
+	}
 	if (ok)
 		cur_next(c);
 	return ok;

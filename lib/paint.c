@@ -281,6 +281,12 @@ static void draw_text(struct canvas *c, const struct style *st,
 	free(gs);
 }
 
+void paint_text(struct canvas *c, const struct style *st, const char *s,
+	size_t len, float x, float base)
+{
+	draw_text(c, st, s, len, x, base, 0);
+}
+
 /* Boxes */
 
 static void radii(const struct box *b, float w, float h, float *r)

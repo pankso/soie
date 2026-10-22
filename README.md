@@ -5,7 +5,8 @@ reference browser. No toolkit, no JavaScript in the core, built to
 render modern pages on old machines. See `doc/DECISIONS.md` for what
 Soie is and is not, and how extensions plug in.
 
-Status: phase 6 done (images: PNG, JPEG, GIF, SVG). The HTML parser follows the WHATWG algorithm
+Status: phase 7 done: `browser/soie` browses the web (HTTPS, forms,
+history), without JavaScript or cookies yet. The HTML parser follows the WHATWG algorithm
 and passes the html5lib tree-construction tests; the CSS parser,
 selectors, cascade and computed values pass css-parsing-tests,
 including all of CSS Color 4; block and inline layout work, with a
@@ -13,7 +14,7 @@ FreeType/HarfBuzz text (phase 4) and tables.
 
 ## Build
 
-    make                # libsoie.a, libsoie.so.0, tools/soie-render
+    make                # libsoie, tools/soie-render, browser/soie
     make check          # unit tests and the local corpus, no network
     make check-html5lib # fetches the html5lib corpus, runs it
     make check-css      # fetches css-parsing-tests, runs it (Python 3)
@@ -32,9 +33,14 @@ and (optional, `make HARFBUZZ=0`) HarfBuzz.
     tools/soie-render -l -w 800 page.html # box tree and geometry
     tools/soie-render -o page.png -a page.html # render the whole page
 
+The browser: `browser/soie [URL]`, or `browser/soie -o out.png URL`
+to render a page without a display. It also needs Xlib, GnuTLS and
+zlib.
+
 ## Layout
 
     lib/         libsoie (public headers in lib/soie/)
+    browser/     the browser: Xlib UI, HTTP and TLS
     tools/       soie-render, generators
     tests/       unit tests, html5lib test runner, local corpus
     doc/         DECISIONS.md
