@@ -64,6 +64,7 @@ static struct {
 	struct res *res;
 	int nres;
 	char base[4096];
+	char *user_css;		/* from the content extensions */
 } page;
 
 static struct {
@@ -90,6 +91,7 @@ static Cursor cur_arrow, cur_hand, cur_text;
 
 static int page_fetch(void *data, const char *url, char **buf, size_t *len)
 {
+	soie_request rq;
 	struct response r;
 	int i;
 
@@ -109,7 +111,10 @@ static int page_fetch(void *data, const char *url, char **buf, size_t *len)
 	page.res[page.nres].data = NULL;
 	page.res[page.nres].len = 0;
 	page.nres++;
-	if (net_fetch(url, NULL, &r) || r.status >= 400) {
+	memset(&rq, 0, sizeof(rq));
+	rq.url = url;
+	rq.first_party = page.url;
+	if (net_fetch(&rq, &r) || r.status >= 400) {
 		response_free(&r);
 		return -1;
 	}
@@ -207,6 +212,7 @@ static void relayout(void)
 	so.height = win_h - BAR;
 	so.base_url = page.url;
 	so.fetch = page_fetch;
+	so.user_css = page.user_css;
 	soie_style_document(page.doc, &so);
 	soie_layout_document(page.doc, win_w, win_h - BAR);
 	page.height = soie_layout_height(page.doc);
@@ -328,6 +334,7 @@ static void scroll_to_fragment(void)
 
 static void load(const char *url, const char *post, int push)
 {
+	soie_request rq = { NULL, NULL, NULL, NULL, 0, NULL };
 	struct response r;
 	soie_html_options ho = { NULL, 0 };
 	char *html = NULL;
@@ -342,10 +349,13 @@ static void load(const char *url, const char *post, int push)
 		soie_node_free(page.doc);
 	page.doc = NULL;
 	memset(&r, 0, sizeof(r));
+	rq.url = url;
+	rq.body = post;
+	rq.body_len = post ? strlen(post) : 0;
 	if (!strcmp(url, HOME)) {
 		snprintf(page.url, sizeof(page.url), "%s", HOME);
 		page.doc = soie_html_parse(home_html, strlen(home_html), NULL);
-	} else if (net_fetch(url, post, &r)) {
+	} else if (net_fetch(&rq, &r)) {
 		char *e = escape_html(r.error), *u = escape_html(url);
 		char buf[9000];
 
@@ -393,6 +403,9 @@ static void load(const char *url, const char *post, int push)
 		free(html);
 	}
 	response_free(&r);
+	free(page.user_css);
+	page.user_css = soie_ext_user_css(NULL, page.url);
+	soie_ext_document(page.doc, page.url);
 	if (push) {
 		int i;
 
@@ -988,6 +1001,11 @@ int main(int argc, char **argv)
 			return 2;
 		} else
 			start = argv[i];
+	}
+	{
+		const char *dir = getenv("SOIE_EXT_DIR");
+
+		soie_ext_load_dir(dir ? dir : SOIE_EXT_DIR);
 	}
 	chrome = soie_html_parse(chrome_html, strlen(chrome_html), NULL);
 	hist.cur = -1;

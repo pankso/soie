@@ -1,6 +1,6 @@
 /*
- * soie-render: render a page with libsoie, from the command line.
- * For now it parses and dumps the DOM tree.
+ * soie-render: render a page with libsoie, from the command line:
+ * DOM, computed styles, box tree or PNG.
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -8,6 +8,7 @@
 #include <unistd.h>
 #include <png.h>
 #include <soie/soie.h>
+#include <soie/ext.h>
 
 static void usage(void)
 {
@@ -24,6 +25,8 @@ static void usage(void)
 	      "  -D          prefers-color-scheme: dark\n"
 	      "  -S          stub font (0.5em per character), as the tests\n"
 	      "  -b URL      base URL (default: the file's file:// URL)\n"
+	      "  -x MODULE   load an extension module (.so), may repeat\n"
+	      "  -X          load the installed extensions\n"
 	      "  -V          print the library version\n", stderr);
 	exit(2);
 }
@@ -128,7 +131,7 @@ int main(int argc, char **argv)
 	const char *png = NULL;
 	char cwd[4096], file_url[8192];
 	soie_node *doc, *root;
-	char *buf, *dump;
+	char *buf, *dump, *user_css = NULL;
 	size_t len;
 	int i;
 
@@ -160,6 +163,14 @@ int main(int argc, char **argv)
 			soie_fonts_stub(1);
 		else if (!strcmp(argv[i], "-b") && i + 1 < argc)
 			base = argv[++i];
+		else if (!strcmp(argv[i], "-x") && i + 1 < argc) {
+			if (soie_ext_load(argv[++i])) {
+				fprintf(stderr, "soie-render: cannot load %s\n",
+					argv[i]);
+				return 1;
+			}
+		} else if (!strcmp(argv[i], "-X"))
+			soie_ext_load_dir(SOIE_EXT_DIR);
 		else if (!strcmp(argv[i], "-V")) {
 			printf("soie %s\n", soie_version());
 			return 0;
@@ -189,6 +200,9 @@ int main(int argc, char **argv)
 		}
 		so.base_url = base;
 		so.fetch = fetch;
+		if (root == doc)
+			soie_ext_document(doc, base);
+		so.user_css = user_css = soie_ext_user_css(NULL, base);
 		soie_style_document(doc, &so);
 		if (png) {
 			int w = so.width > 0 ? so.width : 1024;
@@ -222,5 +236,6 @@ int main(int argc, char **argv)
 		soie_node_free(root);
 	soie_node_free(doc);
 	free(buf);
+	free(user_css);
 	return 0;
 }

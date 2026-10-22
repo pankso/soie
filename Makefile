@@ -30,16 +30,22 @@ LIB_OBJS = lib/dom.o lib/dump.o lib/encoding.o lib/tokenizer.o \
 	lib/treebuilder.o lib/csssyntax.o lib/selector.o lib/values.o \
 	lib/props.o lib/media.o lib/cascade.o lib/url.o lib/ua-css.o \
 	lib/text.o lib/boxes.o lib/block.o lib/inline.o lib/table.o lib/font.o lib/paint.o \
-	lib/image.o lib/svg.o lib/forms.o lib/flex.o lib/grid.o
-LIBS = $(shell pkg-config --libs $(FONT_PKGS) libpng) -ljpeg -lm
+	lib/image.o lib/svg.o lib/forms.o lib/flex.o lib/grid.o lib/ext.o
+LIBS = $(shell pkg-config --libs $(FONT_PKGS) libpng) -ljpeg -lm -ldl
 PNG_LIBS =
 CPPFLAGS += $(shell pkg-config --cflags libpng)
 HEADERS = lib/soie/soie.h lib/soie/dom.h lib/soie/html.h lib/soie/style.h \
-	lib/soie/layout.h
+	lib/soie/layout.h lib/soie/ext.h
+EXTDIR = $(PREFIX)/lib/soie/ext
 INTERNAL = lib/internal.h lib/parser.h lib/tags.h lib/css.h lib/props.h \
 	lib/layout.h lib/font.h lib/paint.h lib/image.h
 
-all: lib/libsoie.a lib/libsoie.so.$(SOVERSION) tools/soie-render browser/soie
+# Extensions: those without dependencies always, the others when
+# their libraries are there (or list them: make EXTS="ext/cookies.so").
+EXTS =
+
+all: lib/libsoie.a lib/libsoie.so.$(SOVERSION) tools/soie-render browser/soie \
+	$(EXTS)
 
 lib/libsoie.a: $(LIB_OBJS)
 	rm -f $@
@@ -58,9 +64,16 @@ lib/ua-css.c: lib/ua.css
 	  sed 's/\\/\\\\/g; s/"/\\"/g; s/^/"/; s/$$/\\n",/' lib/ua.css; \
 	  echo '0 };'; } > $@
 
-tools/soie-render: tools/soie-render.o lib/libsoie.a
-	$(CC) $(LDFLAGS) -o $@ tools/soie-render.o lib/libsoie.a $(LIBS) \
-		$(PNG_LIBS)
+# Programs that load extensions link the shared library, which the
+# extensions link too; found next door in the tree or once installed.
+RPATH = -Wl,-rpath,'$$ORIGIN/../lib'
+tools/soie-render: tools/soie-render.o lib/libsoie.so.$(SOVERSION)
+	$(CC) $(LDFLAGS) $(RPATH) -o $@ tools/soie-render.o \
+		lib/libsoie.so.$(SOVERSION) $(LIBS)
+
+ext/%.so: ext/%.c lib/libsoie.so.$(SOVERSION) $(HEADERS)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -shared $(LDFLAGS) -o $@ $< \
+		lib/libsoie.so.$(SOVERSION) $(EXT_LIBS)
 
 tests/html5lib: tests/html5lib.o lib/libsoie.a
 	$(CC) $(LDFLAGS) -o $@ tests/html5lib.o lib/libsoie.a $(LIBS)
@@ -70,13 +83,19 @@ tests/unit: tests/unit.o lib/libsoie.a
 
 # The browser: Xlib, GnuTLS, zlib.
 BROWSER_PKGS = x11 gnutls zlib libpng
-browser/soie: browser/soie.o browser/net.o lib/libsoie.a
-	$(CC) $(LDFLAGS) -o $@ browser/soie.o browser/net.o lib/libsoie.a \
-		$(LIBS) $(shell pkg-config --libs $(BROWSER_PKGS))
+browser/soie: browser/soie.o browser/net.o lib/libsoie.so.$(SOVERSION)
+	$(CC) $(LDFLAGS) $(RPATH) -o $@ browser/soie.o browser/net.o \
+		lib/libsoie.so.$(SOVERSION) $(LIBS) \
+		$(shell pkg-config --libs $(BROWSER_PKGS))
 
 browser/soie.o browser/net.o: browser/net.h $(HEADERS)
 browser/soie.o browser/net.o: CPPFLAGS += \
-	$(shell pkg-config --cflags $(BROWSER_PKGS))
+	$(shell pkg-config --cflags $(BROWSER_PKGS)) -DSOIE_EXT_DIR='"$(EXTDIR)"'
+tools/soie-render.o: CPPFLAGS += -DSOIE_EXT_DIR='"$(EXTDIR)"'
+
+tests/exttest: tests/exttest.o lib/libsoie.so.$(SOVERSION)
+	$(CC) $(LDFLAGS) $(RPATH) -o $@ tests/exttest.o \
+		lib/libsoie.so.$(SOVERSION)
 
 tests/painttest: tests/painttest.o lib/libsoie.a
 	$(CC) $(LDFLAGS) -o $@ tests/painttest.o lib/libsoie.a $(LIBS) \
@@ -90,21 +109,14 @@ tests/cssvalue: tests/cssvalue.o lib/libsoie.a
 
 tests/csstest.o tests/cssvalue.o: $(INTERNAL)
 
-tools/soie-render.o tests/html5lib.o tests/unit.o tests/painttest.o: $(HEADERS)
+tools/soie-render.o tests/html5lib.o tests/unit.o tests/painttest.o \
+	tests/exttest.o: $(HEADERS)
 tests/csstest.o tests/cssvalue.o: CPPFLAGS += -Ilib
 
-# FreeType is needed; HarfBuzz is optional (make HARFBUZZ=0).
-HARFBUZZ ?= 1
-FONT_PKGS = freetype2
-ifeq ($(HARFBUZZ),1)
-FONT_PKGS += harfbuzz
-CPPFLAGS += -DSOIE_HARFBUZZ
-endif
-CPPFLAGS += $(shell pkg-config --cflags $(FONT_PKGS))
-
 # Our own corpus, no network needed.
-check: tests/unit tests/html5lib tests/painttest
+check: tests/unit tests/html5lib tests/painttest tests/exttest $(EXTS)
 	./tests/unit
+	./tests/exttest
 	./tests/painttest tests/paint/*.html
 	./tests/html5lib tests/tree/*.dat tests/style/*.dat tests/layout/*.dat
 
@@ -133,11 +145,13 @@ install: all
 	ln -sf libsoie.so.$(SOVERSION) $(DESTDIR)$(PREFIX)/lib/libsoie.so
 	cp $(HEADERS) $(DESTDIR)$(PREFIX)/include/soie/
 	cp tools/soie-render browser/soie $(DESTDIR)$(PREFIX)/bin/
+	mkdir -p $(DESTDIR)$(EXTDIR)
+	cp $(EXTS) $(DESTDIR)$(EXTDIR)/
 
 clean:
 	rm -f lib/*.o lib/libsoie.a lib/libsoie.so.* tools/*.o \
 		tools/soie-render browser/*.o browser/soie tests/*.o tests/html5lib tests/unit \
-		tests/csstest tests/cssvalue tests/painttest lib/ua-css.c \
-		tests/paint/*.out.png
+		tests/csstest tests/cssvalue tests/painttest tests/exttest lib/ua-css.c \
+		tests/paint/*.out.png ext/*.so
 
 .PHONY: all check check-html5lib check-css install clean

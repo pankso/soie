@@ -113,6 +113,8 @@ void styledb_free(struct styledb *db);
 void layout_free(struct layout *l);
 void fonts_drop_document(const void *doc);
 void images_free(struct images *im);
+unsigned char *ext_decode_image(const unsigned char *d, size_t len,
+	int *w, int *h);
 
 /* Encoding: decode bytes to UTF-8 with normalized newlines. */
 const char *charset_sniff(const unsigned char *s, size_t len,

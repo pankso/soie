@@ -12,3 +12,5 @@ lib/ua-css.c
 tests/painttest
 tests/paint/*.out.png
 browser/soie
+tests/exttest
+ext/*.so

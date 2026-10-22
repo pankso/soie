@@ -1,9 +1,11 @@
 /*
  * Networking for the browser: HTTP/1.1 over TCP or TLS (GnuTLS, system
  * trust store, SNI, certificate and host name checks), redirects,
- * chunked bodies, gzip and deflate, file:// URLs.
+ * chunked bodies, gzip and deflate, file:// URLs. Cookies, request
+ * filters and other URL schemes come from the extensions.
  */
 #define _POSIX_C_SOURCE 200809L
+#include <ctype.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <netdb.h>
@@ -236,6 +238,11 @@ static void add(struct response *r, const char *s, size_t n)
 	r->body[r->len] = '\0';
 }
 
+static void adds(struct response *r, const char *s)
+{
+	add(r, s, strlen(s));
+}
+
 /* Read everything until the peer closes (headers and body raw). */
 static int read_all(struct conn *c, struct response *raw, size_t max)
 {
@@ -368,16 +375,68 @@ static int fetch_file(const char *url, struct response *r)
 	return 0;
 }
 
+/* Whether a "Name: value\r\n" list has the header. */
+static int has_header(const char *h, const char *name)
+{
+	size_t n = strlen(name);
+
+	for (; h && *h; h = strchr(h, '\n') ? strchr(h, '\n') + 1 : NULL)
+		if (!strncasecmp(h, name, n) && h[n] == ':')
+			return 1;
+	return 0;
+}
+
+/* Keep the response headers, names in lower case, and hand each
+ * Set-Cookie to the jar. */
+static void keep_headers(const char *raw, const char *end, const char *url,
+	const char *first_party, struct response *r)
+{
+	struct response h;
+	const char *p = strchr(raw, '\n'), *e, *colon;
+	char *line;
+	int cookie;
+
+	memset(&h, 0, sizeof(h));
+	for (p = p ? p + 1 : end; p < end; p = e + 1) {
+		e = memchr(p, '\n', (size_t)(end - p));
+		if (!e)
+			e = end;
+		colon = memchr(p, ':', (size_t)(e - p));
+		if (!colon || *p == '\r')
+			continue;
+		cookie = colon - p == 10 && !strncasecmp(p, "set-cookie", 10);
+		grow(&h, (size_t)(e - p) + 2);
+		for (; p < colon; p++)
+			h.body[h.len++] = (char)tolower((unsigned char)*p);
+		add(&h, colon, (size_t)(e - colon));
+		if (h.body[h.len - 1] == '\r')
+			h.len--;
+		add(&h, "\r\n", 2);
+		if (cookie) {
+			line = strndup(colon + 1, header_len(colon + 1));
+			if (line) {
+				char *v = line + strspn(line, " \t");
+
+				soie_cookies_set(url, first_party ? first_party :
+					url, v, 0);
+				free(line);
+			}
+		}
+	}
+	free(r->headers);
+	r->headers = h.body;
+}
+
 /* One request; redirects are followed by net_fetch(). */
-static int request(const char *url, const char *post, struct response *r,
-	char **location)
+static int request(const char *url, const soie_request *rq,
+	const char *method, const char *body_in, size_t body_len,
+	struct response *r, char **location)
 {
 	struct url u;
 	struct conn c = { -1, NULL };
-	struct response raw;
-	char *req;
-	size_t rl;
-	const char *body, *v;
+	struct response raw, req;
+	const char *body, *v, *fp = rq->first_party ? rq->first_party : url;
+	char *cookie, *hend;
 	int ret = -1;
 
 	*location = NULL;
@@ -386,36 +445,53 @@ static int request(const char *url, const char *post, struct response *r,
 		return -1;
 	}
 	memset(&raw, 0, sizeof(raw));
+	memset(&req, 0, sizeof(req));
 	c.fd = dial(u.host, u.port, r);
 	if (c.fd < 0)
 		goto out;
 	if (!strcmp(u.scheme, "https") && tls_start(&c, u.host, r))
 		goto out;
-	rl = strlen(u.path) + strlen(u.host) + (post ? strlen(post) : 0) + 512;
-	req = malloc(rl);
-	if (!req)
-		abort();
-	snprintf(req, rl, "%s %s HTTP/1.1\r\nHost: %s\r\n"
-		"User-Agent: Mozilla/5.0 (X11; Linux) Soie/0.1\r\n"
-		"Accept: text/html,application/xhtml+xml,*/*;q=0.8\r\n"
-		"Accept-Encoding: gzip, deflate\r\nConnection: close\r\n",
-		post ? "POST" : "GET", u.path, u.host);
-	if (post) {
-		size_t a = strlen(req);
+	{
+		char line[1024];
 
-		snprintf(req + a, rl - a, "Content-Type: "
-			"application/x-www-form-urlencoded\r\n"
-			"Content-Length: %zu\r\n\r\n%s", strlen(post), post);
-	} else {
-		strcat(req, "\r\n");
+		snprintf(line, sizeof(line), "%s ", method);
+		adds(&req, line);
+		adds(&req, u.path);
+		snprintf(line, sizeof(line), " HTTP/1.1\r\nHost: %s\r\n"
+			"User-Agent: Mozilla/5.0 (X11; Linux) Soie/0.1\r\n"
+			"Accept-Encoding: gzip, deflate\r\n"
+			"Connection: close\r\n", u.host);
+		adds(&req, line);
 	}
-	if (conn_write(&c, req, strlen(req))) {
-		free(req);
+	if (!has_header(rq->headers, "Accept"))
+		adds(&req, "Accept: text/html,application/xhtml+xml,*/*;"
+			"q=0.8\r\n");
+	if ((cookie = soie_cookies_get(url, fp, 0))) {
+		adds(&req, "Cookie: ");
+		adds(&req, cookie);
+		adds(&req, "\r\n");
+		free(cookie);
+	}
+	if (rq->headers)
+		adds(&req, rq->headers);
+	if (body_in) {
+		char line[128];
+
+		if (!has_header(rq->headers, "Content-Type"))
+			adds(&req, "Content-Type: application/"
+				"x-www-form-urlencoded\r\n");
+		snprintf(line, sizeof(line), "Content-Length: %zu\r\n",
+			body_len);
+		adds(&req, line);
+	}
+	adds(&req, "\r\n");
+	if (body_in)
+		add(&req, body_in, body_len);
+	if (conn_write(&c, req.body, req.len)) {
 		set_error(r, "write failed");
 		goto out;
 	}
-	free(req);
-	if (read_all(&c, &raw, 64 << 20) || !raw.len) {
+	if (read_all(&c, &raw, 256 << 20) || !raw.len) {
 		set_error(r, "no response");
 		goto out;
 	}
@@ -423,8 +499,10 @@ static int request(const char *url, const char *post, struct response *r,
 		set_error(r, "not HTTP");
 		goto out;
 	}
-	body = strstr(raw.body, "\r\n\r\n");
-	body = body ? body + 4 : raw.body + raw.len;
+	hend = strstr(raw.body, "\r\n\r\n");
+	body = hend ? hend + 4 : raw.body + raw.len;
+	keep_headers(raw.body, hend ? hend + 2 : raw.body + raw.len, url,
+		rq->first_party, r);
 	if ((v = header(raw.body, "Location")) && r->status >= 300 &&
 	    r->status < 400) {
 		*location = strndup(v, header_len(v));
@@ -464,30 +542,53 @@ static int request(const char *url, const char *post, struct response *r,
 out:
 	conn_close(&c);
 	free(raw.body);
+	free(req.body);
 	free(u.path);
 	return ret;
 }
 
-int net_fetch(const char *url, const char *post, struct response *r)
+int net_fetch(const soie_request *rq, struct response *r)
 {
-	char *cur = strdup(url), *loc;
+	const char *url = rq->url, *method, *body = rq->body;
+	char *cur, *loc;
+	soie_response er;
 	int i;
 
 	memset(r, 0, sizeof(*r));
-	if (!cur)
-		abort();
+	if (soie_ext_blocked(rq)) {
+		set_error(r, "blocked");
+		return -1;
+	}
+	if (!soie_ext_fetch(rq, &er)) {
+		char *t = soie_response_header(&er, "content-type");
+
+		r->status = er.status;
+		r->body = er.body;
+		r->len = r->cap = er.len;
+		r->headers = er.headers;
+		snprintf(r->url, sizeof(r->url), "%s", er.url ? er.url : url);
+		if (t) {
+			snprintf(r->type, sizeof(r->type), "%.*s",
+				(int)strcspn(t, ";"), t);
+			free(t);
+		}
+		free(er.url);
+		return 0;
+	}
 	if (!strncmp(url, "file://", 7)) {
 		snprintf(r->url, sizeof(r->url), "%s", url);
-		free(cur);
 		return fetch_file(url, r);
 	}
 	if (strncmp(url, "http://", 7) && strncmp(url, "https://", 8)) {
 		set_error(r, "unsupported URL scheme");
-		free(cur);
 		return -1;
 	}
+	method = rq->method ? rq->method : body ? "POST" : "GET";
+	cur = strdup(url);
+	if (!cur)
+		abort();
 	for (i = 0; i < 10; i++) {
-		if (request(cur, post, r, &loc)) {
+		if (request(cur, rq, method, body, rq->body_len, r, &loc)) {
 			free(cur);
 			return -1;
 		}
@@ -501,8 +602,10 @@ int net_fetch(const char *url, const char *post, struct response *r)
 			cur = next;
 		}
 		/* 303 and the old 301/302 habits: the next one is a GET */
-		if (r->status != 307 && r->status != 308)
-			post = NULL;
+		if (r->status != 307 && r->status != 308) {
+			body = NULL;
+			method = "GET";
+		}
 		free(r->body);
 		r->body = NULL;
 		r->len = r->cap = 0;
@@ -512,8 +615,38 @@ int net_fetch(const char *url, const char *post, struct response *r)
 	return 0;
 }
 
+int net_request(void *data, const soie_request *req, soie_response *res)
+{
+	struct response r;
+
+	(void)data;
+	memset(res, 0, sizeof(*res));
+	if (net_fetch(req, &r)) {
+		response_free(&r);
+		return -1;
+	}
+	res->status = r.status;
+	res->url = strdup(r.url);
+	res->headers = r.headers ? r.headers : strdup("");
+	res->body = r.body ? r.body : malloc(1);
+	res->len = r.len;
+	if (!res->url || !res->headers || !res->body)
+		abort();
+	if (!r.headers && *r.type) {
+		/* file:// and extension responses: give the type */
+		free(res->headers);
+		res->headers = malloc(strlen(r.type) + 20);
+		if (!res->headers)
+			abort();
+		sprintf(res->headers, "content-type: %s\r\n", r.type);
+	}
+	return 0;
+}
+
 void response_free(struct response *r)
 {
 	free(r->body);
+	free(r->headers);
 	r->body = NULL;
+	r->headers = NULL;
 }

@@ -363,7 +363,11 @@ int decode_image(const unsigned char *d, size_t len, struct image *im)
 	for (i = 0; i < len && i < 512; i++)
 		if (d[i] == '<')
 			return decode_svg(d, len, im);
-	return 0;	/* WebP, AVIF...: the image extension's job */
+		else if (d[i] < 9)
+			break;	/* binary */
+	/* WebP, AVIF...: the image extensions' job */
+	im->rgba = ext_decode_image(d, len, &im->w, &im->h);
+	return im->rgba != NULL;
 }
 
 /* Cache */

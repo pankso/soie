@@ -28,18 +28,35 @@ reversed, edit the entry and say why; do not leave stale rules here.
 
 - The core knows nothing about any extension. It exposes hooks in
   `lib/soie/ext.h`: one versioned struct of function pointers per
-  extension point (script, cookies, media, image, net, content).
-- An extension fills the struct and registers it. Compiled in or
-  loaded with `dlopen()`; both paths go through the same register
-  call, so the core never knows which.
-- Each struct starts with `abi_version` and `size`. The core refuses
-  a major mismatch and only reads `size` bytes, so a newer core can
-  add trailing hooks without breaking older extensions.
-- `ext.h` grows hook by hook as phases need them (resource requests
-  arrive with images and networking), and is frozen as 1.0 in
-  phase 9. Before phase 9 the extension ABI may change freely.
-- `net` hooks live in the browser, not in libsoie: the library never
-  fetches anything, it asks the host for bytes.
+  extension point (image, content, net, cookies, script, media).
+- An extension fills the struct and registers it with
+  `soie_ext_register()`. Compiled in or loaded with `dlopen()`
+  (`soie_ext_load()`, `soie_ext_load_dir()`: a module exports
+  `soie_ext_init()`, which registers its hook sets); both paths go
+  through the same call, so the core never knows which.
+- Each struct starts with `abi` and `size`. The core refuses a major
+  mismatch and reads hooks only within `size` (`SOIE_EXT_HOOK`), so a
+  newer core can append hooks without breaking older extensions.
+- Extensions are separate modules (`ext/*.so`, installed in
+  `$(PREFIX)/lib/soie/ext`), not compiled into the browser: the
+  browser binary then needs neither QuickJS nor FFmpeg, and a
+  distribution can ship each extension as its own package. The cost
+  is that hosts link libsoie as a shared library (a static copy plus
+  the one the modules link would be two engines); the browser and
+  soie-render do, with an `$ORIGIN/../lib` rpath that works in the
+  tree and once installed. Hosts load `$SOIE_EXT_DIR` or the
+  installed directory; `soie-render -x module.so` loads one.
+- `ext.h` is 1.0 once phases 9 to 11 are in: script and media hooks
+  arrive with their phases, then it only grows by appending.
+- Who calls what: the engine calls image hooks (when its own decoders
+  do not know the bytes) and, later, script and media hooks. The host
+  calls content, net and cookie hooks, through helpers of the library
+  (`soie_ext_document()`, `soie_ext_user_css()`, `soie_ext_blocked()`,
+  `soie_ext_fetch()`, `soie_cookies_get()`): the library never fetches
+  anything, it asks the host for bytes.
+- Requests and responses that cross the boundary are `soie_request` /
+  `soie_response` (method, headers, body, first party). The first
+  party (the page's URL) is what cookie and blocking policies need.
 
 ## Public API
 
@@ -324,8 +341,12 @@ reversed, edit the entry and say why; do not leave stale rules here.
 - `soie -o page.png URL` loads and renders without a display: the
   network and the engine can be tested headless.
 - The engine gained soie_hit_test(), soie_element_rect() and
-  soie_set_focus() for this. No cookies and no JavaScript: phase 9
-  and 10 extensions.
+  soie_set_focus() for this. Cookies and JavaScript are extensions
+  (phases 9 and 10).
+- Every request goes through the extensions first: net filters may
+  cancel it, net fetch hooks may answer it (other URL schemes), the
+  cookie jar gives the Cookie header and gets each Set-Cookie,
+  redirect hops included.
 
 ## Flexbox and grid (phase 8)
 
