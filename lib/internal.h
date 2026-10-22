@@ -47,6 +47,7 @@ struct styledb;
 struct layout;
 struct images;
 struct script;
+struct media;
 
 struct soie_node {
 	unsigned char type;
@@ -92,6 +93,7 @@ struct soie_node {
 			/* what soie_document_update() redoes */
 			unsigned long styled_gen;
 			struct script *script;	/* soie_script_start() */
+			struct media *media;	/* audio and video players */
 			int lay_w, lay_h;
 		} doc;
 	} u;
@@ -119,6 +121,12 @@ void styledb_free(struct styledb *db);
 void layout_free(struct layout *l);
 void fonts_drop_document(const void *doc);
 void images_free(struct images *im);
+/* The options of the last cascade (player.c) */
+const soie_style_options *style_saved_options(const soie_node *doc);
+/* Players (player.c) */
+void media_free(soie_node *doc);
+void media_size(const soie_node *el, float *w, float *h);
+
 /* The URL <base href> gives, else base; malloc()ed. */
 char *document_base(soie_node *doc, const char *base);
 unsigned char *ext_decode_image(const unsigned char *d, size_t len,

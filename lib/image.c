@@ -592,32 +592,15 @@ void draw_image(struct canvas *c, const struct image *im, float x, float y,
 }
 
 /* object-fit (CSS Images 3) inside the content box. */
-void paint_replaced(struct canvas *c, const struct box *b)
+/* An image in a replaced box, as object-fit says, clipped to it. */
+void draw_fitted(struct canvas *c, const struct box *b,
+	const struct image *im, const unsigned char *cur)
 {
 	const struct style *st = b->style;
-	const struct image *im = NULL;
-	unsigned char cur[4];
 	float x = b->x, y = b->y, w = b->w, h = b->h, iw, ih, s;
+	int cx0 = c->cx0, cy0 = c->cy0, cx1 = c->cx1, cy1 = c->cy1;
+	int a, bb;
 
-	if (!b->node)
-		return;
-	if (b->node->ns == SOIE_NS_HTML && (b->node->tag == TAG_INPUT ||
-	    b->node->tag == TAG_TEXTAREA || b->node->tag == TAG_SELECT)) {
-		const char *t = soie_element_get_attr(b->node, "type");
-
-		if (b->node->tag != TAG_INPUT || !t || !ascii_ieq(t, "image")) {
-			paint_control(c, b);
-			return;
-		}
-	}
-	color_to_rgba(st->v[P_COLOR].u.color, cur);
-	if (b->node->ns == SOIE_NS_SVG) {
-		svg_render(c, b->node, x, y, w, h, cur);
-		return;
-	}
-	im = image_for(b->node);
-	if (!im)
-		return;
 	iw = (float)im->w;
 	ih = (float)im->h;
 	if (kw(st, P_OBJECT_FIT, "contain") || kw(st, P_OBJECT_FIT, "cover") ||
@@ -632,25 +615,53 @@ void paint_replaced(struct canvas *c, const struct box *b)
 		iw = w;		/* fill */
 		ih = h;
 	}
-	{
-		int cx0 = c->cx0, cy0 = c->cy0, cx1 = c->cx1, cy1 = c->cy1;
-		int a = (int)floorf(x - c->ox), bb = (int)floorf(y - c->oy);
+	a = (int)floorf(x - c->ox);
+	bb = (int)floorf(y - c->oy);
+	if (a > c->cx0)
+		c->cx0 = a;
+	if (bb > c->cy0)
+		c->cy0 = bb;
+	if ((int)ceilf(x + w - c->ox) < c->cx1)
+		c->cx1 = (int)ceilf(x + w - c->ox);
+	if ((int)ceilf(y + h - c->oy) < c->cy1)
+		c->cy1 = (int)ceilf(y + h - c->oy);
+	draw_image(c, im, x + (w - iw) / 2, y + (h - ih) / 2, iw, ih, cur);
+	c->cx0 = cx0;
+	c->cy0 = cy0;
+	c->cx1 = cx1;
+	c->cy1 = cy1;
+}
 
-		if (a > c->cx0)
-			c->cx0 = a;
-		if (bb > c->cy0)
-			c->cy0 = bb;
-		if ((int)ceilf(x + w - c->ox) < c->cx1)
-			c->cx1 = (int)ceilf(x + w - c->ox);
-		if ((int)ceilf(y + h - c->oy) < c->cy1)
-			c->cy1 = (int)ceilf(y + h - c->oy);
-		draw_image(c, im, x + (w - iw) / 2, y + (h - ih) / 2, iw, ih,
-			cur);
-		c->cx0 = cx0;
-		c->cy0 = cy0;
-		c->cx1 = cx1;
-		c->cy1 = cy1;
+void paint_replaced(struct canvas *c, const struct box *b)
+{
+	const struct style *st = b->style;
+	const struct image *im = NULL;
+	unsigned char cur[4];
+
+	if (!b->node)
+		return;
+	if (b->node->ns == SOIE_NS_HTML && (b->node->tag == TAG_INPUT ||
+	    b->node->tag == TAG_TEXTAREA || b->node->tag == TAG_SELECT)) {
+		const char *t = soie_element_get_attr(b->node, "type");
+
+		if (b->node->tag != TAG_INPUT || !t || !ascii_ieq(t, "image")) {
+			paint_control(c, b);
+			return;
+		}
 	}
+	if (b->node->ns == SOIE_NS_HTML && (!strcmp(b->node->name, "video") ||
+	    !strcmp(b->node->name, "audio"))) {
+		paint_media(c, b);
+		return;
+	}
+	color_to_rgba(st->v[P_COLOR].u.color, cur);
+	if (b->node->ns == SOIE_NS_SVG) {
+		svg_render(c, b->node, b->x, b->y, b->w, b->h, cur);
+		return;
+	}
+	im = image_for(b->node);
+	if (im)
+		draw_fitted(c, b, im, cur);
 }
 
 /* Gradients */

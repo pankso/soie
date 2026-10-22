@@ -610,6 +610,7 @@ static void node_free_one(soie_node *n)
 		break;
 	case SOIE_DOCUMENT:
 		soie_script_stop(n);
+		media_free(n);
 		if (n->u.doc.layout)
 			layout_free(n->u.doc.layout);
 		if (n->u.doc.styles)

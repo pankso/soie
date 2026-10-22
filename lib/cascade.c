@@ -2338,6 +2338,13 @@ cascade:
 	return 0;
 }
 
+const soie_style_options *style_saved_options(const soie_node *doc)
+{
+	const struct styledb *db = doc->doc->u.doc.styles;
+
+	return db ? &db->saved : NULL;
+}
+
 int soie_media_matches(const soie_node *doc, const char *query)
 {
 	const struct styledb *db = doc->doc->u.doc.styles;

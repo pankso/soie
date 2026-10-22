@@ -167,8 +167,12 @@ static void intrinsic(struct box *b, const soie_node *n)
 		b->iw = 300;
 		b->ih = 54;
 	} else {
-		b->iw = attr_num(n, "width", 300);
-		b->ih = attr_num(n, "height", 150);
+		b->iw = 300;
+		b->ih = 150;
+		if (n->ns == SOIE_NS_HTML && !strcmp(n->name, "video"))
+			media_size(n, &b->iw, &b->ih);
+		b->iw = attr_num(n, "width", b->iw);
+		b->ih = attr_num(n, "height", b->ih);
 	}
 }
 

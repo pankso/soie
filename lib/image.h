@@ -44,5 +44,8 @@ void svg_render(struct canvas *c, const soie_node *el, float x, float y,
 	float w, float h, const unsigned char *current);
 void svg_size(const soie_node *el, float *w, float *h);
 int decode_image(const unsigned char *data, size_t len, struct image *im);
+void draw_fitted(struct canvas *c, const struct box *b,
+	const struct image *im, const unsigned char *current);
+void paint_media(struct canvas *c, const struct box *b);
 
 #endif

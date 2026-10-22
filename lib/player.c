@@ -1,0 +1,376 @@
+/*
+ * <video> and <audio>: players from the media extension, their frames
+ * and controls painted by the engine, their events sent to scripts.
+ *
+ * A player opens when the element is first played (a click, a script,
+ * autoplay when the host allows it), never just because the element
+ * is on the page: on old machines a page full of videos stays a page.
+ */
+#include <stdlib.h>
+#include <string.h>
+#include <strings.h>
+
+#include "internal.h"
+#include "css.h"
+#include "image.h"
+#include "soie/ext.h"
+
+#define BAR_H 32		/* the controls' height */
+
+struct player {
+	soie_node *el;
+	const struct soie_ext_media *ext;
+	void *p;
+	soie_media_state last;	/* for events and repaints */
+	double reported;	/* time of the last timeupdate */
+};
+
+struct media {
+	struct player *v;
+	int n, cap;
+};
+
+static int is_media(const soie_node *el)
+{
+	return el->type == SOIE_ELEMENT && el->ns == SOIE_NS_HTML &&
+		(!strcmp(el->name, "video") || !strcmp(el->name, "audio"));
+}
+
+static struct player *find(const soie_node *el)
+{
+	struct media *m = el->doc->u.doc.media;
+	int i;
+
+	for (i = 0; m && i < m->n; i++)
+		if (m->v[i].el == el)
+			return &m->v[i];
+	return NULL;
+}
+
+int soie_media_can_play(const char *type)
+{
+	const struct soie_ext_media *e;
+	int i;
+
+	for (i = 0; (e = (const void *)soie_ext_get(SOIE_EXT_MEDIA, i)); i++)
+		if (e->can_play && e->can_play(e->base.data, type))
+			return 1;
+	return 0;
+}
+
+/* The source: src, else the first <source> whose type may play. */
+static const char *source_of(const soie_node *el)
+{
+	const char *src = soie_element_get_attr(el, "src"), *t;
+	const soie_node *c;
+
+	if (src && *src)
+		return src;
+	for (c = el->first; c; c = c->next) {
+		if (c->type != SOIE_ELEMENT || c->ns != SOIE_NS_HTML ||
+		    strcmp(c->name, "source"))
+			continue;
+		src = soie_element_get_attr(c, "src");
+		t = soie_element_get_attr(c, "type");
+		if (src && *src && (!t || soie_media_can_play(t)))
+			return src;
+	}
+	return NULL;
+}
+
+static struct player *open_player(soie_node *el)
+{
+	soie_node *doc = el->doc;
+	const struct soie_ext_media *e;
+	const soie_style_options *o = style_saved_options(doc);
+	struct media *m;
+	struct player *p;
+	const char *src = source_of(el);
+	char *base, *url;
+	void *h = NULL;
+	int i;
+
+	if (!src || !o || !o->request)
+		return NULL;
+	base = document_base(doc, o->base_url);
+	url = soie_url_resolve(base, src);
+	free(base);
+	for (i = 0; !h && (e = (const void *)soie_ext_get(SOIE_EXT_MEDIA,
+	     i)); i++)
+		if (e->open)
+			h = e->open(e->base.data, url, o->request,
+				o->request_data);
+	free(url);
+	if (!h)
+		return NULL;
+	m = doc->u.doc.media;
+	if (!m) {
+		m = xmalloc(sizeof(*m));
+		memset(m, 0, sizeof(*m));
+		doc->u.doc.media = m;
+	}
+	if (m->n == m->cap) {
+		m->cap = m->cap ? m->cap * 2 : 4;
+		m->v = xrealloc(m->v, (size_t)m->cap * sizeof(*m->v));
+	}
+	p = &m->v[m->n++];
+	memset(p, 0, sizeof(*p));
+	p->el = el;
+	p->ext = (const struct soie_ext_media *)soie_ext_get(SOIE_EXT_MEDIA,
+		i - 1);
+	p->p = h;
+	p->last.paused = 1;
+	p->ext->volume(p->p, 1, soie_element_get_attr(el, "muted") != NULL);
+	return p;
+}
+
+void media_free(soie_node *doc)
+{
+	struct media *m = doc->u.doc.media;
+	int i;
+
+	if (!m)
+		return;
+	for (i = 0; i < m->n; i++)
+		m->v[i].ext->close(m->v[i].p);
+	free(m->v);
+	free(m);
+	doc->u.doc.media = NULL;
+}
+
+int soie_media_control(soie_node *el, int op, double value)
+{
+	struct player *p;
+	soie_media_state st;
+
+	if (!is_media(el))
+		return -1;
+	p = find(el);
+	if (!p && (op == SOIE_MEDIA_PLAY || op == SOIE_MEDIA_TOGGLE))
+		p = open_player(el);
+	if (!p)
+		return -1;
+	switch (op) {
+	case SOIE_MEDIA_TOGGLE:
+		p->ext->state(p->p, &st);
+		if (st.paused || st.ended)
+			p->ext->play(p->p);
+		else
+			p->ext->pause(p->p);
+		break;
+	case SOIE_MEDIA_PLAY:
+		p->ext->play(p->p);
+		break;
+	case SOIE_MEDIA_PAUSE:
+		p->ext->pause(p->p);
+		break;
+	case SOIE_MEDIA_SEEK:
+		p->ext->seek(p->p, value);
+		break;
+	case SOIE_MEDIA_VOLUME:
+		p->ext->volume(p->p, value, soie_element_get_attr(el, "muted") !=
+			NULL);
+		break;
+	case SOIE_MEDIA_MUTE:
+		p->ext->volume(p->p, 1, value != 0);
+		break;
+	}
+	return 0;
+}
+
+int soie_media_get_state(soie_node *el, soie_media_state *st)
+{
+	struct player *p = is_media(el) ? find(el) : NULL;
+
+	if (!p)
+		return -1;
+	p->ext->state(p->p, st);
+	return 0;
+}
+
+int soie_media_click(soie_node *el, float x, float y)
+{
+	float bx, by, bw, bh;
+	soie_media_state st;
+	struct player *p;
+
+	if (!is_media(el) || soie_element_rect(el, &bx, &by, &bw, &bh))
+		return 0;
+	p = find(el);
+	if (soie_element_get_attr(el, "controls") && y >= by + bh - BAR_H &&
+	    x > bx + BAR_H && p) {
+		/* the seek bar */
+		p->ext->state(p->p, &st);
+		if (st.duration > 0 && bw > BAR_H + 16) {
+			double f = (x - bx - BAR_H) / (bw - BAR_H - 8);
+
+			f = f < 0 ? 0 : f > 1 ? 1 : f;
+			p->ext->seek(p->p, f * st.duration);
+		}
+		return 1;
+	}
+	return soie_media_control(el, SOIE_MEDIA_TOGGLE, 0) == 0;
+}
+
+static void fire(soie_node *el, const char *type)
+{
+	soie_event ev;
+
+	memset(&ev, 0, sizeof(ev));
+	ev.type = type;
+	soie_script_event(el->doc, el, &ev);
+}
+
+/* Events and repaints from state changes. */
+int soie_media_tick(soie_node *doc, int *repaint)
+{
+	struct media *m = doc->u.doc.media;
+	soie_media_state st;
+	struct player *p;
+	int i, next = -1;
+
+	*repaint = 0;
+	for (i = 0; m && i < m->n; i++) {
+		p = &m->v[i];
+		p->ext->state(p->p, &st);
+		if (st.changes != p->last.changes)
+			*repaint = 1;
+		if ((st.width != p->last.width || st.height != p->last.height) &&
+		    !strcmp(p->el->name, "video"))
+			doc->u.doc.gen++;	/* a new intrinsic size */
+		if (st.duration != p->last.duration && st.duration > 0) {
+			fire(p->el, "durationchange");
+			if (p->last.duration <= 0) {
+				fire(p->el, "loadedmetadata");
+				fire(p->el, "loadeddata");
+				fire(p->el, "canplay");
+			}
+		}
+		if (st.paused != p->last.paused)
+			fire(p->el, st.paused ? "pause" : "playing");
+		if (st.time < p->reported || st.time >= p->reported + 0.25) {
+			p->reported = st.time;
+			fire(p->el, "timeupdate");
+		}
+		if (st.ended && !p->last.ended) {
+			if (st.time != p->reported)
+				fire(p->el, "timeupdate");
+			p->reported = st.time;
+			fire(p->el, "ended");
+		}
+		if (st.error && !p->last.error)
+			fire(p->el, "error");
+		p->last = st;
+		if (!st.paused && !st.ended && !st.error)
+			next = 20;
+	}
+	return next;
+}
+
+/* Painting */
+
+void media_size(const soie_node *el, float *w, float *h)
+{
+	struct player *p = find(el);
+	const struct image *im;
+	const char *poster;
+
+	if (p && p->last.width > 0) {
+		*w = (float)p->last.width;
+		*h = (float)p->last.height;
+	} else if ((poster = soie_element_get_attr(el, "poster")) &&
+		   (im = image_get(el->doc, poster))) {
+		*w = (float)im->w;
+		*h = (float)im->h;
+	}
+}
+
+static void triangle(struct canvas *c, float x, float y, float size,
+	const unsigned char *rgba)
+{
+	float i;
+
+	for (i = 0; i < size; i++) {
+		float d = i < size / 2 ? i : size - i;
+
+		fill_rect(c, x, y + i, d * 1.6f, 1, rgba);
+	}
+}
+
+static void play_icon(struct canvas *c, float x, float y, float size,
+	int paused)
+{
+	static const unsigned char white[4] = { 255, 255, 255, 230 };
+
+	if (paused) {
+		triangle(c, x + size * 0.3f, y + size * 0.2f, size * 0.6f,
+			white);
+	} else {
+		fill_rect(c, x + size * 0.28f, y + size * 0.25f, size * 0.15f,
+			size * 0.5f, white);
+		fill_rect(c, x + size * 0.57f, y + size * 0.25f, size * 0.15f,
+			size * 0.5f, white);
+	}
+}
+
+void paint_media(struct canvas *c, const struct box *b)
+{
+	static const unsigned char black[4] = { 0, 0, 0, 255 };
+	static const unsigned char shade[4] = { 0, 0, 0, 150 };
+	static const unsigned char track[4] = { 255, 255, 255, 90 };
+	static const unsigned char done[4] = { 255, 255, 255, 230 };
+	const soie_node *el = b->node;
+	struct player *p = find(el);
+	soie_media_state st;
+	struct image frame;
+	const char *poster;
+	const struct image *im = NULL;
+	int video = !strcmp(el->name, "video"), shown = 0;
+	float bar = b->h < BAR_H ? b->h : BAR_H;
+
+	memset(&st, 0, sizeof(st));
+	st.paused = 1;
+	if (p)
+		p->ext->state(p->p, &st);
+	if (video) {
+		memset(&frame, 0, sizeof(frame));
+		if (p && p->ext->frame &&
+		    (frame.rgba = (unsigned char *)p->ext->frame(p->p,
+		     &frame.w, &frame.h)) && frame.w > 0 && frame.h > 0) {
+			fill_rect(c, b->x, b->y, b->w, b->h, black);
+			draw_fitted(c, b, &frame, NULL);
+			shown = 1;
+		} else if ((poster = soie_element_get_attr(el, "poster")) &&
+			   (im = image_get(el->doc, poster))) {
+			draw_fitted(c, b, im, NULL);
+			shown = 1;
+		}
+		if (!shown)
+			fill_rect(c, b->x, b->y, b->w, b->h, black);
+		if (st.paused && !soie_element_get_attr(el, "controls")) {
+			float s = b->w < b->h ? b->w : b->h;
+
+			s = s > 64 ? 64 : s / 2;
+			fill_rect(c, b->x + (b->w - s) / 2, b->y + (b->h - s) / 2,
+				s, s, shade);
+			play_icon(c, b->x + (b->w - s) / 2,
+				b->y + (b->h - s) / 2, s, 1);
+		}
+	}
+	if (!soie_element_get_attr(el, "controls"))
+		return;
+	/* the bar: play/pause, then the progress */
+	{
+		float y = b->y + b->h - bar, w = b->w - bar - 8;
+
+		fill_rect(c, b->x, y, b->w, bar, video ? shade : black);
+		play_icon(c, b->x, y, bar, st.paused || st.ended);
+		if (w > 0) {
+			fill_rect(c, b->x + bar, y + bar / 2 - 2, w, 4, track);
+			if (st.duration > 0)
+				fill_rect(c, b->x + bar, y + bar / 2 - 2,
+					w * (float)(st.time / st.duration), 4,
+					done);
+		}
+	}
+}

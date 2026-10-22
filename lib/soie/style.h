@@ -6,6 +6,7 @@
 
 #include <stddef.h>
 #include "dom.h"
+#include "ext.h"
 
 /*
  * Fetch the resource at url (style sheets, for now). On success return
@@ -24,6 +25,10 @@ typedef struct {
 	soie_fetch_fn fetch;	/* NULL: no external style sheets */
 	void *fetch_data;
 	const char *user_css;	/* user style sheet, or NULL */
+	/* Fetches for audio and video, from their own threads; NULL:
+	 * no media. */
+	soie_request_fn request;
+	void *request_data;
 } soie_style_options;
 
 /*

@@ -225,4 +225,62 @@ int soie_script_tick(soie_node *doc);
 /* Stop scripts (soie_node_free() on the document does it too). */
 void soie_script_stop(soie_node *doc);
 
+/*
+ * Audio and video. The engine opens a player for a <video> or <audio>
+ * element when it is first played, paints its frames, and draws
+ * simple controls; the extension demuxes, decodes and plays the
+ * sound, in its own threads. Hooks are called from the host's thread.
+ */
+typedef struct {
+	double duration;	/* seconds, 0 while unknown */
+	double time;		/* current position, seconds */
+	int paused, ended;
+	int width, height;	/* video size, 0 for sound only */
+	int error;		/* nonzero: cannot play */
+	int changes;		/* bumped at each new frame or state */
+} soie_media_state;
+
+struct soie_ext_media {
+	struct soie_ext base;
+	/* Nonzero when the MIME type (may be NULL) looks playable. */
+	int (*can_play)(void *data, const char *type);
+	/* A player for url; request fetches its bytes (from another
+	 * thread, with Range headers when it can). NULL on failure. */
+	void *(*open)(void *data, const char *url, soie_request_fn request,
+		void *request_data);
+	void (*close)(void *player);
+	void (*play)(void *player);
+	void (*pause)(void *player);
+	void (*seek)(void *player, double seconds);
+	void (*volume)(void *player, double volume, int muted);
+	void (*state)(void *player, soie_media_state *st);
+	/* The frame to show now, straight RGBA, valid until the next
+	 * call; NULL when there is none (yet). */
+	const unsigned char *(*frame)(void *player, int *w, int *h);
+};
+
+enum {
+	SOIE_MEDIA_PLAY,
+	SOIE_MEDIA_PAUSE,
+	SOIE_MEDIA_TOGGLE,
+	SOIE_MEDIA_SEEK,	/* value: seconds */
+	SOIE_MEDIA_VOLUME,	/* value: 0 to 1 */
+	SOIE_MEDIA_MUTE		/* value: 0 or 1 */
+};
+
+/* Control the player of a <video> or <audio> element, opening it
+ * when needed. -1 without a media extension or a source. */
+int soie_media_control(soie_node *el, int op, double value);
+/* Its state; -1 when it has no player. */
+int soie_media_get_state(soie_node *el, soie_media_state *st);
+/* A click at (x, y) in page coordinates on el, on its controls (play,
+ * pause, the seek bar): 1 when handled. */
+int soie_media_click(soie_node *el, float x, float y);
+/* Call while players play: repaint is set when a frame or the
+ * controls changed; returns ms until the next call, -1 when none
+ * plays. Also fires the media events (timeupdate, ended...). */
+int soie_media_tick(soie_node *doc, int *repaint);
+/* Nonzero when a media extension says it can play type. */
+int soie_media_can_play(const char *type);
+
 #endif
