@@ -5,3 +5,7 @@ tools/soie-render
 tests/html5lib
 tests/unit
 tests/html5lib-tests/
+tests/csstest
+tests/cssvalue
+tests/css-parsing-tests/
+lib/ua-css.c

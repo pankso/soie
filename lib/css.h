@@ -1,0 +1,226 @@
+/*
+ * CSS internals: tokens, component values, rules, selectors, values
+ * and computed styles. Never installed.
+ */
+#ifndef SOIE_CSS_H
+#define SOIE_CSS_H
+
+#include "internal.h"
+
+/* Tokens and component values (CSS Syntax 3) */
+
+enum {
+	CT_EOF,
+	CT_IDENT,
+	CT_FUNCTION,		/* also a function component value */
+	CT_AT,
+	CT_HASH,
+	CT_STRING,
+	CT_BAD_STRING,
+	CT_URL,
+	CT_BAD_URL,
+	CT_DELIM,
+	CT_NUMBER,
+	CT_PERCENT,
+	CT_DIMENSION,
+	CT_WS,
+	CT_CDO,
+	CT_CDC,
+	CT_COLON,
+	CT_SEMI,
+	CT_COMMA,
+	CT_LBRACKET,
+	CT_RBRACKET,
+	CT_LPAREN,
+	CT_RPAREN,
+	CT_LBRACE,
+	CT_RBRACE,
+	CT_BLOCK		/* component value: [] () {} block */
+};
+
+struct cv;
+
+struct cvlist {
+	struct cv *v;
+	int n, cap;
+};
+
+struct cv {
+	unsigned char type;
+	unsigned char integer;	/* number types: integer flag */
+	unsigned char id;	/* hash: is an identifier */
+	unsigned char delim;	/* delim char, block opening char */
+	double num;
+	char *str;		/* ident, function name, unit, string... */
+	char *repr;		/* numbers: source text */
+	struct cvlist kids;	/* function arguments, block contents */
+};
+
+struct decl {
+	char *name;
+	struct cvlist value;
+	int important;
+};
+
+enum { R_QUALIFIED, R_AT };
+
+struct crule {
+	int type;
+	char *name;			/* at-rule name */
+	struct cvlist prelude;
+	int has_block;
+	struct cvlist block;		/* raw block, for at-rules */
+	struct decl *decls;		/* parsed block contents */
+	int ndecls, capdecls;
+	struct crule **rules;
+	int nrules, caprules;
+	int nested_decls;		/* declarations after nested rules */
+};
+
+/* csstok.c / cssparse.c */
+void cv_free(struct cv *v);
+void cvlist_free(struct cvlist *l);
+void cvlist_add(struct cvlist *l, const struct cv *v);
+int css_component_values(const char *s, size_t len, struct cvlist *out);
+struct crule **css_parse_stylesheet(const char *s, size_t len, int *n);
+extern int css_raw_blocks;	/* tests: keep qualified rule blocks raw */
+void css_parse_block(struct cvlist *block, struct crule *into, int nested);
+void crule_free(struct crule *r);
+struct crule *css_parse_test(const char *s, size_t len, int mode,
+	const char **err);
+void css_serialize(struct buf *b, const struct cv *v, int n);
+
+/* Cursor over a component value list, skipping nothing by itself. */
+struct cur {
+	const struct cv *v;
+	int i, n;
+};
+
+static inline void cur_init(struct cur *c, const struct cvlist *l)
+{
+	c->v = l->v;
+	c->i = 0;
+	c->n = l->n;
+}
+
+const struct cv *cur_peek(struct cur *c);	/* skips whitespace */
+const struct cv *cur_next(struct cur *c);	/* skips whitespace */
+int cur_end(struct cur *c);			/* only whitespace left */
+int cv_ident(const struct cv *v, const char *s);	/* ASCII ci */
+int cv_func(const struct cv *v, const char *s);
+int ascii_ieq(const char *a, const char *b);
+
+/* Selectors (selector.c) */
+
+enum {
+	SEL_TYPE,		/* name */
+	SEL_UNIVERSAL,
+	SEL_ID,
+	SEL_CLASS,
+	SEL_ATTR,
+	SEL_PSEUDO,		/* pseudo-class, id in .pseudo */
+	SEL_PSEUDO_ELEMENT,
+	SEL_NEST		/* & : matches the parent rule's selector */
+};
+
+/* Combinator on the left of a compound. */
+enum { COMB_NONE, COMB_DESC, COMB_CHILD, COMB_NEXT, COMB_SUBSEQ };
+
+struct sellist;
+
+struct simple {
+	unsigned char type;
+	unsigned char pseudo;	/* PC_* or PE_* */
+	unsigned char op;	/* attribute operator */
+	unsigned char ci;	/* attribute value case-insensitive */
+	int a, b;		/* An+B */
+	char *name;		/* lowercase for type and attribute names */
+	char *value;
+	struct sellist *args;	/* :is() :not() :has() :nth-*(of S) */
+};
+
+struct compound {
+	struct simple *s;
+	int n;
+	int comb;
+};
+
+struct complex {
+	struct compound *c;	/* left to right */
+	int n;
+	unsigned spec;		/* a << 20 | b << 10 | c */
+	int pseudo_element;	/* PE_NONE or the rightmost one */
+	int relative;		/* :has() argument: starts with comb */
+};
+
+struct sellist {
+	struct complex *c;
+	int n;
+	const struct sellist *parent;	/* what & stands for */
+};
+
+enum { PE_NONE, PE_BEFORE, PE_AFTER, PE_MARKER, PE_OTHER };
+
+struct sellist *selector_parse(const struct cvlist *l, int from, int to,
+	const struct sellist *parent, int forgiving);
+void sellist_free(struct sellist *s);
+int selector_match(const struct sellist *l, int i, const soie_node *el);
+int sellist_match(const struct sellist *l, const soie_node *el);
+unsigned sellist_max_spec(const struct sellist *s, const soie_node *el);
+
+/* Values (values.c) */
+
+enum {
+	CS_SRGB, CS_SRGB_LINEAR, CS_DISPLAY_P3, CS_A98, CS_PROPHOTO,
+	CS_REC2020, CS_XYZ_D50, CS_XYZ_D65, CS_LAB, CS_LCH, CS_OKLAB,
+	CS_OKLCH, CS_HSL, CS_HWB, CS_RGB_LEGACY
+};
+
+struct color {
+	double c[3];
+	double alpha;
+	unsigned char space;
+	unsigned char none;	/* bit per missing component, 8 = alpha */
+	unsigned char current;	/* currentcolor */
+	unsigned char pad;
+};
+
+/* A length-percentage computed to px + % of a reference. */
+struct calc;
+
+struct len {
+	float px, pct;
+	struct calc *calc;	/* min()/max()/clamp() with % */
+};
+
+/* Context to resolve relative units. */
+struct ucontext {
+	float em, rem, vw, vh;
+	float ex, ch;
+};
+
+int parse_color(struct cur *c, struct color *out);
+void serialize_color(struct buf *b, const struct color *col);
+void color_to_rgba(const struct color *col, unsigned char rgba[4]);
+int named_color(const char *name, struct color *out);
+
+/* Length-percentage: specified form, before unit resolution. */
+struct slen;
+struct slen *parse_length(struct cur *c, int flags);
+void slen_free(struct slen *l);
+int slen_resolve(const struct slen *l, const struct ucontext *u,
+	struct len *out);
+float calc_eval(const struct calc *k, float pct_ref);
+void calc_release(struct calc *k);
+int slen_number(const struct slen *l, double *out);
+void serialize_len(struct buf *b, const struct len *l);
+void serialize_number(struct buf *b, double v);
+void serialize_float(struct buf *b, double v);	/* 4 decimals */
+int parse_anb(struct cur *c, int *a, int *b);
+
+#define L_NONNEG 1
+#define L_NOPCT 2
+#define L_UNITLESS0 4	/* plain 0 allowed (always, except in calc) */
+#define L_NUMBER 8	/* a bare number is accepted (line-height) */
+
+#endif
