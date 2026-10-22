@@ -94,6 +94,81 @@ reversed, edit the entry and say why; do not leave stale rules here.
 - Declarative shadow DOM (`<template shadowrootmode>`) is not
   implemented: such a template stays a plain template.
 
+## CSS
+
+- CSS Syntax 3 as in the current editor's draft, nesting included:
+  declarations after a nested rule go into a "nested declarations"
+  rule so that they keep their cascade order. No match tokens
+  (`~=`...) and no unicode-range token: they left the spec.
+- Conformance is checked against css-parsing-tests (SimonSapin),
+  pinned at 203ce36, fetched by `make check-css`. Its runner is Python
+  (`tests/css-parsing.py`), the only Python in the tree, because the
+  corpus is JSON. The corpus follows the 2021 draft: the runner
+  normalizes the differences (whitespace around declaration values,
+  match tokens, parse errors) and lists the few inputs where the two
+  drafts disagree. CSS Color 5 (`light-dark()`, `device-cmyk()`,
+  `color-mix()`) is not done yet.
+- Colors keep their color space and `none` components (`oklch(0.6
+  0.2 30)` stays oklch), as CSS Color 4 asks for computed values;
+  conversion to 8-bit sRGB happens when painting. Wide-gamut spaces
+  (display-p3...) are drawn as if they were sRGB: old screens are
+  sRGB at best.
+- Number serialization rounds to 6 decimals with a +1e-7 bias, the
+  same as the corpus generator; lengths, which are floats, to 4.
+- Lengths are computed to `px + % of a reference`, so `calc(100% -
+  2em)` needs no tree. `min()`, `max()` and `clamp()` with a
+  percentage keep a small tree that layout evaluates; without
+  percentages they fold to a length.
+- Units the engine has no font metrics for yet are approximated:
+  `ex` = `ch` = 0.5em, `cap` = 0.7em, `lh` = 1.2em. Phase 4 replaces
+  them with real metrics.
+- Logical properties (`margin-inline`, `padding-block-start`...) map
+  to physical ones at parse time, for horizontal left-to-right text.
+  `white-space` is a shorthand of `white-space-collapse` and
+  `text-wrap-mode`, as in CSS Text 4.
+- Properties layout and painting will need later (grid templates,
+  transforms, shadows, background positions) are kept as normalized
+  text and parsed by the phase that uses them.
+- `revert` and `revert-layer` behave like `unset`. `@container`,
+  `@scope`, `@keyframes`, `@page` and `@counter-style` are ignored.
+  `@font-face` blocks are stored for phase 4.
+- Selectors: level 3, plus `:is()`, `:where()`, `:not()` with lists,
+  `:has()` and `:nth-child(An+B of S)`. Shadow DOM selectors
+  (`:host`, `::slotted()`, `::part()`) parse but never match: Tailwind
+  4 puts its theme on `:root, :host`, and an unknown pseudo-class
+  would drop the whole rule. Dynamic states (`:hover`, `:focus`...)
+  never match until the browser feeds element states in.
+- Media queries level 4 with range syntax and three-valued logic.
+  The environment is a 1024x768 light screen unless the host says
+  otherwise; `hover: hover`, `pointer: fine`, resolution 1dppx.
+- `@supports (prop: value)` asks the property parser, so it answers
+  for exactly what the engine supports.
+- The cascade follows CSS Cascade 5: origins and importance,
+  element-attached styles (`style=""`) above layers, layers (with
+  `!important` reversing their order), specificity, order. Each
+  declaration gets one 64-bit key so that winning is a comparison.
+- HTML presentational hints (`bgcolor`, `<font>`, `align`, table
+  `border`/`cellpadding`, `width`/`height`...) are author-level
+  declarations below every author layer, as the HTML spec says.
+- Rules are indexed by the rightmost compound's id, class or tag;
+  the rest goes to a universal list. `::before`/`::after` styles are
+  only computed when a matching rule sets `content`.
+- Computed styles are interned per document: elements with identical
+  values share one struct style. Custom properties are interned sets
+  of overrides chained to the parent's set (flattened past 8 levels),
+  so a page with 1000 variables on `:root` does not copy them into
+  every element.
+- Resource loading goes through one synchronous host callback
+  (`soie_fetch_fn`); it may become asynchronous with the browser
+  (phase 7), while the API is still 0.x. `url()` values are made
+  absolute against their sheet's URL at parse time.
+- Measured on this machine (x86_64, -O2): tailwindcss.com 2400
+  elements styled in 110 ms / 23 MB RSS, lemonde.fr 5000 elements in
+  130 ms / 19 MB, en.wikipedia.org 7900 elements in 165 ms / 12 MB.
+  github.com (7 MB of CSS, some sheets linked twice) takes 600 ms and
+  56 MB: the rule data is about a million small allocations. An arena
+  for style sheet data is the planned fix if real pages need it.
+
 ## Character encoding
 
 - The tokenizer only ever sees valid UTF-8 with normalized newlines.
