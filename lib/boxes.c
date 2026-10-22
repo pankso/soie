@@ -8,6 +8,7 @@
 #include <string.h>
 #include "layout.h"
 #include "font.h"
+#include "image.h"
 
 /* Keyword test with a small cache: callers pass string literals. */
 int kw(const struct style *st, int prop, const char *name)
@@ -119,8 +120,20 @@ static float attr_num(const soie_node *n, const char *name, float dflt)
 static void intrinsic(struct box *b, const soie_node *n)
 {
 	float em = b->style->v[P_FONT_SIZE].u.len.px;
+	const struct image *im;
 
-	if (n->ns == SOIE_NS_HTML && n->tag == TAG_IMG) {
+	if (n->ns == SOIE_NS_SVG) {
+		svg_size(n, &b->iw, &b->ih);
+		if (!b->iw && !b->ih) {
+			b->iw = 300;
+			b->ih = 150;
+		}
+	} else if ((n->ns == SOIE_NS_HTML && (n->tag == TAG_IMG ||
+		    n->tag == TAG_OBJECT || n->tag == TAG_EMBED ||
+		    n->tag == TAG_INPUT)) && (im = image_for(n))) {
+		b->iw = (float)im->w;
+		b->ih = (float)im->h;
+	} else if (n->ns == SOIE_NS_HTML && n->tag == TAG_IMG) {
 		b->iw = attr_num(n, "width", 0);
 		b->ih = attr_num(n, "height", 0);
 	} else if (n->ns == SOIE_NS_HTML && n->tag == TAG_INPUT) {

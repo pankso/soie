@@ -5,7 +5,7 @@ reference browser. No toolkit, no JavaScript in the core, built to
 render modern pages on old machines. See `doc/DECISIONS.md` for what
 Soie is and is not, and how extensions plug in.
 
-Status: phase 5 done (painting to PNG). The HTML parser follows the WHATWG algorithm
+Status: phase 6 done (images: PNG, JPEG, GIF, SVG). The HTML parser follows the WHATWG algorithm
 and passes the html5lib tree-construction tests; the CSS parser,
 selectors, cascade and computed values pass css-parsing-tests,
 including all of CSS Color 4; block and inline layout work, with a
@@ -19,8 +19,8 @@ FreeType/HarfBuzz text (phase 4) and tables.
     make check-css      # fetches css-parsing-tests, runs it (Python 3)
     make install PREFIX=/usr DESTDIR=...
 
-Needs a C99 compiler, GNU make, pkg-config, FreeType and (optional,
-`make HARFBUZZ=0`) HarfBuzz.
+Needs a C99 compiler, GNU make, pkg-config, FreeType, libpng, libjpeg
+and (optional, `make HARFBUZZ=0`) HarfBuzz.
 
 ## Try it
 

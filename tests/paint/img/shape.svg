@@ -1,0 +1,7 @@
+<?xml version="1.0"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100" height="100">
+ <rect x="5" y="5" width="90" height="90" rx="15" fill="#4466cc"/>
+ <circle cx="50" cy="50" r="30" fill="white" stroke="black" stroke-width="4"/>
+ <path d="M30 50 L45 65 L72 35" fill="none" stroke="green" stroke-width="8"/>
+ <g transform="translate(70 70) rotate(45)"><rect x="-8" y="-8" width="16" height="16" fill="red"/></g>
+</svg>

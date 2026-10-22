@@ -8,6 +8,7 @@
 #include <string.h>
 #include "css.h"
 #include "font.h"
+#include "image.h"
 
 /* Lines of lib/ua.css (C99 string literals are short). */
 extern const char *const ua_css[];
@@ -2201,6 +2202,8 @@ int soie_style_document(soie_node *doc, const soie_style_options *opts)
 	collect_sheets(db, doc, base);
 	fonts_drop_document(doc);
 	load_fonts(db, doc);
+	images_setup(doc, opts ? opts->fetch : NULL,
+		opts ? opts->fetch_data : NULL, base);
 	for (i = 0; i < 3; i++) {
 		next = 1;
 		layer_rank(&db->roots[i], &next);

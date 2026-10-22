@@ -668,20 +668,3 @@ int soie_paint(soie_node *doc, unsigned char *rgba, int width, int height,
 	return 0;
 }
 
-/* Images arrive with phase 6. */
-void paint_replaced(struct canvas *c, const struct box *b)
-{
-	(void)c;
-	(void)b;
-}
-
-void paint_bg_image(struct canvas *c, const struct box *b, float x,
-	float y, float w, float h)
-{
-	(void)c;
-	(void)b;
-	(void)x;
-	(void)y;
-	(void)w;
-	(void)h;
-}

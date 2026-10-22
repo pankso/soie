@@ -521,6 +521,8 @@ static void node_free_one(soie_node *n)
 		if (n->u.doc.styles)
 			styledb_free(n->u.doc.styles);
 		fonts_drop_document(n);
+		if (n->u.doc.images)
+			images_free(n->u.doc.images);
 		break;
 	}
 	if (n->name_owned)

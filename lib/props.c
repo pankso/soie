@@ -766,76 +766,145 @@ static int is_image(const struct cv *v)
 		(n >= 8 && ascii_ieq(v->str + n - 8, "gradient"));
 }
 
-/* background: the color and the images; the rest is reset. */
+/*
+ * background: per layer, the image, position [/ size], repeat,
+ * attachment and boxes; the color only in the last layer. The layered
+ * longhands keep their text, comma-separated like the declaration.
+ */
+static int is_box_kw(const struct cv *v)
+{
+	return cv_ident(v, "border-box") || cv_ident(v, "padding-box") ||
+		cv_ident(v, "content-box") || cv_ident(v, "text");
+}
+
 static int sh_background(struct cur *c, struct svec *out)
 {
-	struct buf img = { 0 };
-	struct sval color;
-	int have_color = 0, images = 0, layer_img = 0, i;
+	struct buf img = { 0 }, pos = { 0 }, size = { 0 }, rep = { 0 },
+		clip = { 0 }, org = { 0 };
+	struct color color;
+	int have_color = 0, layer = 0, i, att = -1;
 	const struct cv *v;
 	int lh[16];
 
-	memset(&color, 0, sizeof(color));
 	buf_add(&img, "", 0);
-	while ((v = cur_peek(c))) {
-		struct cur save = *c;
-		struct color col;
+	buf_add(&pos, "", 0);
+	buf_add(&size, "", 0);
+	buf_add(&rep, "", 0);
+	buf_add(&clip, "", 0);
+	buf_add(&org, "", 0);
+	for (;;) {
+		struct buf li = { 0 }, lp = { 0 }, ls = { 0 }, lr = { 0 };
+		int boxes = 0, after_slash = 0;
 
-		if (v->type == CT_COMMA) {
-			if (have_color)
-				goto bad;	/* color only in the last layer */
-			if (!layer_img) {
-				if (img.len)
-					buf_add(&img, ", ", 2);
-				buf_add(&img, "none", 4);
-			}
-			layer_img = 0;
-			cur_next(c);
-			continue;
-		}
-		if (is_image(v) || cv_ident(v, "none")) {
-			if (!layer_img && cv_ident(v, "none")) {
-				/* none: no image in this layer */
-			}
-			if (layer_img)
+		buf_add(&li, "", 0);
+		buf_add(&lp, "", 0);
+		buf_add(&ls, "", 0);
+		buf_add(&lr, "", 0);
+		while ((v = cur_peek(c)) && v->type != CT_COMMA) {
+			struct cur save = *c;
+			struct color col;
+
+			if (is_image(v) || cv_ident(v, "none")) {
+				css_serialize(&li, v, 1);
+				cur_next(c);
+			} else if (v->type == CT_IDENT && kw_index(
+				   "repeat|repeat-x|repeat-y|no-repeat|space|"
+				   "round", v->str) >= 0) {
+				if (lr.len)
+					buf_putc(&lr, ' ');
+				css_serialize(&lr, v, 1);
+				cur_next(c);
+			} else if (v->type == CT_IDENT && kw_index(
+				   "scroll|fixed|local", v->str) >= 0) {
+				att = kw_index("scroll|fixed|local", v->str);
+				cur_next(c);
+			} else if (is_box_kw(v)) {
+				/* first box: origin, second: clip */
+				struct buf *bb = boxes++ ? &clip : &org;
+
+				css_serialize(bb, v, 1);
+				cur_next(c);
+			} else if (v->type == CT_DELIM && v->delim == '/') {
+				after_slash = 1;
+				cur_next(c);
+			} else if (v->type == CT_DIMENSION ||
+				   v->type == CT_PERCENT ||
+				   v->type == CT_NUMBER ||
+				   cv_ident(v, "left") || cv_ident(v, "right") ||
+				   cv_ident(v, "top") || cv_ident(v, "bottom") ||
+				   cv_ident(v, "center") || cv_ident(v, "auto") ||
+				   cv_ident(v, "cover") ||
+				   cv_ident(v, "contain")) {
+				struct buf *bb = after_slash ? &ls : &lp;
+
+				if (bb->len)
+					buf_putc(bb, ' ');
+				css_serialize(bb, v, 1);
+				cur_next(c);
+			} else if (parse_color(c, &col)) {
+				if (have_color)
+					goto bad;
+				color = col;
+				have_color = 1;
+			} else {
+				*c = save;
 				goto bad;
-			if (img.len)
-				buf_add(&img, ", ", 2);
-			css_serialize(&img, v, 1);
-			layer_img = 1;
-			images++;
-			cur_next(c);
-			continue;
+			}
 		}
-		if (parse_color(c, &col)) {
-			if (have_color)
-				goto bad;
-			color.color = col;
-			have_color = 1;
-			continue;
+		if (layer) {
+			buf_add(&img, ", ", 2);
+			buf_add(&pos, ", ", 2);
+			buf_add(&size, ", ", 2);
+			buf_add(&rep, ", ", 2);
 		}
-		*c = save;
-		cur_next(c);	/* position, size, repeat...: ignored */
+		buf_add(&img, li.len ? li.s : "none", li.len ? li.len : 4);
+		buf_add(&pos, lp.len ? lp.s : "0% 0%", lp.len ? lp.len : 5);
+		buf_add(&size, ls.len ? ls.s : "auto", ls.len ? ls.len : 4);
+		buf_add(&rep, lr.len ? lr.s : "repeat", lr.len ? lr.len : 6);
+		buf_free(&li);
+		buf_free(&lp);
+		buf_free(&ls);
+		buf_free(&lr);
+		layer++;
+		if (!(v = cur_next(c)))
+			break;
+		if (have_color)
+			goto bad;	/* the color only in the last layer */
 	}
 	shorthand_longhands(SH_BACKGROUND, lh);
 	for (i = 0; lh[i] >= 0; i++) {
-		struct sval *d;
+		struct sval *d = svec_add(out, lh[i]);
+		struct buf *src = lh[i] == P_BACKGROUND_IMAGE ? &img :
+			lh[i] == P_BACKGROUND_POSITION ? &pos :
+			lh[i] == P_BACKGROUND_SIZE ? &size :
+			lh[i] == P_BACKGROUND_REPEAT ? &rep :
+			lh[i] == P_BACKGROUND_CLIP ? &clip :
+			lh[i] == P_BACKGROUND_ORIGIN ? &org : NULL;
 
 		if (lh[i] == P_BACKGROUND_COLOR && have_color) {
-			d = svec_add(out, lh[i]);
-			d->color = color.color;
-		} else if (lh[i] == P_BACKGROUND_IMAGE && images) {
-			d = svec_add(out, lh[i]);
-			d->str = img.s;
-			img.s = NULL;
+			d->color = color;
+		} else if (lh[i] == P_BACKGROUND_ATTACHMENT && att >= 0) {
+			d->kw = (unsigned char)(att + 1);
+		} else if (src && src->len) {
+			d->str = xstrndup(src->s, src->len);
 		} else {
-			emit_initial(out, lh[i]);
+			d->type = SV_INITIAL;
 		}
 	}
 	buf_free(&img);
+	buf_free(&pos);
+	buf_free(&size);
+	buf_free(&rep);
+	buf_free(&clip);
+	buf_free(&org);
 	return 1;
 bad:
 	buf_free(&img);
+	buf_free(&pos);
+	buf_free(&size);
+	buf_free(&rep);
+	buf_free(&clip);
+	buf_free(&org);
 	return 0;
 }
 

@@ -264,6 +264,34 @@ reversed, edit the entry and say why; do not leave stale rules here.
   are written with `tests/painttest -u` and checked by eye before
   they are committed.
 
+## Images (phase 6)
+
+- Decoders: PNG (libpng), JPEG (libjpeg), GIF first frame (own LZW
+  decoder, transparency, interlace), SVG. libpng and libjpeg are core
+  dependencies, as the brief says; they never print (libpng's error
+  and warning hooks are silenced). WebP and AVIF are for the image
+  extension (phase 9): a page using them gets no image.
+- SVG files go through our HTML parser, which handles foreign content
+  well enough for real SVG files (<?xml?> becomes a comment), so
+  there is no XML parser. Inline <svg> and SVG files share one
+  renderer: rect, circle, ellipse, line, polyline, polygon, path (all
+  commands, arcs), g/a with transforms, fill, stroke, opacities,
+  fill-rule, currentColor, viewBox and preserveAspectRatio. Not yet:
+  text, gradients and patterns (drawn gray), clipping, masks, <use>,
+  CSS in <style>, stroke joins and caps (butt only).
+- The polygon filler is analytic in x with 4 sub-scanlines per pixel:
+  good anti-aliasing for the cost.
+- Images load through the host's fetch callback when layout needs
+  their intrinsic size, once per URL and document (failures cached
+  too). The callback and its data must stay valid as long as the
+  document is laid out and painted.
+- Backgrounds: layers with url() images, linear-gradient and
+  radial-gradient (circle from the center; shape and position are not
+  read yet), background-size (cover, contain, lengths), -position
+  (keywords, lengths, percentages), -repeat. The background shorthand
+  keeps each layer's position, size and repeat. Images are scaled
+  bilinearly; object-fit is honored.
+
 ## Character encoding
 
 - The tokenizer only ever sees valid UTF-8 with normalized newlines.

@@ -8,6 +8,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <png.h>
+#include <unistd.h>
 #include <soie/soie.h>
 
 #define W 320
@@ -28,6 +29,16 @@ static char *slurp(const char *path, size_t *len)
 	*len = fread(b, 1, (size_t)n, f);
 	fclose(f);
 	return b;
+}
+
+/* file:// URLs only: the test images. */
+static int fetch(void *data, const char *url, char **buf, size_t *len)
+{
+	(void)data;
+	if (strncmp(url, "file://", 7))
+		return -1;
+	*buf = slurp(url + 7, len);
+	return *buf ? 0 : -1;
 }
 
 static int write_png(const char *path, unsigned char *px)
@@ -112,7 +123,19 @@ int main(int argc, char **argv)
 		snprintf(ref, sizeof(ref), "%.*s.png", (int)n, argv[i]);
 		snprintf(out, sizeof(out), "%.*s.out.png", (int)n, argv[i]);
 		doc = soie_html_parse(html, len, NULL);
-		soie_style_document(doc, NULL);
+		{
+			soie_style_options o;
+			char base[2048], cwd[1024];
+
+			memset(&o, 0, sizeof(o));
+			if (!getcwd(cwd, sizeof(cwd)))
+				cwd[0] = '\0';
+			snprintf(base, sizeof(base), "file://%s/%s", cwd,
+				argv[i]);
+			o.base_url = base;
+			o.fetch = fetch;
+			soie_style_document(doc, &o);
+		}
 		soie_layout_document(doc, W, H);
 		px = malloc(W * H * 4);
 		soie_paint(doc, px, W, H, W * 4, 0, 0);
@@ -123,6 +146,14 @@ int main(int argc, char **argv)
 			   memcmp(want, px, W * H * 4)) {
 			write_png(out, px);
 			printf("FAIL %s (got %s)\n", argv[i], out);
+			if (want) {
+				int k;
+
+				for (k = 0; k < W * H * 4 && want[k] == px[k]; k++)
+					;
+				printf("  first difference at pixel %d,%d\n",
+					k / 4 % W, k / 4 / W);
+			}
 			fail++;
 			free(want);
 		} else {
