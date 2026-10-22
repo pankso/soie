@@ -58,6 +58,23 @@ reversed, edit the entry and say why; do not leave stale rules here.
   `soie_response` (method, headers, body, first party). The first
   party (the page's URL) is what cookie and blocking policies need.
 
+### The extensions shipped (phase 9)
+
+- `cookies`: RFC 6265 jar (Domain, Path, Expires, Max-Age, Secure,
+  HttpOnly, `__Secure-`/`__Host-` prefixes, deletion, per-domain and
+  total limits), kept in a Netscape `cookies.txt` (mode 0600) under
+  `$XDG_DATA_HOME/soie/`, written when a persistent cookie changes;
+  session cookies stay in memory.
+  Third-party cookies are refused both ways: a request whose site
+  differs from the page's gets no jar at all. Simpler than SameSite
+  bookkeeping and what Safari and Brave do; it breaks a few
+  cross-site logins, which is the price of not being tracked.
+  Without the public suffix list (190 KB, needs updates), the site is
+  guessed: the last two labels, three under a country code whose
+  second level is a usual registry name (`co.uk`, `com.au`, `ne.jp`).
+  Wrong for private suffixes like `blogspot.com`; never lets
+  `Domain=co.uk` through.
+
 ## Public API
 
 - Opaque types and accessor functions (`soie_node_parent()`, ...),

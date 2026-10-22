@@ -42,7 +42,7 @@ INTERNAL = lib/internal.h lib/parser.h lib/tags.h lib/css.h lib/props.h \
 
 # Extensions: those without dependencies always, the others when
 # their libraries are there (or list them: make EXTS="ext/cookies.so").
-EXTS =
+EXTS = ext/cookies.so
 
 all: lib/libsoie.a lib/libsoie.so.$(SOVERSION) tools/soie-render browser/soie \
 	$(EXTS)
