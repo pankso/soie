@@ -2405,7 +2405,8 @@ static void parser_run(struct parser *p, const char *buf, size_t len,
 	cs = charset_sniff((const unsigned char *)buf, len,
 		opts ? opts->charset : NULL, &bom);
 	charset_decode(cs, (const unsigned char *)buf + bom, len - bom, &in);
-	p->doc->u.doc.charset = cs;
+	if (!p->context)
+		p->doc->u.doc.charset = cs;
 	p->in = in.s;
 	p->len = in.len;
 	p->scripting = opts ? opts->scripting : 0;

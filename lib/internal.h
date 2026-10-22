@@ -57,6 +57,10 @@ struct soie_node {
 	unsigned short tag;
 	struct soie_node *doc;
 	struct soie_node *parent, *first, *last, *prev, *next;
+	/* Every node of a document, attached or not, so that freeing the
+	 * document frees nodes a script took out of the tree. */
+	struct soie_node *anext, *aprev;
+	void *user;		/* soie_node_set_user() */
 	const char *name;	/* element local name, doctype name */
 	union {
 		struct {
@@ -81,6 +85,8 @@ struct soie_node {
 			struct images *images;
 			struct soie_node *focus;	/* form control */
 			int caret;
+			struct soie_node *all;	/* anext list */
+			unsigned long gen;	/* bumped by every change */
 		} doc;
 	} u;
 };

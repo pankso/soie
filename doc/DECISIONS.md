@@ -56,11 +56,17 @@ reversed, edit the entry and say why; do not leave stale rules here.
 
 ## Memory and ownership
 
-- Nodes are malloc'ed one by one; a document owns its tree and
-  `soie_node_free(document)` frees everything. A node removed from
-  the tree is detached and becomes the caller's to free (or reinsert).
-  An arena would be faster, but mutation from scripts needs
-  individual frees.
+- Nodes are malloc'ed one by one; a document owns every node created
+  for it, in the tree or not (a doubly linked list through all of
+  them, two pointers per node), and `soie_node_free(document)` frees
+  everything. A node removed from the tree stays valid until then, so
+  a script can keep it and reinsert it; nobody has to know whether a
+  script engine still holds a detached node. The cost: nodes a page
+  creates and drops live as long as the page.
+  `soie_node_free()` on a node still frees it early.
+- Each node has one `user` pointer for the host (a script engine's
+  wrapper object), and the document a change counter bumped by every
+  tree, attribute or text change: the host restyles when it moved.
 - Allocation failure aborts the process with a message, like glib.
   Checking every malloc in a parser doubles its size for a case
   Linux overcommit almost never reports; API functions therefore do

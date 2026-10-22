@@ -158,6 +158,12 @@ struct soie_node *node_new(struct soie_node *doc, int type)
 	n->type = (unsigned char)type;
 	n->doc = doc ? doc : n;
 	n->name = "";
+	if (doc) {
+		n->anext = doc->u.doc.all;
+		if (n->anext)
+			n->anext->aprev = n;
+		doc->u.doc.all = n;
+	}
 	return n;
 }
 
@@ -376,6 +382,7 @@ int soie_element_set_attr(soie_node *n, const char *name, const char *value)
 	} else {
 		element_add_attr(n, SOIE_NS_NONE, name, value, strlen(value));
 	}
+	n->doc->u.doc.gen++;
 	return 0;
 }
 
@@ -391,6 +398,7 @@ int soie_element_remove_attr(soie_node *n, const char *name)
 	free(a->value);
 	memmove(a, a + 1, (n->u.el.nattrs - i - 1) * sizeof(*a));
 	n->u.el.nattrs--;
+	n->doc->u.doc.gen++;
 	return 0;
 }
 
@@ -419,7 +427,16 @@ int soie_node_set_data(soie_node *n, const char *s, size_t len)
 		return -1;
 	n->u.text.len = 0;
 	text_append(n, s, len);
+	n->doc->u.doc.gen++;
 	return 0;
+}
+
+void soie_node_set_user(soie_node *n, void *p) { n->user = p; }
+void *soie_node_user(const soie_node *n) { return n->user; }
+
+unsigned long soie_document_generation(const soie_node *doc)
+{
+	return doc->doc->u.doc.gen;
 }
 
 /* Mutation */
@@ -439,6 +456,7 @@ void node_detach(struct soie_node *n)
 	else
 		p->last = n->prev;
 	n->parent = n->prev = n->next = NULL;
+	n->doc->u.doc.gen++;
 }
 
 /* Insert without checks; ref is NULL to append. */
@@ -457,6 +475,7 @@ void node_insert(struct soie_node *parent, struct soie_node *child,
 		ref->prev = child;
 	else
 		parent->last = child;
+	parent->doc->u.doc.gen++;
 }
 
 int soie_node_insert_before(soie_node *parent, soie_node *child,
@@ -495,6 +514,7 @@ void soie_node_remove(soie_node *n)
 
 static void node_free_one(soie_node *n)
 {
+	soie_node *a;
 	unsigned i;
 
 	switch (n->type) {
@@ -523,7 +543,25 @@ static void node_free_one(soie_node *n)
 		fonts_drop_document(n);
 		if (n->u.doc.images)
 			images_free(n->u.doc.images);
+		/* every node left, attached or not; template contents
+		 * are on the list too */
+		for (a = n->u.doc.all; a; a = a->anext)
+			if (a->type == SOIE_ELEMENT)
+				a->u.el.content = NULL;
+		while (n->u.doc.all)
+			node_free_one(n->u.doc.all);
 		break;
+	default:
+		break;
+	}
+	if (n->doc != n) {
+		a = n->doc;
+		if (n->aprev)
+			n->aprev->anext = n->anext;
+		else
+			a->u.doc.all = n->anext;
+		if (n->anext)
+			n->anext->aprev = n->aprev;
 	}
 	if (n->name_owned)
 		free((char *)n->name);

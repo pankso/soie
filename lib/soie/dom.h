@@ -1,9 +1,10 @@
 /*
  * Soie DOM: a tree of opaque nodes, read and changed through functions.
  *
- * A document owns every node created for it. soie_node_free() on the
- * document frees the whole tree. A node taken out of the tree with
- * soie_node_remove() is the caller's: reinsert it or free it.
+ * A document owns every node created for it, in the tree or not:
+ * soie_node_free() on the document frees them all. A node taken out
+ * of the tree with soie_node_remove() stays valid until then, so it
+ * can be reinserted; soie_node_free() on it releases it earlier.
  */
 #ifndef SOIE_DOM_H
 #define SOIE_DOM_H
@@ -90,6 +91,14 @@ int soie_node_insert_before(soie_node *parent, soie_node *child,
 void soie_node_remove(soie_node *n);
 /* Free a node and its subtree. The node is removed first if needed. */
 void soie_node_free(soie_node *n);
+
+/* One pointer per node for the host (a script engine's wrapper). */
+void soie_node_set_user(soie_node *n, void *p);
+void *soie_node_user(const soie_node *n);
+
+/* A counter bumped by every change to the tree, attributes or text:
+ * the host restyles when it moved. */
+unsigned long soie_document_generation(const soie_node *doc);
 
 /*
  * Dump a node (or the children of a document or fragment) in the
