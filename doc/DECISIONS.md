@@ -179,9 +179,17 @@ reversed, edit the entry and say why; do not leave stale rules here.
   absolute and fixed positioning, inline-blocks with shrink-to-fit
   widths, replaced elements with intrinsic sizes and ratios,
   ::before/::after with strings, attr() and quotes, list markers.
-- Tables, flex and grid are laid out as blocks for now. Flex and grid
-  are phase 8. Tables are in no phase of the brief, but old pages are
-  made of them: they get their own step right after phase 3.
+- Tables (an extra step after phase 3, the brief has none) follow CSS
+  2 chapter 17: anonymous table objects (orphan cells get a table),
+  thead first and tfoot last, colspan/rowspan, the automatic layout
+  (column min/max widths, spanning cells spread over their columns,
+  extra width to auto columns only) and the fixed one, percentage
+  columns, border-spacing, captions top or bottom, cells stretched to
+  their rows and aligned top/middle/bottom (baseline counts as top).
+  border-collapse: collapse only drops the spacing: borders are not
+  merged yet. Quirks mode tables reset inherited font and text-align
+  (HTML 15.3.6), and -webkit-center centers block children, as in
+  browsers: old pages rely on both.
 - Text measurement goes through font_metrics() and text_width() in
   lib/text.c. Until phase 4 they are a stub: every character is
   0.5em wide, ascent 0.75em, descent 0.25em, normal line-height
@@ -264,7 +272,11 @@ reversed, edit the entry and say why; do not leave stale rules here.
   comes before phase 4). Layout talks to a small text-measurement
   interface; phase 3 ships a fixed-advance stub, phase 4 plugs in
   FreeType + HarfBuzz behind the same interface.
-- The browser's TLS is mbedTLS 3.6 LTS rather than BearSSL. BearSSL
-  has had no release since 2018 and does not speak TLS 1.3; mbedTLS
-  is maintained and has an LTS branch. The SliTaz wok only has
-  mbedtls 2.6.0, so the receipt needs a bump when the browser lands.
+- The browser's TLS is GnuTLS, not BearSSL nor mbedTLS. BearSSL has
+  had no release since 2018 and no TLS 1.3; SliTaz only packages
+  mbedtls 2.6.0 (no TLS 1.3 either), while gnutls-dev is installed,
+  maintained, speaks TLS 1.3 and reads the system CA store. TLS stays
+  behind a small interface in the browser, so it can be swapped.
+- HarfBuzz is optional (`make HARFBUZZ=0`): FreeType alone shapes
+  Latin, Greek and Cyrillic (cmap, advances, legacy kerning); HarfBuzz
+  adds GPOS kerning, ligatures and complex scripts. Default on.
