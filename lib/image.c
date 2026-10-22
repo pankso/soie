@@ -12,6 +12,7 @@
 #include <jpeglib.h>
 #include "image.h"
 
+#define LATER 2		/* image->failed: asked, not there yet */
 #define LARGE (256 << 10)	/* decoded later than this many bytes */
 #define BUDGET (32 << 20)	/* large images decoded at once */
 
@@ -414,7 +415,7 @@ const struct image *image_get(soie_node *doc, const char *url)
 	struct image *x;
 	char *abs, *buf = NULL;
 	size_t len = 0;
-	int i;
+	int i, r;
 
 	if (!im || !url || !*url)
 		return NULL;
@@ -422,7 +423,10 @@ const struct image *image_get(soie_node *doc, const char *url)
 	for (i = 0; i < im->n; i++)
 		if (!strcmp(im->v[i].url, abs)) {
 			free(abs);
-			return im->v[i].failed ? NULL : &im->v[i];
+			x = &im->v[i];
+			if (x->failed == LATER)
+				goto fetch;	/* arrived by now? */
+			return x->failed ? NULL : x;
 		}
 	if (im->n == im->cap) {
 		im->cap = im->cap ? im->cap * 2 : 16;
@@ -431,8 +435,12 @@ const struct image *image_get(soie_node *doc, const char *url)
 	x = &im->v[im->n++];
 	memset(x, 0, sizeof(*x));
 	x->url = abs;
-	if (!im->fetch || im->fetch(im->data, abs, &buf, &len) || !buf ||
-	    !decode_image((unsigned char *)buf, len, x))
+fetch:
+	x->failed = 0;
+	r = im->fetch ? im->fetch(im->data, x->url, &buf, &len) : -1;
+	if (r == SOIE_FETCH_LATER)
+		x->failed = LATER;
+	else if (r || !buf || !decode_image((unsigned char *)buf, len, x))
 		x->failed = 1;
 	if (x->rgba && (size_t)x->w * (size_t)x->h * 4 > LARGE) {
 		/* keep the bytes, decode again when painted */

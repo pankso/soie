@@ -9,10 +9,15 @@
 #include "ext.h"
 
 /*
- * Fetch the resource at url (style sheets, for now). On success return
- * 0 with *buf a malloc'ed buffer the library frees, and *len its size.
- * The engine never opens a socket: this is the host's job.
+ * Fetch the resource at url (style sheets, fonts, images). On success
+ * return 0 with *buf a malloc'ed buffer the library frees, and *len
+ * its size; -1 on failure. A host that loads in the background returns
+ * SOIE_FETCH_LATER while the bytes are on their way: the library goes
+ * on without them and asks again at the next soie_style_document()
+ * (style sheets, fonts) or layout and paint (images). The engine never
+ * opens a socket: this is the host's job.
  */
+#define SOIE_FETCH_LATER 1
 typedef int (*soie_fetch_fn)(void *data, const char *url, char **buf,
 	size_t *len);
 

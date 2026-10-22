@@ -161,6 +161,7 @@ struct styledb {
 	/* What the rules were built from, to reuse them on a restyle */
 	unsigned sig;
 	int sel_flags;		/* SF_*: what changes can reach */
+	int incomplete;		/* a sheet or font comes later */
 	struct sellist **anchors;	/* selectors with a deep :has() */
 	int nanchors, capanchors;
 	float rem;		/* the root's font size */
@@ -659,10 +660,14 @@ static void fetch_sheet(struct styledb *db, const char *url,
 	struct buf text = { 0 };
 	char *buf = NULL;
 	size_t len = 0;
+	int r;
 
 	if (!o || !o->fetch || pc->depth > 16)
 		return;
-	if (o->fetch(o->fetch_data, url, &buf, &len) || !buf)
+	r = o->fetch(o->fetch_data, url, &buf, &len);
+	if (r == SOIE_FETCH_LATER)
+		db->incomplete = 1;
+	if (r || !buf)
 		return;
 	decode_css(db, buf, len, &text);
 	free(buf);
@@ -2002,7 +2007,7 @@ static void load_font_face(struct styledb *db, const void *doc,
 	struct cvlist l;
 	struct crule tmp;
 	struct buf fam = { 0 };
-	int i, weight = 0, italic = 0;
+	int i, r, weight = 0, italic = 0;
 	const struct decl *src = NULL;
 
 	memset(&tmp, 0, sizeof(tmp));
@@ -2052,9 +2057,12 @@ static void load_font_face(struct styledb *db, const void *doc,
 				ascii_ieq(f->kids.v[0].str, "svg")))
 				url = NULL;
 		}
-		if (!url || !db->opts || !db->opts->fetch ||
-		    db->opts->fetch(db->opts->fetch_data, url, &buf, &len) ||
-		    !buf)
+		if (!url || !db->opts || !db->opts->fetch)
+			continue;
+		r = db->opts->fetch(db->opts->fetch_data, url, &buf, &len);
+		if (r == SOIE_FETCH_LATER)
+			db->incomplete = 1;
+		if (r || !buf)
 			continue;
 		if (font_add_memory(doc, fam.s, (unsigned char *)buf, len,
 				    weight, italic))
@@ -2533,6 +2541,8 @@ cascade:
 	}
 	clear_marks(doc);
 	save_options(db, opts);
+	if (db->incomplete)
+		db->sig = 0;	/* rebuild next time: a sheet or font came */
 	doc->u.doc.styled_gen = doc->u.doc.gen;
 	db->opts = NULL;
 	db->base = NULL;

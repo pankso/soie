@@ -135,13 +135,15 @@ tests/unit: tests/unit.o lib/libsoie.a
 
 # The browser: Xlib, GnuTLS, zlib.
 BROWSER_PKGS = x11 gnutls zlib libpng
-browser/soie: browser/soie.o browser/net.o lib/libsoie.so.$(SOVERSION)
-	$(CC) $(LDFLAGS) $(RPATH) -o $@ browser/soie.o browser/net.o \
+browser/soie: browser/soie.o browser/net.o browser/fetch.o \
+	lib/libsoie.so.$(SOVERSION)
+	$(CC) $(LDFLAGS) $(RPATH) -o $@ browser/soie.o browser/net.o browser/fetch.o \
 		lib/libsoie.so.$(SOVERSION) $(LIBS) \
 		$(shell pkg-config --libs $(BROWSER_PKGS)) -lpthread
 
-browser/soie.o browser/net.o: browser/net.h $(HEADERS)
-browser/soie.o browser/net.o: CPPFLAGS += \
+browser/soie.o browser/net.o browser/fetch.o: browser/net.h browser/fetch.h \
+	$(HEADERS)
+browser/soie.o browser/net.o browser/fetch.o: CPPFLAGS += \
 	$(shell pkg-config --cflags $(BROWSER_PKGS)) -DSOIE_EXT_DIR='"$(EXTDIR)"'
 tools/soie-render.o: CPPFLAGS += -DSOIE_EXT_DIR='"$(EXTDIR)"'
 

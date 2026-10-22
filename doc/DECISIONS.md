@@ -400,10 +400,27 @@ reversed, edit the entry and say why; do not leave stale rules here.
   redirects (10 at most; 303 and old 301/302 become GET), chunked
   bodies, gzip and deflate (zlib), 20 s timeouts, file:// URLs. TLS
   through GnuTLS with the system trust store, SNI, certificate and
-  host name verification. One request at a time and the UI waits:
-  simple first; parallel and progressive loading can come later.
-- Sub-resources (style sheets, images, fonts) go through the engine's
-  fetch callback and are cached per page.
+  host name verification.
+- Loading is in the background (browser/fetch.c): six threads run the
+  requests, the page's own, its style sheets and scripts before its
+  images; a pipe wakes the X loop when one finishes. The page on
+  screen stays, and works, until the new one is laid out. Stages: the
+  page's bytes; then everything it names (style sheets, scripts,
+  module preloads, images) asked for at once; the first paint once
+  the style sheets are in; the scripts once all of them are; images,
+  fonts and late sheets as they come (relayout or restyle, at most
+  every 200 ms). A "Loading (N)..." line shows what is on its way.
+- For that the engine's fetch callback may answer SOIE_FETCH_LATER:
+  the engine goes on without the bytes (no image, no sheet) and asks
+  again at the next layout or restyle.
+- Scripts are given their bytes, images too (the engine keeps them):
+  the cache only keeps what a restyle needs again (style sheets).
+- Measured against the one-request-at-a-time browser, rendering to
+  PNG: Wikipedia 12.2 s to 3.7, Le Monde 38 to 15, GitHub 44 to 6.7
+  (most of it was its 84 ES modules, fetched one by one by the module
+  loader before; now preloaded). Same memory without scripts.
+- Still HTTP/1.1 with a new connection per request: keep-alive would
+  save a TLS handshake per resource.
 - Forms: text-like inputs, password, textarea, checkbox, radio,
   select (a click cycles the options), submit buttons and Enter;
   GET and POST in application/x-www-form-urlencoded. No file upload,
@@ -497,9 +514,10 @@ reversed, edit the entry and say why; do not leave stale rules here.
   host asks `soie_script_tick()` for the delay to the next one and
   waits on its event loop meanwhile. Promise jobs run after every
   entry into JS.
-- Networking is the host's blocking request: fetch() and asynchronous
-  XHR do it from a task, so callers' code runs first as on the web;
-  the UI waits during the request. Response bodies are bytes as a
+- Networking for scripts is the host's blocking request: fetch() and
+  asynchronous XHR do it from a task, so callers' code runs first as
+  on the web; the UI waits during those requests (the page's own
+  scripts come from the background fetches). Response bodies are bytes as a
   Latin-1 string, decoded to text by text()/json().
 - Only what pages use most, the rest absent so that feature tests
   fail cleanly: no shadow DOM, iframes are empty, canvas has no

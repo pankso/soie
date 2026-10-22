@@ -21,6 +21,7 @@
 #include <X11/cursorfont.h>
 #include <soie/soie.h>
 #include "net.h"
+#include "fetch.h"
 
 #define BAR 34			/* toolbar height */
 #define HOME "about:soie"
@@ -51,12 +52,22 @@ static const char home_html[] =
 	"<code>F5</code> reload, <code>Ctrl+L</code> address bar, "
 	"<code>Ctrl+Q</code> quit.</p>";
 
-/* Resources of the current page, fetched once. */
+/*
+ * Resources of the current page, fetched once, in the background:
+ * the page's style sheets and scripts first, then the rest.
+ */
+enum { K_DOC, K_STYLE, K_SCRIPT, K_IMAGE };	/* job kinds */
+enum { R_PENDING, R_DONE, R_FAILED, R_GIVEN };	/* GIVEN: to the engine */
 struct res {
 	char *url;
 	char *data;
 	size_t len;
+	int state, kind;
 };
+
+/* Loading stages: the page's bytes, its style sheets (the first paint
+ * waits for them), its scripts (they run in order once all are here) */
+enum { L_NONE, L_DOC, L_STYLE, L_SCRIPTS };
 
 static struct {
 	char url[4096];
@@ -67,7 +78,19 @@ static struct {
 	int nres;
 	char base[4096];
 	char *user_css;		/* from the content extensions */
+	unsigned gen;		/* bumped by each load: older jobs drop */
+	int loading;		/* L_* */
+	int push;		/* the history action of the load */
+	char *want;		/* the URL being loaded */
+	int restyle, relayout;	/* late style sheets, late images */
+	double laid_out;	/* when, for throttling */
+	soie_node *old;		/* on screen until the new one is laid out */
+	int old_scroll;
 } page;
+
+static int fetch_fd = -1;	/* readable when jobs finish */
+static int in_style;		/* page_fetch() called by the cascade */
+static struct job *deferred;	/* a page that came while scripts ran */
 
 static struct {
 	char *url[256];
@@ -79,6 +102,7 @@ static soie_node *chrome;
 static soie_node *focus;	/* focused page control */
 static int caret;
 static int url_focus, url_caret;
+static int url_fresh;		/* just focused: typing replaces it all */
 static int win_w = 1024, win_h = 768;
 static char status[4096];
 static int scripts = 1;		/* -s turns JavaScript off */
@@ -96,40 +120,80 @@ static Cursor cur_arrow, cur_hand, cur_text;
 
 /* Fetching */
 
-static int page_fetch(void *data, const char *url, char **buf, size_t *len)
+static double now_s(void);
+
+static struct res *res_find(const char *url)
 {
-	soie_request rq;
-	struct response r;
 	int i;
 
-	(void)data;
 	for (i = 0; i < page.nres; i++)
-		if (!strcmp(page.res[i].url, url)) {
-			if (!page.res[i].data)
-				return -1;
-			*buf = malloc(page.res[i].len + 1);
-			memcpy(*buf, page.res[i].data, page.res[i].len);
-			*len = page.res[i].len;
-			return 0;
-		}
+		if (!strcmp(page.res[i].url, url))
+			return &page.res[i];
+	return NULL;
+}
+
+/* Queue a resource of the page; urgent unless it is an image. */
+static struct res *res_add(const char *url, int kind)
+{
+	struct res *r;
+
 	page.res = realloc(page.res, (size_t)(page.nres + 1) *
 		sizeof(*page.res));
-	page.res[page.nres].url = strdup(url);
-	page.res[page.nres].data = NULL;
-	page.res[page.nres].len = 0;
-	page.nres++;
-	memset(&rq, 0, sizeof(rq));
-	rq.url = url;
-	rq.first_party = page.url;
-	if (net_fetch(&rq, &r) || r.status >= 400) {
-		response_free(&r);
-		return -1;
+	if (!page.res)
+		abort();
+	r = &page.res[page.nres++];
+	memset(r, 0, sizeof(*r));
+	r->url = strdup(url);
+	r->kind = kind;
+	r->state = R_PENDING;
+	fetch_add(url, NULL, page.url, kind, page.gen, kind != K_IMAGE);
+	return r;
+}
+
+static int res_pending(int kind)
+{
+	int i, n = 0;
+
+	for (i = 0; i < page.nres; i++)
+		if (page.res[i].state == R_PENDING &&
+		    (kind < 0 || page.res[i].kind == kind))
+			n++;
+	return n;
+}
+
+/*
+ * The engine's fetch: what has arrived, or "later" while it is on its
+ * way (the engine asks again after the next restyle or relayout).
+ */
+static int page_fetch(void *data, const char *url, char **buf, size_t *len)
+{
+	struct res *r = res_find(url);
+
+	(void)data;
+	if (r && r->state == R_GIVEN) {
+		/* asked twice: fetch it again */
+		r->state = R_PENDING;
+		fetch_add(url, NULL, page.url, r->kind, page.gen, 0);
 	}
-	page.res[page.nres - 1].data = r.body;
-	page.res[page.nres - 1].len = r.len;
-	*buf = malloc(r.len + 1);
-	memcpy(*buf, r.body, r.len);
-	*len = r.len;
+	if (!r)
+		r = res_add(url, in_style ? K_STYLE : K_IMAGE);
+	if (r->state == R_PENDING)
+		return SOIE_FETCH_LATER;
+	if (r->state == R_FAILED || !r->data)
+		return -1;
+	if (r->kind == K_IMAGE) {
+		/* the engine keeps images: no second copy here */
+		*buf = r->data;
+		*len = r->len;
+		r->data = NULL;
+		r->state = R_GIVEN;
+		return 0;
+	}
+	*buf = malloc(r->len + 1);
+	if (!*buf)
+		abort();
+	memcpy(*buf, r->data, r->len);
+	*len = r->len;
 	return 0;
 }
 
@@ -250,7 +314,53 @@ static void js_scroll(void *data, float x, float y)
 	page.scroll = (int)y;
 }
 
-static const soie_script_host js_host = { NULL, net_request, js_navigate,
+static void collect_jobs(int nested);
+
+/*
+ * Scripts' requests: what the page already fetched (its scripts), waited
+ * for if still on its way; anything else straight to the network.
+ */
+static int page_request(void *data, const soie_request *req,
+	soie_response *res)
+{
+	struct res *r = NULL;
+	struct pollfd p;
+
+	if (!req->body && (!req->method || !strcmp(req->method, "GET")))
+		r = res_find(req->url);
+	if (!r || r->state == R_GIVEN)
+		return net_request(data, req, res);
+	while (r->state == R_PENDING) {
+		p.fd = fetch_fd;
+		p.events = POLLIN;
+		poll(&p, 1, 1000);
+		collect_jobs(1);
+		r = res_find(req->url);	/* the table may have moved */
+	}
+	if (r->state == R_FAILED)
+		return -1;
+	memset(res, 0, sizeof(*res));
+	res->status = 200;
+	res->url = strdup(req->url);
+	res->headers = strdup("");
+	if (!res->url || !res->headers)
+		abort();
+	res->len = r->len;
+	if (r->kind == K_SCRIPT) {
+		/* run once: no second copy here */
+		res->body = r->data;
+		r->data = NULL;
+		r->state = R_GIVEN;
+		return 0;
+	}
+	res->body = malloc(r->len + 1);
+	if (!res->body)
+		abort();
+	memcpy(res->body, r->data, r->len);
+	return 0;
+}
+
+static const soie_script_host js_host = { NULL, page_request, js_navigate,
 	js_message, js_viewport, js_scroll };
 
 /* Send a DOM event to the page; 1 when a script cancelled it. */
@@ -303,13 +413,16 @@ static void relayout(void)
 	so.fetch = page_fetch;
 	so.user_css = page.user_css;
 	so.request = net_request;	/* audio and video */
+	in_style = 1;
 	soie_style_document(page.doc, &so);
+	in_style = 0;
 	soie_layout_document(page.doc, win_w, win_h - BAR);
 	layout_done();
 }
 
 static void layout_done(void)
 {
+	page.laid_out = now_s();
 	page.height = soie_layout_height(page.doc);
 	soie_set_focus(page.doc, focus, caret);
 	clamp_scroll();
@@ -341,21 +454,35 @@ static void redraw(void)
 
 	if (!dpy)
 		return;
-	soie_paint(page.doc, rgba + (size_t)win_w * BAR * 4, win_w,
-		win_h - BAR, win_w * 4, 0, page.scroll);
+	/* until the new page is laid out, the old one stays */
+	if (!page.doc || soie_paint(page.doc, rgba + (size_t)win_w * BAR * 4,
+	    win_w, win_h - BAR, win_w * 4, 0, page.scroll))
+		if (!page.old || soie_paint(page.old, rgba +
+		    (size_t)win_w * BAR * 4, win_w, win_h - BAR, win_w * 4, 0,
+		    page.old_scroll))
+			memset(rgba + (size_t)win_w * BAR * 4, 255,
+				(size_t)win_w * (size_t)(win_h - BAR) * 4);
 	soie_paint(chrome, rgba, win_w, BAR, win_w * 4, 0, 0);
-	if (*status) {
-		/* the hovered link, bottom left */
+	if (*status || page.loading || res_pending(-1)) {
+		/* the hovered link, or the loading, bottom left */
 		static soie_node *sdoc;
 		char html[4300];
 		int sw = win_w / 2, sh = 22;
 
 		if (sdoc)
 			soie_node_free(sdoc);
-		snprintf(html, sizeof(html), "<body style='margin:0;font:12px "
-			"sans-serif;background:#f0f0f0;border:1px solid #aaa;"
-			"padding:3px;white-space:nowrap;overflow:hidden'>%s",
-			status);
+		if (*status)
+			snprintf(html, sizeof(html), "<body style='margin:0;"
+				"font:12px sans-serif;background:#f0f0f0;border:1px "
+				"solid #aaa;padding:3px;white-space:nowrap;"
+				"overflow:hidden'>%s", status);
+		else
+			snprintf(html, sizeof(html), "<body style='margin:0;"
+				"font:12px sans-serif;background:#f0f0f0;border:1px "
+				"solid #aaa;padding:3px;white-space:nowrap;"
+				"overflow:hidden'>Loading%s (%d)...",
+				page.loading == L_DOC ? " the page" : "",
+				res_pending(-1));
 		sdoc = soie_html_parse(html, strlen(html), NULL);
 		soie_style_document(sdoc, NULL);
 		soie_layout_document(sdoc, sw, sh);
@@ -514,36 +641,82 @@ static void scroll_to_fragment(void)
 	clamp_scroll();
 }
 
-/* push: 1 adds a history entry, 2 replaces the current one */
-static void load(const char *url, const char *post, int push)
+static void set_page_focus_none(void)
 {
-	soie_request rq = { NULL, NULL, NULL, NULL, 0, NULL };
-	struct response r;
+	focus = NULL;
+}
+
+static void first_render(void);
+static void start_scripts(void);
+
+static int scripts_on(void)
+{
+	return scripts && soie_ext_get(SOIE_EXT_SCRIPT, 0) != NULL;
+}
+
+/* What the page needs, all asked for at once, sheets and scripts
+ * first: the network works in parallel while we wait. */
+static void prefetch(void)
+{
+	static const char *const sel[] = {
+		"link[rel~=stylesheet i][href]", "script[src]",
+		"link[rel~=modulepreload i][href]",
+		"link[rel~=preload i][as=script i][href]", "img[src]",
+		"video[poster]", "input[type=image i][src]", NULL };
+	static const int kind[] = { K_STYLE, K_SCRIPT, K_SCRIPT, K_SCRIPT,
+		K_IMAGE, K_IMAGE, K_IMAGE };
+	static const char *const attr[] = { "href", "src", "href", "href",
+		"src", "poster", "src" };
+	soie_node **v, *b;
+	size_t n, i;
+	char *base, *u;
+	int k;
+
+	v = soie_query(page.doc, "base[href]", 1, &n);
+	b = v && n ? v[0] : NULL;
+	base = b ? soie_url_resolve(page.url, soie_element_get_attr(b,
+		"href")) : strdup(page.url);
+	free(v);
+	for (k = 0; sel[k]; k++) {
+		if (kind[k] == K_SCRIPT && !scripts_on())
+			continue;
+		v = soie_query(page.doc, sel[k], 0, &n);
+		for (i = 0; v && i < n; i++) {
+			u = soie_url_resolve(base, soie_element_get_attr(v[i],
+				attr[k]));
+			if (u && strncmp(u, "data:", 5) && !res_find(u))
+				res_add(u, kind[k]);
+			free(u);
+		}
+		free(v);
+	}
+	free(base);
+}
+
+/* The page's bytes arrived: parse them, ask for what it needs. */
+static void doc_arrived(struct job *j)
+{
 	soie_html_options ho = { NULL, 0 };
-	int js = scripts && soie_ext_get(SOIE_EXT_SCRIPT, 0) != NULL;
+	struct response *r = &j->r;
 	char *html = NULL;
 	const char *src;
 	size_t len;
+	int push = page.push;
 
-	if (page.doc && push && hist.cur >= 0)
-		hist.scroll[hist.cur] = page.scroll;
 	drop_resources();
-	focus = NULL;
-	if (page.doc)
-		soie_node_free(page.doc);
+	set_page_focus_none();
+	if (page.old)
+		soie_node_free(page.old);
+	page.old = page.doc;
+	page.old_scroll = page.scroll;
+	if (page.old)
+		soie_script_stop(page.old);	/* no more events, timers */
 	page.doc = NULL;
-	memset(&r, 0, sizeof(r));
-	rq.url = url;
-	rq.body = post;
-	rq.body_len = post ? strlen(post) : 0;
-	if (!strcmp(url, HOME)) {
-		snprintf(page.url, sizeof(page.url), "%s", HOME);
-		page.doc = soie_html_parse(home_html, strlen(home_html), NULL);
-	} else if (net_fetch(&rq, &r)) {
-		char *e = escape_html(r.error), *u = escape_html(url);
+	if (!j->ok) {
+		char *e = escape_html(r->error), *u = escape_html(j->url);
 		char buf[9000];
 
-		snprintf(page.url, sizeof(page.url), "%s", url);
+		snprintf(page.url, sizeof(page.url), "%s", j->url);
 		snprintf(buf, sizeof(buf), "<!DOCTYPE html><title>Error</title>"
 			"<body style='font-family:sans-serif;margin:3em'>"
 			"<h1>Cannot open this page</h1><p>%s</p><p>%s</p>", u,
@@ -552,13 +725,13 @@ static void load(const char *url, const char *post, int push)
 		free(e);
 		free(u);
 	} else {
-		snprintf(page.url, sizeof(page.url), "%s", r.url);
-		ho.charset = *r.charset ? r.charset : NULL;
-		ho.scripting = js;
-		src = r.body ? r.body : "";
-		len = r.len;
-		if (!strncmp(r.type, "image/", 6)) {
-			char *u = escape_html(r.url);
+		snprintf(page.url, sizeof(page.url), "%s", r->url);
+		ho.charset = *r->charset ? r->charset : NULL;
+		ho.scripting = scripts_on();
+		src = r->body ? r->body : "";
+		len = r->len;
+		if (!strncmp(r->type, "image/", 6)) {
+			char *u = escape_html(r->url);
 
 			html = malloc(strlen(u) + 100);
 			sprintf(html, "<body style='margin:0;background:#333'>"
@@ -566,15 +739,18 @@ static void load(const char *url, const char *post, int push)
 			free(u);
 			/* keep the bytes: the image comes from the cache */
 			page.res = malloc(sizeof(*page.res));
-			page.res[0].url = strdup(r.url);
-			page.res[0].data = r.body;
-			page.res[0].len = r.len;
+			memset(page.res, 0, sizeof(*page.res));
+			page.res[0].url = strdup(r->url);
+			page.res[0].data = r->body;
+			page.res[0].len = r->len;
+			page.res[0].state = R_DONE;
+			page.res[0].kind = K_IMAGE;
 			page.nres = 1;
-			r.body = NULL;
+			r->body = NULL;
 			src = html;
 			len = strlen(html);
-		} else if (!strncmp(r.type, "text/", 5) &&
-			   strcmp(r.type, "text/html")) {
+		} else if (!strncmp(r->type, "text/", 5) &&
+			   strcmp(r->type, "text/html")) {
 			char *t = escape_html(src);
 
 			html = malloc(strlen(t) + 64);
@@ -587,7 +763,6 @@ static void load(const char *url, const char *post, int push)
 		page.doc = soie_html_parse(src, len, &ho);
 		free(html);
 	}
-	response_free(&r);
 	free(page.user_css);
 	page.user_css = soie_ext_user_css(NULL, page.url);
 	soie_ext_document(page.doc, page.url);
@@ -611,13 +786,25 @@ static void load(const char *url, const char *post, int push)
 		hist.scroll[hist.cur] = 0;
 		hist.n = hist.cur + 1;
 	}
+	page.scroll = 0;
+	prefetch();
+	page.loading = L_STYLE;
+	if (!res_pending(K_STYLE))
+		first_render();
+}
+
+/* The style sheets are here: lay out and show the page. */
+static void first_render(void)
+{
+	page.restyle = page.relayout = 0;
 	relayout();
+	if (page.old) {
+		soie_node_free(page.old);
+		page.old = NULL;
+	}
 	meta_refresh();
-	if (js && strcmp(page.url, HOME) &&
-	    !soie_script_start(page.doc, page.url, &js_host))
-		after_scripts();
 	scroll_to_fragment();
-	if (!push && hist.cur >= 0 && hist.cur < hist.n)
+	if (!page.push && hist.cur >= 0 && hist.cur < hist.n)
 		page.scroll = hist.scroll[hist.cur];
 	clamp_scroll();
 	set_title();
@@ -628,6 +815,132 @@ static void load(const char *url, const char *post, int push)
 		url_focus = 0;
 		chrome_update();
 	}
+	page.loading = scripts_on() && strcmp(page.url, HOME) ? L_SCRIPTS :
+		L_NONE;
+	if (page.loading == L_SCRIPTS && !res_pending(K_SCRIPT))
+		start_scripts();
+}
+
+static void start_scripts(void)
+{
+	page.loading = L_NONE;
+	if (!soie_script_start(page.doc, page.url, &js_host))
+		after_scripts();
+}
+
+/* push: 1 adds a history entry, 2 replaces the current one. The page
+ * on screen stays until the new one arrives. */
+static void load(const char *url, const char *post, int push)
+{
+	if (page.doc && push && hist.cur >= 0)
+		hist.scroll[hist.cur] = page.scroll;
+	page.gen++;
+	page.push = push;
+	free(page.want);
+	page.want = strdup(url);
+	free(refresh_url);
+	refresh_url = NULL;
+	if (!strcmp(url, HOME)) {
+		struct job j;
+
+		memset(&j, 0, sizeof(j));
+		j.url = (char *)url;
+		j.ok = 1;
+		snprintf(j.r.url, sizeof(j.r.url), "%s", HOME);
+		strcpy(j.r.type, "text/html");
+		j.r.body = strdup(home_html);
+		j.r.len = strlen(home_html);
+		doc_arrived(&j);
+		free(j.r.body);
+		return;
+	}
+	fetch_add(url, post, NULL, K_DOC, page.gen, 1);
+	page.loading = L_DOC;
+	{
+		soie_node *u = find_id(chrome, "url");
+
+		soie_element_set_attr(u, "value", url);
+		chrome_update();
+	}
+}
+
+/* Finished jobs. nested: from inside a script (a script waiting for
+ * a resource): a new page waits for the main loop. */
+static void collect_jobs(int nested)
+{
+	struct job *j;
+	struct res *r;
+
+	if (!nested && deferred) {
+		j = deferred;
+		deferred = NULL;
+		if (j->gen == page.gen)
+			doc_arrived(j);
+		job_free(j);
+	}
+	while ((j = fetch_done())) {
+		if (j->gen != page.gen) {
+			job_free(j);
+			continue;
+		}
+		if (j->kind == K_DOC) {
+			if (nested) {
+				job_free(deferred);
+				deferred = j;
+				continue;
+			}
+			doc_arrived(j);
+			job_free(j);
+			continue;
+		}
+		r = res_find(j->url);
+		if (r && r->state == R_PENDING) {
+			if (j->ok && j->r.status < 400) {
+				r->data = j->r.body;
+				r->len = j->r.len;
+				j->r.body = NULL;
+				r->state = R_DONE;
+			} else {
+				r->state = R_FAILED;
+			}
+			if (r->kind == K_STYLE || !strcmp(j->r.type, "text/css") ||
+			    strstr(j->r.type, "font"))
+				page.restyle = 1;
+			else
+				page.relayout = 1;
+		}
+		job_free(j);
+	}
+	if (nested || !page.doc)
+		return;
+	if (page.loading == L_STYLE && !res_pending(K_STYLE))
+		first_render();
+	else if (page.loading == L_SCRIPTS && !res_pending(K_SCRIPT))
+		start_scripts();
+}
+
+/* Late style sheets restyle, late images lay out again, at most every
+ * 200 ms; returns ms until it should be called again, -1: nothing to
+ * do. */
+static int apply_late(void)
+{
+	double wait;
+
+	if (page.loading == L_DOC || page.loading == L_STYLE || !page.doc ||
+	    (!page.restyle && !page.relayout))
+		return -1;
+	wait = 0.2 - (now_s() - page.laid_out);
+	if (wait > 0 && res_pending(-1))
+		return (int)(wait * 1000) + 1;
+	if (page.restyle) {
+		relayout();
+	} else {
+		soie_layout_document(page.doc, win_w, win_h - BAR);
+		layout_done();
+	}
+	page.restyle = page.relayout = 0;
+	redraw();
+	return -1;
 }
 
 static void go_history(int delta)
@@ -832,7 +1145,8 @@ static void set_page_focus(soie_node *n, int c)
 
 	focus = n;
 	caret = c;
-	soie_set_focus(page.doc, focus, caret);
+	if (page.doc)
+		soie_set_focus(page.doc, focus, caret);
 	if (old != n) {
 		if (old)
 			fire(old, "blur", 0, 0, NULL, 0);
@@ -850,8 +1164,8 @@ static void changed(soie_node *n)
 
 static void click_page(int x, int y, int mods)
 {
-	soie_node *n = soie_hit_test(page.doc, (float)x,
-		(float)(y - BAR + page.scroll)), *a, *form;
+	soie_node *n = page.doc ? soie_hit_test(page.doc, (float)x,
+		(float)(y - BAR + page.scroll)) : NULL, *a, *form;
 	const char *t;
 	float cy = (float)(y - BAR);
 
@@ -966,6 +1280,7 @@ static void click_chrome(int x, int y)
 		else if (!strcmp(id, "reload"))
 			load(page.url, NULL, 0);
 	} else if (n && !strcmp(soie_element_name(n), "input")) {
+		url_fresh = !url_focus;
 		url_focus = 1;
 		url_caret = (int)strlen(soie_element_get_attr(n, "value"));
 	}
@@ -1089,6 +1404,7 @@ static void key(XKeyEvent *e)
 		exit(0);
 	if ((ctrl && ks == XK_l) || ks == XK_F6) {
 		url_focus = 1;
+		url_fresh = 1;
 		set_page_focus(NULL, 0);
 		url_caret = (int)strlen(soie_element_get_attr(
 			find_id(chrome, "url"), "value"));
@@ -1134,8 +1450,23 @@ static void key(XKeyEvent *e)
 			url_focus = 0;
 			soie_element_set_attr(u, "value", page.url);
 			chrome_update();
-		} else if (edit(u, &url_caret, ks, txt, n)) {
-			chrome_update();
+		} else {
+			/* the first key after focusing replaces the address,
+			 * as a selected one would be */
+			if (url_fresh && (ks == XK_BackSpace || ks == XK_Delete ||
+			    (n > 0 && (unsigned char)txt[0] >= 0x20 &&
+			     txt[0] != 0x7f))) {
+				soie_element_set_attr(u, "value", "");
+				url_caret = 0;
+				if (ks == XK_BackSpace || ks == XK_Delete) {
+					url_fresh = 0;
+					chrome_update();
+					return;
+				}
+			}
+			url_fresh = 0;
+			if (edit(u, &url_caret, ks, txt, n))
+				chrome_update();
 		}
 		return;
 	}
@@ -1181,8 +1512,8 @@ static void hover(int x, int y)
 	snprintf(old, sizeof(old), "%s", status);
 	*status = '\0';
 	if (y >= BAR) {
-		n = soie_hit_test(page.doc, (float)x, (float)(y - BAR +
-			page.scroll));
+		n = !page.doc ? NULL : soie_hit_test(page.doc, (float)x,
+			(float)(y - BAR + page.scroll));
 		if ((a = ancestor(n, "a")) && soie_element_get_attr(a, "href")) {
 			char *abs = soie_url_resolve(page.url,
 				soie_element_get_attr(a, "href")), *e;
@@ -1229,6 +1560,23 @@ static void resize(int w, int h)
 	}
 }
 
+/* Offscreen: wait for the page and its resources, 60 s at most. */
+static void pump(void)
+{
+	double end = now_s() + 60;
+	struct pollfd p;
+
+	while ((page.loading != L_NONE || res_pending(-1)) && now_s() < end) {
+		p.fd = fetch_fd;
+		p.events = POLLIN;
+		poll(&p, 1, 200);
+		collect_jobs(0);
+		apply_late();
+	}
+	page.laid_out = 0;
+	apply_late();
+}
+
 /* Offscreen: let scripts navigate and their timers run, 3 s at most. */
 static void settle_offscreen(void)
 {
@@ -1248,10 +1596,12 @@ static void settle_offscreen(void)
 		}
 		if (pending_nav && hops++ < 5) {
 			after_scripts();
+			pump();
 			continue;
 		}
 		d = page.doc ? soie_script_tick(page.doc) : -1;
-		after_scripts();
+		if (after_scripts())
+			pump();
 		clock_gettime(CLOCK_MONOTONIC, &t);
 		spent = (int)((t.tv_sec - t0.tv_sec) * 1000 +
 			(t.tv_nsec - t0.tv_nsec) / 1000000);
@@ -1323,9 +1673,15 @@ int main(int argc, char **argv)
 	}
 	chrome = soie_html_parse(chrome_html, strlen(chrome_html), NULL);
 	hist.cur = -1;
+	fetch_fd = fetch_start(6);
+	if (fetch_fd < 0) {
+		fputs("soie: cannot start the fetch threads\n", stderr);
+		return 1;
+	}
 	if (out) {
 		chrome_update();
 		load(start, NULL, 1);
+		pump();
 		settle_offscreen();
 		return render_png(out);
 	}
@@ -1351,9 +1707,24 @@ int main(int argc, char **argv)
 	for (;;) {
 		/* timers run while no X event waits */
 		while (!XPending(dpy)) {
-			struct pollfd p;
+			struct pollfd p[2];
 			int t = page.doc ? soie_script_tick(page.doc) : -1;
 			int m = -1, repaint = 0;
+
+			{
+				/* a new page, a new stage, a resource: show it */
+				soie_node *d = page.doc;
+				int l = page.loading, n = res_pending(-1);
+
+				collect_jobs(0);
+				if (d != page.doc || l != page.loading ||
+				    n != res_pending(-1))
+					redraw();
+			}
+			m = apply_late();
+			if (m >= 0 && (t < 0 || m < t))
+				t = m;
+			m = -1;
 
 			if (page.doc)
 				m = soie_media_tick(page.doc, &repaint);
@@ -1367,11 +1738,24 @@ int main(int argc, char **argv)
 				redraw();
 			if (XPending(dpy))
 				break;
-			p.fd = ConnectionNumber(dpy);
-			p.events = POLLIN;
+			p[0].fd = ConnectionNumber(dpy);
+			p[0].events = POLLIN;
+			p[1].fd = fetch_fd;
+			p[1].events = POLLIN;
 			if (pending_nav)
 				t = 0;
-			poll(&p, 1, t);
+			if (page.loading == L_DOC || res_pending(-1)) {
+				/* the loading line: keep it current */
+				static double shown;
+
+				if (t < 0 || t > 500)
+					t = 500;
+				if (now_s() - shown > 0.5) {
+					shown = now_s();
+					redraw();
+				}
+			}
+			poll(p, 2, t);
 		}
 		XNextEvent(dpy, &ev);
 		switch (ev.type) {
