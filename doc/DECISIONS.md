@@ -262,7 +262,9 @@ reversed, edit the entry and say why; do not leave stale rules here.
 - Paint tests (`tests/paint/*.html`, 320x240, stub font drawn as one
   box per character) compare pixels with reference PNGs. References
   are written with `tests/painttest -u` and checked by eye before
-  they are committed.
+  they are committed. Pixels may differ by 2 levels per channel: the
+  i486 x87 FPU and x86_64 SSE round floats differently (measured: 1
+  level at most on some anti-aliased edges).
 
 ## Images (phase 6)
 

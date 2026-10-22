@@ -1,6 +1,7 @@
 /*
  * Paint tests: render tests/paint/NAME.html at 320x240 with the stub
- * font and compare with NAME.png, pixel for pixel. With -u, write the
+ * font and compare with NAME.png, pixel for pixel, within 2 levels per
+ * channel (x87 and SSE floats round differently). With -u, write the
  * references instead (check them by eye before committing).
  * Usage: painttest [-u] FILE.html...
  */
@@ -39,6 +40,17 @@ static int fetch(void *data, const char *url, char **buf, size_t *len)
 		return -1;
 	*buf = slurp(url + 7, len);
 	return *buf ? 0 : -1;
+}
+
+/* Same image, give or take rounding. */
+static int same(const unsigned char *a, const unsigned char *b)
+{
+	int i;
+
+	for (i = 0; i < W * H * 4; i++)
+		if (a[i] - b[i] > 2 || b[i] - a[i] > 2)
+			return 0;
+	return 1;
 }
 
 static int write_png(const char *path, unsigned char *px)
@@ -142,14 +154,14 @@ int main(int argc, char **argv)
 		if (update) {
 			write_png(ref, px);
 			printf("wrote %s\n", ref);
-		} else if (!(want = read_png(ref)) ||
-			   memcmp(want, px, W * H * 4)) {
+		} else if (!(want = read_png(ref)) || !same(want, px)) {
 			write_png(out, px);
 			printf("FAIL %s (got %s)\n", argv[i], out);
 			if (want) {
 				int k;
 
-				for (k = 0; k < W * H * 4 && want[k] == px[k]; k++)
+				for (k = 0; k < W * H * 4 && want[k] - px[k] <= 2 &&
+				     px[k] - want[k] <= 2; k++)
 					;
 				printf("  first difference at pixel %d,%d\n",
 					k / 4 % W, k / 4 / W);
