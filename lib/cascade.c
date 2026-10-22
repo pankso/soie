@@ -2095,6 +2095,15 @@ int soie_style_document(soie_node *doc, const soie_style_options *opts)
 		load_sheet(db, ua.s, ua.len, &pc);
 		buf_free(&ua);
 	}
+	if (db->quirks) {
+		/* HTML 15.3.6: quirks mode tables reset the inherited text */
+		static const char q[] = "table { font-weight: initial; "
+			"font-style: initial; font-variant-caps: initial; "
+			"font-size: initial; line-height: initial; "
+			"white-space: initial; text-align: initial }";
+
+		load_sheet(db, q, sizeof(q) - 1, &pc);
+	}
 	if (opts && opts->user_css) {
 		pc.origin = O_USER;
 		pc.layer = &db->roots[O_USER];

@@ -25,6 +25,10 @@ enum {
 	B_REPLACED		/* img and friends; block or inline-level */
 };
 
+/* Table roles (CSS 2 17.2) */
+enum { R_NONE, R_TABLE, R_CAPTION, R_ROWGROUP, R_ROW, R_CELL, R_COLGROUP,
+	R_COL };
+
 /* Flags */
 #define BF_ANON		1	/* anonymous box */
 #define BF_INLINE_KIDS	2	/* block container with inline content */
@@ -59,6 +63,7 @@ struct box {
 	unsigned char flags;
 	unsigned char pseudo;	/* 'b'efore, 'a'fter, 'm'arker */
 	unsigned char ws_done;	/* white-space processing done */
+	unsigned char role;	/* table part, R_* */
 	const struct style *style;
 	soie_node *node;	/* NULL for anonymous boxes */
 	struct box *parent, *first, *last, *next;
@@ -103,6 +108,8 @@ float bfc_right(const struct bfc *f, float y, float h, float x1);
 float bfc_next(const struct bfc *f, float y);
 void abs_static(struct box *b, float x, float y);
 void box_edges(struct box *b, float cbw);
+void content_sizes(struct box *b, float *min, float *max);
+void layout_cell(struct box *c, float x, float y, float w);
 void rel_offset(const struct box *b, float cbw, float *dx, float *dy);
 
 /* inline.c */
@@ -111,6 +118,10 @@ float layout_inline(struct box *b, struct bfc *f, float x, float y,
 void inline_sizes(struct box *b, float *min, float *max);
 
 char *layout_dump(const struct box *root, size_t *len);
+
+/* table.c */
+void table_fixup(struct styledb *db, struct box *b);
+void layout_table(struct box *t, float avail);
 
 /* Used values helpers (block.c) */
 float len_val(const struct cval *v, float ref);

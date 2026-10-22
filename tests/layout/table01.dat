@@ -1,0 +1,66 @@
+#data
+<!DOCTYPE html><body style="margin:0"><table style="border-spacing:2px"><tr><td>a<td>bb</tr><tr><td colspan=2>ccc ddd</table>
+#errors
+#layout
+width=200
+#document
+| block <html> 0,0 200x50
+|   block <body> 0,0 200x50
+|     block <table> 0,0 62x50
+|       block <tbody> 2,2 58x46
+|         block <tr> 2,2 58x22
+|           block <td> 2,2 20x22
+|             line 3,3 18x20
+|               text "a" 3,5 8x16
+|           block <td> 24,2 36x22
+|             line 25,3 34x20
+|               text "bb" 25,5 16x16
+|         block <tr> 2,26 58x22
+|           block <td> 2,26 58x22
+|             line 3,27 56x20
+|               text "ccc ddd" 3,29 56x16
+
+#data
+<!DOCTYPE html><body style="margin:0"><table width=100% cellspacing=0 cellpadding=0><caption>cap</caption><tr><td rowspan=2>a<td>b<tr><td>c<br>d</table><div style="display:table-cell;padding:0">x</div><div style="display:table-cell">y</div><table style="table-layout:fixed;width:100px;border-collapse:collapse"><tr><td style="width:30px;padding:0">p<td style="padding:0">q</table>
+#errors
+#layout
+width=200
+#document
+| block <html> 0,0 200x120
+|   block <body> 0,0 200x120
+|     block <table> 0,0 200x80
+|       block <caption> 0,0 200x20
+|         line 0,0 200x20
+|           text "cap" 88,2 24x16
+|       block <tbody> 0,20 200x60
+|         block <tr> 0,20 200x20
+|           block <td> 0,20 100x60
+|             line 0,40 100x20
+|               text "a" 0,42 8x16
+|           block <td> 100,20 100x20
+|             line 100,20 100x20
+|               text "b" 100,22 8x16
+|         block <tr> 0,40 200x40
+|           block <td> 100,40 100x40
+|             line 100,40 100x20
+|               text "c" 100,42 8x16
+|             line 100,60 100x20
+|               text "d" 100,62 8x16
+|     block anonymous 0,80 16x20
+|       block anonymous 0,80 16x20
+|         block anonymous 0,80 16x20
+|           block <div> 0,80 8x20
+|             line 0,80 8x20
+|               text "x" 0,82 8x16
+|           block <div> 8,80 8x20
+|             line 8,80 8x20
+|               text "y" 8,82 8x16
+|     block <table> 0,100 100x20
+|       block <tbody> 0,100 100x20
+|         block <tr> 0,100 100x20
+|           block <td> 0,100 30x20
+|             line 0,100 30x20
+|               text "p" 0,102 8x16
+|           block <td> 30,100 70x20
+|             line 30,100 70x20
+|               text "q" 30,102 8x16

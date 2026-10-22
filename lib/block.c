@@ -240,7 +240,7 @@ static int establishes_bfc(const struct box *b)
 {
 	const struct style *st = b->style;
 
-	return (b->flags & (BF_BFC | BF_FLOAT | BF_ABS)) ||
+	return (b->flags & (BF_BFC | BF_FLOAT | BF_ABS)) || b->role ||
 		b->type == B_ATOMIC || !kw(st, P_OVERFLOW_X, "visible") ||
 		!kw(st, P_OVERFLOW_Y, "visible") ||
 		kw(st, P_DISPLAY, "flow-root") || kw(st, P_DISPLAY, "flex") ||
@@ -251,7 +251,7 @@ static int establishes_bfc(const struct box *b)
 
 /* Intrinsic sizes (CSS Sizing 3): content widths, then outer. */
 
-static void content_sizes(struct box *b, float *mn, float *mx)
+void content_sizes(struct box *b, float *mn, float *mx)
 {
 	float w, cmin, cmax;
 	struct box *c;
@@ -268,6 +268,13 @@ static void content_sizes(struct box *b, float *mn, float *mx)
 		return;
 	}
 	*mn = *mx = 0;
+	if (b->role == R_TABLE) {
+		layout_table(b, 0);
+		*mn = b->w;
+		layout_table(b, 1e7f);
+		*mx = b->w;
+		return;
+	}
 	if (b->flags & BF_INLINE_KIDS) {
 		inline_sizes(b, mn, mx);
 	} else {
@@ -414,12 +421,25 @@ static void replaced_size(struct box *b, float cbw, float cbh)
 	b->h = clamp_h(b, h, cbh);
 }
 
+/*
+ * text-align: -webkit-center (<center>, <td align=center>) centers block
+ * children too, unless they set their margins.
+ */
+static int webkit_center(const struct box *b)
+{
+	const struct style *ps = b->parent ? b->parent->style : NULL;
+
+	return ps && kw(ps, P_TEXT_ALIGN, "-webkit-center") &&
+		!b->m[1] && !b->m[3];
+}
+
 /* Width and horizontal margins in flow (CSS 2 10.3.3). */
 static void block_width(struct box *b, float avail, float cbw)
 {
 	const struct style *st = b->style;
-	int ml_auto = is_auto(st, P_MARGIN_LEFT);
-	int mr_auto = is_auto(st, P_MARGIN_RIGHT);
+	int center = webkit_center(b);
+	int ml_auto = is_auto(st, P_MARGIN_LEFT) || center;
+	int mr_auto = is_auto(st, P_MARGIN_RIGHT) || center;
 	float w = spec_width(b, P_WIDTH, cbw), e = hedges(b), rest;
 
 	if (b->type == B_REPLACED) {
@@ -499,6 +519,28 @@ static float layout_block(struct box *b, struct bfc *f, float cbx, float cbw,
 
 		avail_x = bfc_left(f, ty, 1, cbx);
 		avail_w = bfc_right(f, ty, 1, cbx + cbw) - avail_x;
+	}
+	if (b->role == R_TABLE) {
+		/* tables size themselves, then sit like a fixed width */
+		float ml = is_auto(b->style, P_MARGIN_LEFT) ? 0 : b->m[3];
+		float mr = is_auto(b->style, P_MARGIN_RIGHT) ? 0 : b->m[1];
+		float rest, ty = y + strut_val(s);
+
+		s->pos = s->neg = 0;
+		layout_table(b, avail_w - ml - mr - hedges(b));
+		rest = avail_w - b->w - hedges(b);
+		if ((is_auto(b->style, P_MARGIN_LEFT) &&
+		     is_auto(b->style, P_MARGIN_RIGHT)) || webkit_center(b))
+			b->m[3] = b->m[1] = rest > 0 ? rest / 2 : 0;
+		else if (is_auto(b->style, P_MARGIN_LEFT))
+			b->m[3] = rest - b->m[1];
+		translate(b, avail_x + b->m[3] + b->b[3] + b->p[3],
+			ty + b->b[0] + b->p[0]);
+		strut_add(s, b->m[2]);
+		rel_offset(b, cbw, &dx, &dy);
+		if (dx || dy)
+			translate(b, dx, dy);
+		return b->y - dy + b->h + b->p[2] + b->b[2];
 	}
 	block_width(b, avail_w, cbw);
 	b->x = avail_x + b->m[3] + b->b[3] + b->p[3];
@@ -659,6 +701,11 @@ static void layout_alone(struct box *b, float x, float y, float w,
 		b->y = y;
 		return;
 	}
+	if (b->role == R_TABLE) {
+		layout_table(b, w);
+		translate(b, x, y);
+		return;
+	}
 	b->x = x;
 	b->y = y;
 	b->w = w;
@@ -671,6 +718,23 @@ static void layout_alone(struct box *b, float x, float y, float w,
 		h = bfc_bottom(&own) - y;
 	free(own.v);
 	b->h = clamp_h(b, hspec >= 0 ? hspec : h, cbh);
+}
+
+/* A table cell or caption: a block formatting context of width w. */
+void layout_cell(struct box *c, float x, float y, float w)
+{
+	edges(c, w);
+	if (c->role == R_CAPTION) {
+		float cw = w - c->m[1] - c->m[3] - hedges(c);
+
+		layout_alone(c, x + c->m[3] + c->b[3] + c->p[3],
+			y + c->m[0] + c->b[0] + c->p[0], cw < 0 ? 0 : cw, -1);
+		return;
+	}
+	c->m[0] = c->m[1] = c->m[2] = c->m[3] = 0;
+	w -= hedges(c);
+	layout_alone(c, x + c->b[3] + c->p[3], y + c->b[0] + c->p[0],
+		w < 0 ? 0 : w, -1);
 }
 
 /* Inline-blocks and inline replaced boxes, at the origin. */

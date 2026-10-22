@@ -309,10 +309,32 @@ static int box_type(const struct style *st)
 	return B_BLOCK;	/* block, flow-root, list-item, flex, grid, table* */
 }
 
+static int table_role(const struct style *st)
+{
+	if (kw(st, P_DISPLAY, "table") || kw(st, P_DISPLAY, "inline-table"))
+		return R_TABLE;
+	if (kw(st, P_DISPLAY, "table-row-group") ||
+	    kw(st, P_DISPLAY, "table-header-group") ||
+	    kw(st, P_DISPLAY, "table-footer-group"))
+		return R_ROWGROUP;
+	if (kw(st, P_DISPLAY, "table-row"))
+		return R_ROW;
+	if (kw(st, P_DISPLAY, "table-cell"))
+		return R_CELL;
+	if (kw(st, P_DISPLAY, "table-caption"))
+		return R_CAPTION;
+	if (kw(st, P_DISPLAY, "table-column-group"))
+		return R_COLGROUP;
+	if (kw(st, P_DISPLAY, "table-column"))
+		return R_COL;
+	return R_NONE;
+}
+
 static void set_flags(struct box *b)
 {
 	const struct style *st = b->style;
 
+	b->role = (unsigned char)table_role(st);
 	if (!kw(st, P_FLOAT, "none"))
 		b->flags |= BF_FLOAT;
 	if (kw(st, P_POSITION, "absolute") || kw(st, P_POSITION, "fixed"))
@@ -541,6 +563,21 @@ static void fixup(struct styledb *db, struct box *b)
 	struct box tmp, *c, *n, *run = NULL;
 	int blocks = 0;
 
+	if (b->role == R_COL || b->role == R_COLGROUP) {
+		while (b->first) {
+			c = b->first;
+			b->first = c->next;
+			box_free(c);
+		}
+		b->last = NULL;
+		return;
+	}
+	table_fixup(db, b);
+	if (b->role == R_TABLE || b->role == R_ROWGROUP || b->role == R_ROW) {
+		/* table parts hold table parts only: no line boxes */
+		fixup_inside(db, b);
+		return;
+	}
 	/* split inlines that hold blocks */
 	memset(&tmp, 0, sizeof(tmp));
 	for (c = b->first; c; c = n) {

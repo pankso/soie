@@ -20,7 +20,7 @@ CSSTESTS_REV = 203ce36bffd617db7f118c551e32794561fb273d
 LIB_OBJS = lib/dom.o lib/dump.o lib/encoding.o lib/tokenizer.o \
 	lib/treebuilder.o lib/csssyntax.o lib/selector.o lib/values.o \
 	lib/props.o lib/media.o lib/cascade.o lib/url.o lib/ua-css.o \
-	lib/text.o lib/boxes.o lib/block.o lib/inline.o
+	lib/text.o lib/boxes.o lib/block.o lib/inline.o lib/table.o
 LIBS = -lm
 HEADERS = lib/soie/soie.h lib/soie/dom.h lib/soie/html.h lib/soie/style.h \
 	lib/soie/layout.h
