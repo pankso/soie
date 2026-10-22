@@ -74,6 +74,11 @@ reversed, edit the entry and say why; do not leave stale rules here.
   second level is a usual registry name (`co.uk`, `com.au`, `ne.jp`).
   Wrong for private suffixes like `blogspot.com`; never lets
   `Domain=co.uk` through.
+- `block`: content blocking by host name from a hosts-style list
+  (`~/.config/soie/block.txt`, the usual 0.0.0.0 lists work as is,
+  a 100 000 entry list costs a few MB). A listed host blocks its
+  subdomains. Only sub-resources are blocked, never the page asked
+  for. No list, no hooks.
 
 ## Public API
 

@@ -1,6 +1,7 @@
 /*
  * Extension tests: the registry and its ABI checks, the image and
- * content hooks inside the engine, and the modules of ext/ (cookies), loaded the way hosts load them.
+ * content hooks inside the engine, and the modules of ext/ (cookies,
+ * block), loaded the way hosts load them.
  */
 #define _POSIX_C_SOURCE 200809L
 #include <stdio.h>
@@ -236,6 +237,41 @@ static void test_cookies(void)
 		"https://www.example.com/x", 0), "b=3");
 }
 
+static void test_block(void)
+{
+	char path[] = "/tmp/soie-block-XXXXXX";
+	soie_request rq;
+	FILE *f;
+	int fd = mkstemp(path);
+
+	CHECK(fd >= 0);
+	f = fdopen(fd, "w");
+	fputs("# a hosts file\n0.0.0.0 ads.example.com\n"
+		"127.0.0.1 localhost\ntracker.net # trailing\n", f);
+	fclose(f);
+	setenv("SOIE_BLOCK", path, 1);
+	CHECK(soie_ext_load("ext/block.so") == 0);
+	unlink(path);
+	memset(&rq, 0, sizeof(rq));
+	rq.first_party = "https://www.example.com/";
+	rq.url = "https://ads.example.com/a.js";
+	CHECK(soie_ext_blocked(&rq));
+	rq.url = "https://x.ADS.example.com:443/a.js";
+	CHECK(soie_ext_blocked(&rq));
+	rq.url = "http://tracker.net";
+	CHECK(soie_ext_blocked(&rq));
+	rq.url = "https://example.com/ads.example.com";
+	CHECK(!soie_ext_blocked(&rq));
+	rq.url = "https://bads.example.com/";
+	CHECK(!soie_ext_blocked(&rq));
+	rq.url = "http://localhost/";
+	CHECK(!soie_ext_blocked(&rq));
+	/* what one asked for is never blocked */
+	rq.url = "https://ads.example.com/";
+	rq.first_party = NULL;
+	CHECK(!soie_ext_blocked(&rq));
+}
+
 int main(void)
 {
 	setenv("SOIE_COOKIES", "", 1);	/* memory only */
@@ -243,6 +279,7 @@ int main(void)
 	test_registry();
 	test_response();
 	test_cookies();
+	test_block();
 	printf("ext: %d checks, %d failed\n", checks, failures);
 	return failures != 0;
 }
