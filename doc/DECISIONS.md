@@ -169,6 +169,42 @@ reversed, edit the entry and say why; do not leave stale rules here.
   56 MB: the rule data is about a million small allocations. An arena
   for style sheet data is the planned fix if real pages need it.
 
+## Layout
+
+- Phase 3 covers CSS 2 visual formatting: block and inline formatting
+  contexts, anonymous boxes, block-in-inline splitting, margin
+  collapsing (siblings, parent and first/last child, empty blocks),
+  widths and auto margins (10.3.3), min/max sizes, box-sizing,
+  percentages, floats and clear, BFC roots beside floats, relative,
+  absolute and fixed positioning, inline-blocks with shrink-to-fit
+  widths, replaced elements with intrinsic sizes and ratios,
+  ::before/::after with strings, attr() and quotes, list markers.
+- Tables, flex and grid are laid out as blocks for now. Flex and grid
+  are phase 8. Tables are in no phase of the brief, but old pages are
+  made of them: they get their own step right after phase 3.
+- Text measurement goes through font_metrics() and text_width() in
+  lib/text.c. Until phase 4 they are a stub: every character is
+  0.5em wide, ascent 0.75em, descent 0.25em, normal line-height
+  1.25em. Round numbers keep the layout tests computable by hand;
+  phase 4 swaps the stub, and the tests will move to a test font.
+- Line breaking happens at spaces only (no UAX 14 yet, so no CJK
+  breaking), plus overflow-wrap: anywhere/break-word. vertical-align
+  top and bottom are approximated as text-top and text-bottom; sub,
+  super and middle use the stub font's proportions.
+- All geometry is in page coordinates (CSS px, floats), content boxes
+  in struct box; fragments of lines carry text ranges for painting.
+  `soie_layout_dump()` prints border boxes, line boxes and fragments,
+  and the layout tests compare that dump.
+- Known simplifications: a float before a block whose top margin
+  collapses through its parent stays above the collapsed margin
+  instead of moving down with it; inline boxes with position:
+  relative are not offset; sticky is static; vertical margins of
+  floats do not collapse (as specified), but clearance is computed
+  the simple way (move below the floats).
+- Box tree depth is capped at 512 levels (layout is recursive).
+  Deeper content is kept as plain text flowing in the box at the
+  limit, collected without recursion. Blink caps its DOM at 512 too.
+
 ## Character encoding
 
 - The tokenizer only ever sees valid UTF-8 with normalized newlines.
