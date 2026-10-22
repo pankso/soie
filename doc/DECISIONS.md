@@ -434,12 +434,12 @@ reversed, edit the entry and say why; do not leave stale rules here.
 ## JavaScript (phase 10)
 
 - QuickJS, as the brief says: small, complete ES2023, embeddable,
-  MIT. It lives in an extension (`ext/script.so`), built from the
-  QuickJS release sources (`make QUICKJS_SRC=dir`): the SliTaz
-  quickjs-dev package only ships a non-PIC static library, which a
-  shared module cannot link. Sources compiled in also make one build
-  for every distribution and for i486. Fixing the package (adding
-  -fPIC) would let us link it instead.
+  MIT. It lives in an extension (`ext/script.so`), linked with the
+  installed static library (`/usr/lib/quickjs/libquickjs.a`, from
+  quickjs-dev) or built from the release sources
+  (`make QUICKJS_SRC=dir`). QuickJS ships no shared library, and its
+  static one must be built with -fPIC to go into a module: SliTaz's
+  quickjs receipt does so since Soie needs it.
 - The library runs the scripts, the extension is the engine
   (`lib/script.c`, the script hooks of `ext.h`). The library walks the
   parsed document's `<script>` elements in order (classic, then defer,

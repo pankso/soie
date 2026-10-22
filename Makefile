@@ -52,10 +52,19 @@ MEDIA_PKGS = libavformat libavcodec libswscale libswresample libavutil alsa
 ifeq ($(shell pkg-config --exists $(MEDIA_PKGS) && echo y),y)
 EXTS += ext/media.so
 endif
-# JavaScript: QuickJS sources (an unpacked release), built in.
+# JavaScript: QuickJS sources (an unpacked release) built in, else the
+# installed library (SliTaz's quickjs-dev, built with -fPIC).
 QUICKJS_SRC ?=
+QUICKJS ?= /usr
 ifneq ($(QUICKJS_SRC),)
 EXTS += ext/script.so
+QJS_INC = $(QUICKJS_SRC)
+QJS_OBJS = ext/script/qjs-quickjs.o ext/script/qjs-libregexp.o \
+	ext/script/qjs-libunicode.o ext/script/qjs-cutils.o ext/script/qjs-libbf.o
+else ifneq ($(wildcard $(QUICKJS)/lib/quickjs/libquickjs.a),)
+EXTS += ext/script.so
+QJS_INC = $(QUICKJS)/include/quickjs
+QJS_OBJS = $(QUICKJS)/lib/quickjs/libquickjs.a
 endif
 
 all: lib/libsoie.a lib/libsoie.so.$(SOVERSION) tools/soie-render browser/soie \
@@ -99,8 +108,6 @@ ext/webp.so: EXT_LIBS = $(shell pkg-config --libs libwebp)
 # 64-bit atomics (Atomics, SharedArrayBuffer) need libatomic on i486
 QJS_ATOMIC = $(shell echo 'int main(void){return 0;}' | \
 	$(CC) -x c - -latomic -o /dev/null 2>/dev/null && echo -latomic)
-QJS_OBJS = ext/script/qjs-quickjs.o ext/script/qjs-libregexp.o \
-	ext/script/qjs-libunicode.o ext/script/qjs-cutils.o ext/script/qjs-libbf.o
 ext/script/qjs-%.o: $(QUICKJS_SRC)/%.c
 	$(CC) $(CFLAGS:-pedantic=) -w -fPIC -DNDEBUG -D_GNU_SOURCE \
 		-DCONFIG_VERSION=\"$$(cat $(QUICKJS_SRC)/VERSION)\" \
@@ -111,7 +118,7 @@ ext/script/dom-js.c: ext/script/dom.js
 	  sed 's/\\/\\\\/g; s/"/\\"/g; s/^/"/; s/$$/\\n"/' $<; \
 	  echo ';'; } > $@
 
-ext/script/script.o: CPPFLAGS += -isystem $(QUICKJS_SRC)
+ext/script/script.o: CPPFLAGS += -isystem $(QJS_INC)
 ext/script/dom-js.o: CFLAGS += -Wno-overlength-strings
 ext/script/script.o ext/script/dom-js.o: $(HEADERS)
 ext/script.so: ext/script/script.o ext/script/dom-js.o $(QJS_OBJS) \
