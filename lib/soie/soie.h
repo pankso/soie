@@ -5,14 +5,15 @@
 #ifndef SOIE_H
 #define SOIE_H
 
-#define SOIE_VERSION_MAJOR 0
-#define SOIE_VERSION_MINOR 1
+#define SOIE_VERSION_MAJOR 1
+#define SOIE_VERSION_MINOR 0
 #define SOIE_VERSION_PATCH 0
 
 #include "dom.h"
 #include "html.h"
 #include "style.h"
 #include "layout.h"
+#include "ext.h"
 
 /* Version of the library actually linked, "major.minor.patch". */
 const char *soie_version(void);

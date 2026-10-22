@@ -12,6 +12,9 @@
  * - any hook may be NULL;
  * - strings returned by hooks are malloc()ed and freed by the caller.
  *
+ * This is ABI 1.0, frozen with the library's 1.0: later versions only
+ * append hooks to the hook sets and add kinds.
+ *
  * A module for soie_ext_load() exports "int soie_ext_init(void)",
  * which registers its hook sets with soie_ext_register() and returns
  * 0. Hook sets are kept by pointer: give static storage.

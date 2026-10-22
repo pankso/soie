@@ -92,8 +92,15 @@ reversed, edit the entry and say why; do not leave stale rules here.
 - Prefix `soie_` for functions, `SOIE_` for constants. Strings are
   UTF-8, NUL-terminated, owned by the library unless a function says
   otherwise.
-- Version 0.x until the API is frozen; the shared library soname is
-  `libsoie.so.0` meanwhile. 1.0 comes with phase 9.
+- Version 1.0.0 since the eleven phases are in, soname `libsoie.so.1`
+  (0.x before). From now on: new functions and appended hooks are
+  minor versions, any change to an existing signature or struct a
+  major one.
+- A few structs are public because callers fill them: the option
+  structs (`soie_html_options`, `soie_style_options`), requests and
+  responses, events, the script host, media states. Their layouts are
+  part of the 1.0 ABI; new options will come as new functions, not as
+  new fields.
 
 ## Memory and ownership
 
