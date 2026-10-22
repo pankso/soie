@@ -235,6 +235,63 @@ static void test_entities(void)
 	}
 }
 
+static void test_url(void)
+{
+	/* RFC 3986 5.4, plus the WHATWG tolerances */
+	static const char *const cases[][2] = {
+		{ "g", "http://a/b/c/g" }, { "./g", "http://a/b/c/g" },
+		{ "g/", "http://a/b/c/g/" }, { "/g", "http://a/g" },
+		{ "//g", "http://g" }, { "?y", "http://a/b/c/d;p?y" },
+		{ "g?y", "http://a/b/c/g?y" }, { "#s", "http://a/b/c/d;p?q#s" },
+		{ "g#s", "http://a/b/c/g#s" }, { "../g", "http://a/b/g" },
+		{ "../..", "http://a/" }, { "../../g", "http://a/g" },
+		{ "../../../g", "http://a/g" }, { "", "http://a/b/c/d;p?q" },
+		{ ".", "http://a/b/c/" }, { "..", "http://a/b/" },
+		{ "g;x=1/../y", "http://a/b/c/y" }, { "http:g", "http://a/b/c/g" },
+		{ "https:x/./y", "https:x/y" }, { " \tg\n ", "http://a/b/c/g" },
+		{ "\\g", "http://a/g" }, { "mailto:me@x", "mailto:me@x" },
+		{ NULL, NULL }
+	};
+	int i;
+
+	for (i = 0; cases[i][0]; i++) {
+		char *r = soie_url_resolve("http://a/b/c/d;p?q", cases[i][0]);
+
+		if (strcmp(r, cases[i][1]))
+			printf("  url \"%s\": got %s, expected %s\n",
+				cases[i][0], r, cases[i][1]);
+		CHECK(!strcmp(r, cases[i][1]));
+		free(r);
+	}
+}
+
+static void test_style_api(void)
+{
+	soie_node *doc;
+	char *v;
+	static const char html[] = "<!DOCTYPE html><style>p{--x: 3px;"
+		"margin-top:var(--x)}</style><p id=p>t";
+
+	doc = soie_html_parse(html, sizeof(html) - 1, NULL);
+	CHECK(soie_style_document(doc, NULL) == 0);
+	{
+		soie_node *p = soie_node_first_child(soie_node_last_child(
+			soie_document_element(doc)));
+
+		v = soie_computed_value(p, NULL, "margin-top");
+		CHECK(v && !strcmp(v, "3px"));
+		free(v);
+		v = soie_computed_value(p, NULL, "--x");
+		CHECK(v && !strcmp(v, "3px"));
+		free(v);
+		CHECK(soie_computed_value(p, NULL, "no-such-property") == NULL);
+		CHECK(soie_computed_value(p, "before", "color") == NULL);
+	}
+	/* a second run starts from scratch */
+	CHECK(soie_style_document(doc, NULL) == 0);
+	soie_node_free(doc);
+}
+
 static void test_deep(void)
 {
 	/* Deep nesting must not exhaust the stack when freeing. */
@@ -256,6 +313,8 @@ int main(void)
 	test_parse_api();
 	test_charsets();
 	test_entities();
+	test_url();
+	test_style_api();
 	test_deep();
 	printf("unit: %s (%d failures)\n", failures ? "FAIL" : "ok", failures);
 	return failures != 0;

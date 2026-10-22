@@ -42,6 +42,9 @@ struct attr {
 	unsigned char ns;
 };
 
+struct style;
+struct styledb;
+
 struct soie_node {
 	unsigned char type;
 	unsigned char ns;
@@ -58,6 +61,8 @@ struct soie_node {
 			struct attr *attrs;
 			unsigned nattrs, cap;
 			struct soie_node *content;	/* <template> */
+			const struct style *style;	/* computed */
+			const struct style *before, *after;
 		} el;
 		struct {
 			char *data;
@@ -69,6 +74,7 @@ struct soie_node {
 		struct {
 			unsigned char quirks;
 			const char *charset;
+			struct styledb *styles;
 		} doc;
 	} u;
 };
@@ -90,6 +96,8 @@ static inline int is_html(const struct soie_node *n, int tag)
 	return n->type == SOIE_ELEMENT && n->ns == SOIE_NS_HTML &&
 		n->tag == tag;
 }
+
+void styledb_free(struct styledb *db);
 
 /* Encoding: decode bytes to UTF-8 with normalized newlines. */
 const char *charset_sniff(const unsigned char *s, size_t len,

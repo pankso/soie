@@ -153,7 +153,23 @@ static void todo_children(struct todo *t, const soie_node *n, int depth)
 		todo_push(t, c, depth, 0);
 }
 
+void dump_style_lines(struct buf *b, const soie_node *el, const char *props,
+	int depth, void (*indent)(struct buf *, int));
+
+static char *dump(const soie_node *n, const char *props, size_t *len);
+
 char *soie_node_dump(const soie_node *n, size_t *len)
+{
+	return dump(n, NULL, len);
+}
+
+char *soie_node_dump_style(const soie_node *n, const char *props,
+	size_t *len)
+{
+	return dump(n, props, len);
+}
+
+static char *dump(const soie_node *n, const char *props, size_t *len)
 {
 	struct buf b = { 0 };
 	struct todo t = { NULL, 0, 0 };
@@ -173,6 +189,8 @@ char *soie_node_dump(const soie_node *n, size_t *len)
 			continue;
 		}
 		dump_node(&b, it.n, it.depth);
+		if (props && it.n->type == SOIE_ELEMENT)
+			dump_style_lines(&b, it.n, props, it.depth + 1, indent);
 		todo_children(&t, it.n, it.depth + 1);
 		if (it.n->type == SOIE_ELEMENT && it.n->u.el.content)
 			todo_push(&t, it.n, it.depth + 1, 1);

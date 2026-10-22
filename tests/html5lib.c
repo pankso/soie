@@ -151,7 +151,24 @@ static int run_one(const char *file, int num, char *s, char *end,
 		doc = soie_html_parse(data, data_len, &opts);
 		root = doc;
 	}
-	got = soie_node_dump(root, &got_len);
+	{
+		char *props = section(s, end, "#properties");
+
+		if (props) {
+			size_t n = section_len(props, end);
+			char *list = malloc(n + 1);
+
+			memcpy(list, props, n);
+			while (n && (list[n - 1] == '\n' || list[n - 1] == ' '))
+				n--;
+			list[n] = '\0';
+			soie_style_document(doc, NULL);
+			got = soie_node_dump_style(root, list, &got_len);
+			free(list);
+		} else {
+			got = soie_node_dump(root, &got_len);
+		}
+	}
 	{
 		size_t n = got_len;
 

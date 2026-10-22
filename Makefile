@@ -18,8 +18,8 @@ CSSTESTS_URL = https://github.com/SimonSapin/css-parsing-tests.git
 CSSTESTS_REV = 203ce36bffd617db7f118c551e32794561fb273d
 
 LIB_OBJS = lib/dom.o lib/dump.o lib/encoding.o lib/tokenizer.o \
-	lib/treebuilder.o lib/csssyntax.o lib/values.o lib/selector.o \
-	lib/url.o lib/props.o lib/media.o
+	lib/treebuilder.o lib/csssyntax.o lib/selector.o lib/values.o \
+	lib/props.o lib/media.o lib/cascade.o lib/url.o lib/ua-css.o
 LIBS = -lm
 HEADERS = lib/soie/soie.h lib/soie/dom.h lib/soie/html.h lib/soie/style.h
 INTERNAL = lib/internal.h lib/parser.h lib/tags.h lib/css.h lib/props.h
@@ -37,6 +37,11 @@ lib/libsoie.so.$(SOVERSION): $(LIB_OBJS)
 $(LIB_OBJS): $(HEADERS) $(INTERNAL)
 lib/tokenizer.o: lib/entities.inc
 
+# The user agent style sheet, as a C string.
+lib/ua-css.c: lib/ua.css
+	{ echo 'const char *const ua_css[] = {'; \
+	  sed 's/\\/\\\\/g; s/"/\\"/g; s/^/"/; s/$$/\\n",/' lib/ua.css; \
+	  echo '0 };'; } > $@
 
 tools/soie-render: tools/soie-render.o lib/libsoie.a
 	$(CC) $(LDFLAGS) -o $@ tools/soie-render.o lib/libsoie.a $(LIBS)
@@ -61,7 +66,7 @@ tests/csstest.o tests/cssvalue.o: CPPFLAGS += -Ilib
 # Our own corpus, no network needed.
 check: tests/unit tests/html5lib
 	./tests/unit
-	./tests/html5lib tests/tree/*.dat
+	./tests/html5lib tests/tree/*.dat tests/style/*.dat
 
 # The html5lib tree construction corpus, fetched on demand.
 $(H5TESTS):
@@ -92,6 +97,6 @@ install: all
 clean:
 	rm -f lib/*.o lib/libsoie.a lib/libsoie.so.* tools/*.o \
 		tools/soie-render tests/*.o tests/html5lib tests/unit \
-		tests/csstest tests/cssvalue
+		tests/csstest tests/cssvalue lib/ua-css.c
 
 .PHONY: all check check-html5lib check-css install clean

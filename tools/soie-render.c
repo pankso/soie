@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 #include <soie/soie.h>
 
 static void usage(void)
@@ -14,20 +15,57 @@ static void usage(void)
 	      "  -c CHARSET  charset from the transport, skips sniffing\n"
 	      "  -f CONTEXT  parse as a fragment inside element CONTEXT\n"
 	      "  -s          scripting flag on (<noscript> as raw text)\n"
+	      "  -p PROPS    run the cascade, dump these computed properties\n"
+	      "              (comma separated, e.g. display,color)\n"
+	      "  -w WIDTH    viewport width (1024), -H HEIGHT (768)\n"
+	      "  -D          prefers-color-scheme: dark\n"
+	      "  -b URL      base URL (default: the file's file:// URL)\n"
 	      "  -V          print the library version\n", stderr);
 	exit(2);
 }
 
+static char *read_file(FILE *f, size_t *len);
+
 static char *read_all(const char *path, size_t *len)
 {
 	FILE *f = strcmp(path, "-") ? fopen(path, "rb") : stdin;
-	char *buf = NULL;
-	size_t cap = 0, n;
+	char *buf;
 
 	if (!f) {
 		perror(path);
 		exit(1);
 	}
+	buf = read_file(f, len);
+	if (!buf) {
+		perror(path);
+		exit(1);
+	}
+	if (f != stdin)
+		fclose(f);
+	return buf;
+}
+
+/* Fetch callback: local files only (file:// URLs). */
+static int fetch(void *data, const char *url, char **buf, size_t *len)
+{
+	FILE *f;
+
+	(void)data;
+	if (strncmp(url, "file://", 7))
+		return -1;
+	f = fopen(url + 7, "rb");
+	if (!f)
+		return -1;
+	*buf = read_file(f, len);
+	fclose(f);
+	return *buf ? 0 : -1;
+}
+
+static char *read_file(FILE *f, size_t *len)
+{
+	char *buf = NULL;
+	size_t cap = 0, n;
+
 	*len = 0;
 	do {
 		if (*len + 65536 > cap) {
@@ -42,23 +80,24 @@ static char *read_all(const char *path, size_t *len)
 		*len += n;
 	} while (n);
 	if (ferror(f)) {
-		perror(path);
-		exit(1);
+		free(buf);
+		return NULL;
 	}
-	if (f != stdin)
-		fclose(f);
 	return buf;
 }
 
 int main(int argc, char **argv)
 {
 	soie_html_options opts = { NULL, 0 };
-	const char *context = NULL;
+	soie_style_options so;
+	const char *context = NULL, *props = NULL, *base = NULL;
+	char cwd[4096], file_url[8192];
 	soie_node *doc, *root;
 	char *buf, *dump;
 	size_t len;
 	int i;
 
+	memset(&so, 0, sizeof(so));
 	for (i = 1; i < argc && argv[i][0] == '-' && argv[i][1]; i++) {
 		if (!strcmp(argv[i], "-d"))
 			;
@@ -67,7 +106,17 @@ int main(int argc, char **argv)
 		else if (!strcmp(argv[i], "-f") && i + 1 < argc)
 			context = argv[++i];
 		else if (!strcmp(argv[i], "-s"))
-			opts.scripting = 1;
+			opts.scripting = so.scripting = 1;
+		else if (!strcmp(argv[i], "-p") && i + 1 < argc)
+			props = argv[++i];
+		else if (!strcmp(argv[i], "-w") && i + 1 < argc)
+			so.width = atoi(argv[++i]);
+		else if (!strcmp(argv[i], "-H") && i + 1 < argc)
+			so.height = atoi(argv[++i]);
+		else if (!strcmp(argv[i], "-D"))
+			so.dark = 1;
+		else if (!strcmp(argv[i], "-b") && i + 1 < argc)
+			base = argv[++i];
 		else if (!strcmp(argv[i], "-V")) {
 			printf("soie %s\n", soie_version());
 			return 0;
@@ -85,7 +134,23 @@ int main(int argc, char **argv)
 		doc = soie_html_parse(buf, len, &opts);
 		root = doc;
 	}
-	dump = soie_node_dump(root, &len);
+	if (props) {
+		if (!base && strcmp(argv[i], "-")) {
+			if (argv[i][0] == '/')
+				snprintf(file_url, sizeof(file_url), "file://%s",
+					argv[i]);
+			else if (getcwd(cwd, sizeof(cwd)))
+				snprintf(file_url, sizeof(file_url),
+					"file://%s/%s", cwd, argv[i]);
+			base = file_url;
+		}
+		so.base_url = base;
+		so.fetch = fetch;
+		soie_style_document(doc, &so);
+		dump = soie_node_dump_style(root, props, &len);
+	} else {
+		dump = soie_node_dump(root, &len);
+	}
 	fwrite(dump, 1, len, stdout);
 	free(dump);
 	if (root != doc)

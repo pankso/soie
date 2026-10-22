@@ -1,0 +1,565 @@
+#data
+<!DOCTYPE html><style>p{color:red} .c{color:green} #i{color:blue} p{color:yellow!important} .c{color:lime!important}</style><p id=i class=c style="color:black">x</p><p class=c style="color:navy !important">y</p>
+#errors
+#properties
+color
+#document
+| <!DOCTYPE html>
+| <html>
+|   @color: rgb(0, 0, 0)
+|   <head>
+|     @color: rgb(0, 0, 0)
+|     <style>
+|       @color: rgb(0, 0, 0)
+|       "p{color:red} .c{color:green} #i{color:blue} p{color:yellow!important} .c{color:lime!important}"
+|   <body>
+|     @color: rgb(0, 0, 0)
+|     <p>
+|       class="c"
+|       id="i"
+|       style="color:black"
+|       @color: rgb(0, 255, 0)
+|       "x"
+|     <p>
+|       class="c"
+|       style="color:navy !important"
+|       @color: rgb(0, 0, 128)
+|       "y"
+
+#data
+<!DOCTYPE html><style>@layer a, b; @layer b { p { color: red } } @layer a { p#x { color: green } } p { color: blue } @layer a { p { background-color: red !important } } @layer b { p { background-color: green !important } }</style><p id=x>t
+#errors
+#properties
+color,background-color
+#document
+| <!DOCTYPE html>
+| <html>
+|   @color: rgb(0, 0, 0)
+|   @background-color: rgba(0, 0, 0, 0)
+|   <head>
+|     @color: rgb(0, 0, 0)
+|     @background-color: rgba(0, 0, 0, 0)
+|     <style>
+|       @color: rgb(0, 0, 0)
+|       @background-color: rgba(0, 0, 0, 0)
+|       "@layer a, b; @layer b { p { color: red } } @layer a { p#x { color: green } } p { color: blue } @layer a { p { background-color: red !important } } @layer b { p { background-color: green !important } }"
+|   <body>
+|     @color: rgb(0, 0, 0)
+|     @background-color: rgba(0, 0, 0, 0)
+|     <p>
+|       id="x"
+|       @color: rgb(0, 0, 255)
+|       @background-color: rgb(255, 0, 0)
+|       "t"
+
+#data
+<!DOCTYPE html><style>html{font-size:20px} div{font-size:1.5em; width:50%; padding:1rem; line-height:1.5} span{font-size:50%; line-height:inherit}</style><div><span>x</span></div>
+#errors
+#properties
+font-size,width,padding-top,line-height
+#document
+| <!DOCTYPE html>
+| <html>
+|   @font-size: 20px
+|   @width: auto
+|   @padding-top: 0px
+|   @line-height: normal
+|   <head>
+|     @font-size: 20px
+|     @width: auto
+|     @padding-top: 0px
+|     @line-height: normal
+|     <style>
+|       @font-size: 20px
+|       @width: auto
+|       @padding-top: 0px
+|       @line-height: normal
+|       "html{font-size:20px} div{font-size:1.5em; width:50%; padding:1rem; line-height:1.5} span{font-size:50%; line-height:inherit}"
+|   <body>
+|     @font-size: 20px
+|     @width: auto
+|     @padding-top: 0px
+|     @line-height: normal
+|     <div>
+|       @font-size: 30px
+|       @width: 50%
+|       @padding-top: 20px
+|       @line-height: 1.5
+|       <span>
+|         @font-size: 15px
+|         @width: auto
+|         @padding-top: 0px
+|         @line-height: 1.5
+|         "x"
+
+#data
+<!DOCTYPE html><style>:root{--a: 10px; --b: var(--c, 3px); --x: var(--y); --y: var(--x)} p{margin-left: var(--a); margin-right: var(--b); margin-top: var(--x, 7px); padding-left: var(--nope)} @property --r { syntax: "<length>"; inherits: false; initial-value: 5px } p { padding-right: var(--r) }</style><p>x
+#errors
+#properties
+margin-left,margin-right,margin-top,padding-left,padding-right
+#document
+| <!DOCTYPE html>
+| <html>
+|   @margin-left: 0px
+|   @margin-right: 0px
+|   @margin-top: 0px
+|   @padding-left: 0px
+|   @padding-right: 0px
+|   <head>
+|     @margin-left: 0px
+|     @margin-right: 0px
+|     @margin-top: 0px
+|     @padding-left: 0px
+|     @padding-right: 0px
+|     <style>
+|       @margin-left: 0px
+|       @margin-right: 0px
+|       @margin-top: 0px
+|       @padding-left: 0px
+|       @padding-right: 0px
+|       ":root{--a: 10px; --b: var(--c, 3px); --x: var(--y); --y: var(--x)} p{margin-left: var(--a); margin-right: var(--b); margin-top: var(--x, 7px); padding-left: var(--nope)} @property --r { syntax: "<length>"; inherits: false; initial-value: 5px } p { padding-right: var(--r) }"
+|   <body>
+|     @margin-left: 8px
+|     @margin-right: 8px
+|     @margin-top: 8px
+|     @padding-left: 0px
+|     @padding-right: 0px
+|     <p>
+|       @margin-left: 10px
+|       @margin-right: 3px
+|       @margin-top: 7px
+|       @padding-left: 0px
+|       @padding-right: 5px
+|       "x"
+
+#data
+<!DOCTYPE html><p style="margin: 1px 2px 3px; border: 2px dashed red; font: italic bold 12px/2 Georgia, serif; background: url(a.png) no-repeat #00f; flex: 2">x
+#errors
+#properties
+margin-top,margin-right,margin-bottom,margin-left,border-top-width,border-top-style,border-top-color,font-style,font-weight,font-size,line-height,font-family,background-color,background-image,flex-grow,flex-shrink,flex-basis
+#document
+| <!DOCTYPE html>
+| <html>
+|   @margin-top: 0px
+|   @margin-right: 0px
+|   @margin-bottom: 0px
+|   @margin-left: 0px
+|   @border-top-width: 0px
+|   @border-top-style: none
+|   @border-top-color: rgb(0, 0, 0)
+|   @font-style: normal
+|   @font-weight: 400
+|   @font-size: 16px
+|   @line-height: normal
+|   @font-family: serif
+|   @background-color: rgba(0, 0, 0, 0)
+|   @background-image: none
+|   @flex-grow: 0
+|   @flex-shrink: 1
+|   @flex-basis: auto
+|   <head>
+|     @margin-top: 0px
+|     @margin-right: 0px
+|     @margin-bottom: 0px
+|     @margin-left: 0px
+|     @border-top-width: 0px
+|     @border-top-style: none
+|     @border-top-color: rgb(0, 0, 0)
+|     @font-style: normal
+|     @font-weight: 400
+|     @font-size: 16px
+|     @line-height: normal
+|     @font-family: serif
+|     @background-color: rgba(0, 0, 0, 0)
+|     @background-image: none
+|     @flex-grow: 0
+|     @flex-shrink: 1
+|     @flex-basis: auto
+|   <body>
+|     @margin-top: 8px
+|     @margin-right: 8px
+|     @margin-bottom: 8px
+|     @margin-left: 8px
+|     @border-top-width: 0px
+|     @border-top-style: none
+|     @border-top-color: rgb(0, 0, 0)
+|     @font-style: normal
+|     @font-weight: 400
+|     @font-size: 16px
+|     @line-height: normal
+|     @font-family: serif
+|     @background-color: rgba(0, 0, 0, 0)
+|     @background-image: none
+|     @flex-grow: 0
+|     @flex-shrink: 1
+|     @flex-basis: auto
+|     <p>
+|       style="margin: 1px 2px 3px; border: 2px dashed red; font: italic bold 12px/2 Georgia, serif; background: url(a.png) no-repeat #00f; flex: 2"
+|       @margin-top: 1px
+|       @margin-right: 2px
+|       @margin-bottom: 3px
+|       @margin-left: 2px
+|       @border-top-width: 2px
+|       @border-top-style: dashed
+|       @border-top-color: rgb(255, 0, 0)
+|       @font-style: italic
+|       @font-weight: 700
+|       @font-size: 12px
+|       @line-height: 2
+|       @font-family: Georgia, serif
+|       @background-color: rgb(0, 0, 255)
+|       @background-image: url("a.png")
+|       @flex-grow: 2
+|       @flex-shrink: 1
+|       @flex-basis: 0px
+|       "x"
+
+#data
+<!DOCTYPE html><style>li:nth-child(odd){color:red} li:not(.a):nth-last-child(1){color:green} ul:has(> .b) {color: blue} [data-x^="ab" i]{font-weight:bold} .a + li {font-style: italic} :where(#w) li { color: yellow }</style><ul id=w><li>1<li class=a>2<li data-x=ABC>3<li class=b>4</ul>
+#errors
+#properties
+color,font-weight,font-style
+#document
+| <!DOCTYPE html>
+| <html>
+|   @color: rgb(0, 0, 0)
+|   @font-weight: 400
+|   @font-style: normal
+|   <head>
+|     @color: rgb(0, 0, 0)
+|     @font-weight: 400
+|     @font-style: normal
+|     <style>
+|       @color: rgb(0, 0, 0)
+|       @font-weight: 400
+|       @font-style: normal
+|       "li:nth-child(odd){color:red} li:not(.a):nth-last-child(1){color:green} ul:has(> .b) {color: blue} [data-x^="ab" i]{font-weight:bold} .a + li {font-style: italic} :where(#w) li { color: yellow }"
+|   <body>
+|     @color: rgb(0, 0, 0)
+|     @font-weight: 400
+|     @font-style: normal
+|     <ul>
+|       id="w"
+|       @color: rgb(0, 0, 255)
+|       @font-weight: 400
+|       @font-style: normal
+|       <li>
+|         @color: rgb(255, 0, 0)
+|         @font-weight: 400
+|         @font-style: normal
+|         "1"
+|       <li>
+|         class="a"
+|         @color: rgb(255, 255, 0)
+|         @font-weight: 400
+|         @font-style: normal
+|         "2"
+|       <li>
+|         data-x="ABC"
+|         @color: rgb(255, 0, 0)
+|         @font-weight: 700
+|         @font-style: italic
+|         "3"
+|       <li>
+|         class="b"
+|         @color: rgb(0, 128, 0)
+|         @font-weight: 400
+|         @font-style: normal
+|         "4"
+
+#data
+<!DOCTYPE html><span style="float:left">a</span><span style="position:absolute;float:right">b</span><div style="display:flex"><span>c</span></div><p style="border-width:5px">d
+#errors
+#properties
+display,float,border-top-width
+#document
+| <!DOCTYPE html>
+| <html>
+|   @display: block
+|   @float: none
+|   @border-top-width: 0px
+|   <head>
+|     @display: none
+|     @float: none
+|     @border-top-width: 0px
+|   <body>
+|     @display: block
+|     @float: none
+|     @border-top-width: 0px
+|     <span>
+|       style="float:left"
+|       @display: block
+|       @float: left
+|       @border-top-width: 0px
+|       "a"
+|     <span>
+|       style="position:absolute;float:right"
+|       @display: block
+|       @float: none
+|       @border-top-width: 0px
+|       "b"
+|     <div>
+|       style="display:flex"
+|       @display: flex
+|       @float: none
+|       @border-top-width: 0px
+|       <span>
+|         @display: block
+|         @float: none
+|         @border-top-width: 0px
+|         "c"
+|     <p>
+|       style="border-width:5px"
+|       @display: block
+|       @float: none
+|       @border-top-width: 0px
+|       "d"
+
+#data
+<!DOCTYPE html><style>@supports (display: grid) { p { color: green } } @supports not (display: grid) { p { color: red } } @supports (foo: bar) { p { font-weight: 900 } } p { @media (min-width: 100px) { font-style: italic } } @media print { p { color: red } }</style><p>x
+#errors
+#properties
+color,font-weight,font-style
+#document
+| <!DOCTYPE html>
+| <html>
+|   @color: rgb(0, 0, 0)
+|   @font-weight: 400
+|   @font-style: normal
+|   <head>
+|     @color: rgb(0, 0, 0)
+|     @font-weight: 400
+|     @font-style: normal
+|     <style>
+|       @color: rgb(0, 0, 0)
+|       @font-weight: 400
+|       @font-style: normal
+|       "@supports (display: grid) { p { color: green } } @supports not (display: grid) { p { color: red } } @supports (foo: bar) { p { font-weight: 900 } } p { @media (min-width: 100px) { font-style: italic } } @media print { p { color: red } }"
+|   <body>
+|     @color: rgb(0, 0, 0)
+|     @font-weight: 400
+|     @font-style: normal
+|     <p>
+|       @color: rgb(0, 128, 0)
+|       @font-weight: 400
+|       @font-style: italic
+|       "x"
+
+#data
+<body bgcolor=ffcc00 text=red><font size=5 color=blue face="Arial">x</font><table border=1 cellpadding=4 width=50%><tr><td align=center valign=top>c</table>
+#errors
+#properties
+background-color,color,font-size,font-family,width,border-top-width,border-top-style,padding-top,text-align,vertical-align
+#document
+| <html>
+|   @background-color: rgba(0, 0, 0, 0)
+|   @color: rgb(0, 0, 0)
+|   @font-size: 16px
+|   @font-family: serif
+|   @width: auto
+|   @border-top-width: 0px
+|   @border-top-style: none
+|   @padding-top: 0px
+|   @text-align: start
+|   @vertical-align: baseline
+|   <head>
+|     @background-color: rgba(0, 0, 0, 0)
+|     @color: rgb(0, 0, 0)
+|     @font-size: 16px
+|     @font-family: serif
+|     @width: auto
+|     @border-top-width: 0px
+|     @border-top-style: none
+|     @padding-top: 0px
+|     @text-align: start
+|     @vertical-align: baseline
+|   <body>
+|     bgcolor="ffcc00"
+|     text="red"
+|     @background-color: rgb(255, 204, 0)
+|     @color: rgb(255, 0, 0)
+|     @font-size: 16px
+|     @font-family: serif
+|     @width: auto
+|     @border-top-width: 0px
+|     @border-top-style: none
+|     @padding-top: 0px
+|     @text-align: start
+|     @vertical-align: baseline
+|     <font>
+|       color="blue"
+|       face="Arial"
+|       size="5"
+|       @background-color: rgba(0, 0, 0, 0)
+|       @color: rgb(0, 0, 255)
+|       @font-size: 24px
+|       @font-family: Arial
+|       @width: auto
+|       @border-top-width: 0px
+|       @border-top-style: none
+|       @padding-top: 0px
+|       @text-align: start
+|       @vertical-align: baseline
+|       "x"
+|     <table>
+|       border="1"
+|       cellpadding="4"
+|       width="50%"
+|       @background-color: rgba(0, 0, 0, 0)
+|       @color: rgb(255, 0, 0)
+|       @font-size: 16px
+|       @font-family: serif
+|       @width: 50%
+|       @border-top-width: 1px
+|       @border-top-style: outset
+|       @padding-top: 0px
+|       @text-align: start
+|       @vertical-align: baseline
+|       <tbody>
+|         @background-color: rgba(0, 0, 0, 0)
+|         @color: rgb(255, 0, 0)
+|         @font-size: 16px
+|         @font-family: serif
+|         @width: auto
+|         @border-top-width: 0px
+|         @border-top-style: none
+|         @padding-top: 0px
+|         @text-align: start
+|         @vertical-align: middle
+|         <tr>
+|           @background-color: rgba(0, 0, 0, 0)
+|           @color: rgb(255, 0, 0)
+|           @font-size: 16px
+|           @font-family: serif
+|           @width: auto
+|           @border-top-width: 0px
+|           @border-top-style: none
+|           @padding-top: 0px
+|           @text-align: start
+|           @vertical-align: middle
+|           <td>
+|             align="center"
+|             valign="top"
+|             @background-color: rgba(0, 0, 0, 0)
+|             @color: rgb(255, 0, 0)
+|             @font-size: 16px
+|             @font-family: serif
+|             @width: auto
+|             @border-top-width: 1px
+|             @border-top-style: inset
+|             @padding-top: 4px
+|             @text-align: -webkit-center
+|             @vertical-align: top
+|             "c"
+
+#data
+<!DOCTYPE html><p style="color: oklch(0.6 0.2 30); border: 1px solid; background-color: hsl(120 100% 25% / 50%)">x
+#errors
+#properties
+color,border-top-color,background-color
+#document
+| <!DOCTYPE html>
+| <html>
+|   @color: rgb(0, 0, 0)
+|   @border-top-color: rgb(0, 0, 0)
+|   @background-color: rgba(0, 0, 0, 0)
+|   <head>
+|     @color: rgb(0, 0, 0)
+|     @border-top-color: rgb(0, 0, 0)
+|     @background-color: rgba(0, 0, 0, 0)
+|   <body>
+|     @color: rgb(0, 0, 0)
+|     @border-top-color: rgb(0, 0, 0)
+|     @background-color: rgba(0, 0, 0, 0)
+|     <p>
+|       style="color: oklch(0.6 0.2 30); border: 1px solid; background-color: hsl(120 100% 25% / 50%)"
+|       @color: oklch(0.6 0.2 30)
+|       @border-top-color: oklch(0.6 0.2 30)
+|       @background-color: rgba(0, 127.5, 0, 0.5)
+|       "x"
+
+#data
+<!DOCTYPE html><style>.card { color: red; & > .t { color: green } .x & { color: blue } &:hover { color: black } }</style><div class=x><div class=card><p class=t>a</div></div>
+#errors
+#properties
+color
+#document
+| <!DOCTYPE html>
+| <html>
+|   @color: rgb(0, 0, 0)
+|   <head>
+|     @color: rgb(0, 0, 0)
+|     <style>
+|       @color: rgb(0, 0, 0)
+|       ".card { color: red; & > .t { color: green } .x & { color: blue } &:hover { color: black } }"
+|   <body>
+|     @color: rgb(0, 0, 0)
+|     <div>
+|       class="x"
+|       @color: rgb(0, 0, 0)
+|       <div>
+|         class="card"
+|         @color: rgb(0, 0, 255)
+|         <p>
+|           class="t"
+|           @color: rgb(0, 128, 0)
+|           "a"
+
+#data
+<!DOCTYPE html><div style="font-size: small; font-weight: 300"><b>x</b><span style="font-size: larger">y</span></div>
+#errors
+#properties
+font-size,font-weight
+#document
+| <!DOCTYPE html>
+| <html>
+|   @font-size: 16px
+|   @font-weight: 400
+|   <head>
+|     @font-size: 16px
+|     @font-weight: 400
+|   <body>
+|     @font-size: 16px
+|     @font-weight: 400
+|     <div>
+|       style="font-size: small; font-weight: 300"
+|       @font-size: 13.3333px
+|       @font-weight: 300
+|       <b>
+|         @font-size: 13.3333px
+|         @font-weight: 400
+|         "x"
+|       <span>
+|         style="font-size: larger"
+|         @font-size: 16px
+|         @font-weight: 300
+|         "y"
+
+#data
+<!DOCTYPE html><div style="width: calc(100% - 2em); height: clamp(10px, 5vw, 40px); margin-left: max(10px, 1em); padding-left: min(10%, 20px)"></div>
+#errors
+#properties
+width,height,margin-left,padding-left
+#document
+| <!DOCTYPE html>
+| <html>
+|   @width: auto
+|   @height: auto
+|   @margin-left: 0px
+|   @padding-left: 0px
+|   <head>
+|     @width: auto
+|     @height: auto
+|     @margin-left: 0px
+|     @padding-left: 0px
+|   <body>
+|     @width: auto
+|     @height: auto
+|     @margin-left: 8px
+|     @padding-left: 0px
+|     <div>
+|       style="width: calc(100% - 2em); height: clamp(10px, 5vw, 40px); margin-left: max(10px, 1em); padding-left: min(10%, 20px)"
+|       @width: calc(100% - 32px)
+|       @height: 40px
+|       @margin-left: 16px
+|       @padding-left: min(10%, 20px)

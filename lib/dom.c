@@ -515,6 +515,10 @@ static void node_free_one(soie_node *n)
 		free(n->u.doctype.public_id);
 		free(n->u.doctype.system_id);
 		break;
+	case SOIE_DOCUMENT:
+		if (n->u.doc.styles)
+			styledb_free(n->u.doc.styles);
+		break;
 	}
 	if (n->name_owned)
 		free((char *)n->name);
