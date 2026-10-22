@@ -1,7 +1,7 @@
 /*
  * Extension tests: the registry and its ABI checks, the image and
  * content hooks inside the engine, and the modules of ext/ (cookies,
- * block), loaded the way hosts load them.
+ * block, webp when built), loaded the way hosts load them.
  */
 #define _POSIX_C_SOURCE 200809L
 #include <stdio.h>
@@ -272,6 +272,44 @@ static void test_block(void)
 	CHECK(!soie_ext_blocked(&rq));
 }
 
+static void test_webp(void)
+{
+	const struct soie_ext_image *e;
+	unsigned char *px;
+	char *buf;
+	size_t len;
+	long n;
+	int w = 0, h = 0, i;
+	FILE *f;
+
+	if (access("ext/webp.so", F_OK))
+		return;	/* not built */
+	CHECK(soie_ext_load("ext/webp.so") == 0);
+	f = fopen("tests/paint/img/grad.webp", "rb");
+	CHECK(f != NULL);
+	if (!f)
+		return;
+	fseek(f, 0, SEEK_END);
+	n = ftell(f);
+	rewind(f);
+	len = (size_t)n;
+	buf = malloc(len);
+	CHECK(fread(buf, 1, len, f) == len);
+	fclose(f);
+	for (i = 0; (e = (const void *)soie_ext_get(SOIE_EXT_IMAGE, i)); i++)
+		if (!strcmp(e->base.name, "webp"))
+			break;
+	CHECK(e != NULL);
+	if (e) {
+		px = e->decode(e->base.data, (unsigned char *)buf, len, &w, &h);
+		CHECK(px && w == 40 && h == 30);
+		free(px);
+		CHECK(!e->decode(e->base.data, (const unsigned char *)"FAKE",
+			4, &w, &h));
+	}
+	free(buf);
+}
+
 int main(void)
 {
 	setenv("SOIE_COOKIES", "", 1);	/* memory only */
@@ -280,6 +318,7 @@ int main(void)
 	test_response();
 	test_cookies();
 	test_block();
+	test_webp();
 	printf("ext: %d checks, %d failed\n", checks, failures);
 	return failures != 0;
 }

@@ -43,6 +43,9 @@ INTERNAL = lib/internal.h lib/parser.h lib/tags.h lib/css.h lib/props.h \
 # Extensions: those without dependencies always, the others when
 # their libraries are there (or list them: make EXTS="ext/cookies.so").
 EXTS = ext/cookies.so ext/block.so
+ifeq ($(shell pkg-config --exists libwebp && echo y),y)
+EXTS += ext/webp.so
+endif
 
 all: lib/libsoie.a lib/libsoie.so.$(SOVERSION) tools/soie-render browser/soie \
 	$(EXTS)
@@ -74,6 +77,9 @@ tools/soie-render: tools/soie-render.o lib/libsoie.so.$(SOVERSION)
 ext/%.so: ext/%.c lib/libsoie.so.$(SOVERSION) $(HEADERS)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -shared $(LDFLAGS) -o $@ $< \
 		lib/libsoie.so.$(SOVERSION) $(EXT_LIBS)
+
+ext/webp.so: CPPFLAGS += $(shell pkg-config --cflags libwebp)
+ext/webp.so: EXT_LIBS = $(shell pkg-config --libs libwebp)
 
 tests/html5lib: tests/html5lib.o lib/libsoie.a
 	$(CC) $(LDFLAGS) -o $@ tests/html5lib.o lib/libsoie.a $(LIBS)

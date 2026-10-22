@@ -5,12 +5,13 @@ reference browser. No toolkit, no JavaScript in the core, built to
 render modern pages on old machines. See `doc/DECISIONS.md` for what
 Soie is and is not, and how extensions plug in.
 
-Status: phase 8 done: flexbox and grid. `browser/soie` browses the
-web (HTTPS, forms, history), without JavaScript or cookies yet. The HTML parser follows the WHATWG algorithm
-and passes the html5lib tree-construction tests; the CSS parser,
-selectors, cascade and computed values pass css-parsing-tests,
+Status: phase 9 done: the extension interface (`lib/soie/ext.h`),
+cookies, content blocking and WebP as extensions. `browser/soie`
+browses the web (HTTPS, forms, history, cookies), without JavaScript
+yet. The HTML parser follows the WHATWG algorithm and passes the
+html5lib tree-construction tests; the CSS parser, selectors, cascade and computed values pass css-parsing-tests,
 including all of CSS Color 4; block and inline layout work, with a
-FreeType/HarfBuzz text (phase 4) and tables.
+FreeType/HarfBuzz text (phase 4) and tables; flexbox and grid.
 
 ## Build
 
@@ -22,6 +23,10 @@ FreeType/HarfBuzz text (phase 4) and tables.
 
 Needs a C99 compiler, GNU make, pkg-config, FreeType, libpng, libjpeg
 and (optional, `make HARFBUZZ=0`) HarfBuzz.
+
+Extensions are modules in `ext/`, installed in `$(PREFIX)/lib/soie/ext`:
+`cookies.so` and `block.so` need nothing, `webp.so` is built when
+pkg-config finds libwebp. `make EXTS="ext/cookies.so"` picks them.
 
 ## Try it
 
@@ -35,12 +40,17 @@ and (optional, `make HARFBUZZ=0`) HarfBuzz.
 
 The browser: `browser/soie [URL]`, or `browser/soie -o out.png URL`
 to render a page without a display. It also needs Xlib, GnuTLS and
-zlib.
+zlib. It loads the installed extensions, or those of
+`$SOIE_EXT_DIR`: `SOIE_EXT_DIR=ext browser/soie` in the tree.
+Cookies live in `~/.local/share/soie/cookies.txt`; a hosts-style
+block list in `~/.config/soie/block.txt` turns content blocking on.
+`soie-render -x ext/webp.so page.html` loads an extension.
 
 ## Layout
 
     lib/         libsoie (public headers in lib/soie/)
     browser/     the browser: Xlib UI, HTTP and TLS
+    ext/         extensions (cookies, block, webp...)
     tools/       soie-render, generators
     tests/       unit tests, html5lib test runner, local corpus
     doc/         DECISIONS.md

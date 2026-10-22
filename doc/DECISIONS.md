@@ -79,6 +79,8 @@ reversed, edit the entry and say why; do not leave stale rules here.
   a 100 000 entry list costs a few MB). A listed host blocks its
   subdomains. Only sub-resources are blocked, never the page asked
   for. No list, no hooks.
+- `webp`: WebP through libwebp, the most common image format the
+  engine does not decode itself. Animated WebP is refused for now.
 
 ## Public API
 
