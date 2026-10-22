@@ -46,6 +46,7 @@ struct style;
 struct styledb;
 struct layout;
 struct images;
+struct script;
 
 struct soie_node {
 	unsigned char type;
@@ -54,6 +55,7 @@ struct soie_node {
 	/* Element created by the parser as an HTML integration point
 	 * (MathML annotation-xml with an HTML encoding). */
 	unsigned char html_ip;
+	unsigned char started;	/* <script>: already started */
 	unsigned short tag;
 	struct soie_node *doc;
 	struct soie_node *parent, *first, *last, *prev, *next;
@@ -89,6 +91,7 @@ struct soie_node {
 			unsigned long gen;	/* bumped by every change */
 			/* what soie_document_update() redoes */
 			unsigned long styled_gen;
+			struct script *script;	/* soie_script_start() */
 			int lay_w, lay_h;
 		} doc;
 	} u;

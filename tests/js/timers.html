@@ -1,0 +1,17 @@
+<!DOCTYPE html>
+<script>
+var log = (...a) => console.log(a.map(String).join(' '));
+log('sync 1');
+setTimeout(() => log('timeout 120'), 120);
+setTimeout(() => log('timeout 0'), 0);
+setTimeout((a, b) => log('args', a, b), 30, 'x', 'y');
+var t = setTimeout(() => log('cleared!'), 1);
+clearTimeout(t);
+var i = 0, iv = setInterval(() => { log('interval', ++i); if (i === 3) clearInterval(iv); }, 50);
+Promise.resolve().then(() => log('microtask 1')).then(() => log('microtask 2'));
+queueMicrotask(() => log('queueMicrotask'));
+requestAnimationFrame(ts => log('frame', typeof ts));
+(async () => { await null; log('async'); await new Promise(r => setTimeout(r, 180)); log('async after 180'); })();
+setTimeout("log('string handler')", 70);
+log('sync 2');
+</script>

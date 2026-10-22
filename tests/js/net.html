@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<script>
+var log = (...a) => console.log(a.map(String).join(' '));
+var x = new XMLHttpRequest();
+x.open('GET', 'net-data.json');
+x.responseType = 'json';
+x.onreadystatechange = () => { if (x.readyState === 4) log('xhr state 4', x.status); };
+x.onload = () => log('xhr load', x.response.name, x.getResponseHeader('nope'));
+x.send();
+log('xhr sent', x.readyState);
+var y = new XMLHttpRequest();
+y.open('GET', 'net-data.json', false);
+y.send();
+log('sync xhr', y.status, JSON.parse(y.responseText).list.length);
+fetch('net-data.json').then(r => { log('fetch', r.ok, r.status); return r.json(); })
+  .then(j => log('json', j.name, j.list.join('+')));
+fetch('missing.json').then(() => log('never'), e => log('fetch failed', e.name));
+fetch('net-data.json', { signal: AbortSignal.abort() }).catch(e => log('aborted', e.name));
+var u = new URL('../a/b.html?x=1&y=2#top', 'http://example.org/d/e/f.html');
+log('url', u.href, u.host, u.pathname, u.search, u.hash, u.origin);
+u.searchParams.append('z', 'a b');
+log('params', u.search, u.searchParams.get('y'));
+log('url2', new URL('HTTP://Example.ORG:80/').href, URL.canParse('nope'));
+var q = new URLSearchParams({ a: '1', b: 'é&' });
+log('search params', q.toString(), [...q.keys()].join());
+log('base64', btoa('Soie!'), atob('U29pZSE='));
+var bytes = new TextEncoder().encode('é');
+log('utf8', bytes.length, new TextDecoder().decode(bytes));
+log('json', JSON.stringify({ a: [1, { b: null }] }));
+var h = new Headers({ 'Content-Type': 'text/html' });
+log('headers', h.get('content-type'), h.has('X'));
+</script>

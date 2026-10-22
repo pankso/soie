@@ -1,0 +1,18 @@
+log: inline 1 loading script
+log: sync external load-sync.js
+log: script onload
+log: script onerror
+log: written script ran
+log: after write true
+log: inline dynamic
+log: inline 2
+log: readystatechange interactive
+log: defer interactive
+log: async
+log: module true
+log: DOMContentLoaded interactive
+log: readystatechange complete
+log: onload property
+log: load complete
+log: dynamic external
+log: dynamic onload

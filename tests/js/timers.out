@@ -1,0 +1,15 @@
+log: sync 1
+log: sync 2
+log: microtask 1
+log: queueMicrotask
+log: async
+log: microtask 2
+log: timeout 0
+log: frame number
+log: args x y
+log: interval 1
+log: string handler
+log: interval 2
+log: timeout 120
+log: interval 3
+log: async after 180

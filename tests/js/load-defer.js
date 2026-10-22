@@ -1,0 +1,1 @@
+log('defer', document.readyState);

@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<title>DOM</title>
+<div id=root class="a b"><p id=p1>One <b>two</b></p><!-- c --><p id=p2 data-user-id=42>Three</p></div>
+<script>
+var log = (...a) => console.log(a.map(String).join(' '));
+var root = document.getElementById('root');
+log('tag', root.tagName, root.localName, root.nodeName, root.nodeType);
+log('children', root.children.length, root.childNodes.length,
+    root.firstElementChild.id, root.lastElementChild.id);
+log('siblings', document.getElementById('p1').nextSibling.nodeType,
+    document.getElementById('p1').nextElementSibling.id);
+log('text', JSON.stringify(root.textContent));
+log('class', root.className, root.classList.length, root.classList.contains('b'));
+root.classList.add('c'); root.classList.remove('a'); root.classList.toggle('d');
+log('classList', root.getAttribute('class'), root.classList.toggle('d', true));
+var p2 = document.getElementById('p2');
+log('dataset', p2.dataset.userId, 'userId' in p2.dataset);
+p2.dataset.fooBar = 'x';
+log('data attr', p2.getAttribute('data-foo-bar'), Object.keys(p2.dataset).join());
+p2.style.color = 'red';
+p2.style.marginTop = '4px';
+p2.style.setProperty('--v', '1');
+log('style', p2.getAttribute('style'), p2.style.color, p2.style.length);
+p2.style.removeProperty('color');
+log('style2', p2.style.cssText);
+log('inner', root.innerHTML);
+root.innerHTML = '<span>new</span> & <i>more</i>';
+log('after', root.childNodes.length, root.outerHTML);
+root.insertAdjacentHTML('afterbegin', '<em>first</em>');
+root.insertAdjacentHTML('beforeend', '<em>last</em>');
+log('adjacent', root.firstChild.textContent, root.lastChild.textContent);
+var c = root.cloneNode(true), s = root.cloneNode(false);
+log('clone', c.childNodes.length, s.childNodes.length, c.isEqualNode(root), c === root);
+var frag = document.createDocumentFragment();
+frag.append('a', document.createElement('br'), 'b');
+root.appendChild(frag);
+log('fragment', frag.childNodes.length, root.childNodes.length);
+root.normalize();
+log('normalize', root.childNodes.length);
+log('query', document.querySelectorAll('em').length, document.querySelector('#root > span').textContent,
+    root.querySelector('i').closest('div').id, root.matches('div.c'), root.contains(document.querySelector('i')));
+var em = document.querySelector('em');
+em.remove();
+log('removed', em.parentNode, document.querySelectorAll('em').length);
+em.textContent = 'back';
+root.prepend(em);
+log('prepend', root.firstChild === em, em.isConnected);
+var t = document.createTextNode('xyz');
+root.replaceChild(t, em);
+log('replace', em.parentNode, root.firstChild.data);
+log('position', root.compareDocumentPosition(t), t.compareDocumentPosition(root));
+log('attrs', root.getAttributeNames().join(), root.hasAttribute('ID'), root.attributes.length);
+root.setAttribute('Title', 'T');
+log('attr case', root.getAttribute('title'), root.title);
+root.toggleAttribute('hidden');
+log('hidden', root.hidden);
+var svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+log('svg', svg.namespaceURI, svg.tagName, svg instanceof SVGElement);
+log('title', document.title, document.head.localName, document.body.localName,
+    document.documentElement.localName, document.compatMode, document.doctype.name);
+document.title = 'New title';
+log('title2', document.title);
+log('instanceof', root instanceof HTMLDivElement, root instanceof HTMLElement,
+    root instanceof Element, root instanceof Node, root instanceof EventTarget);
+try { root.appendChild(root); } catch (e) { log('error', e.name); }
+try { document.createElement('1x'); } catch (e) { log('error', e.name); }
+var walker = document.createTreeWalker(document.body, NodeFilter.SHOW_ELEMENT);
+var names = [];
+while (walker.nextNode()) names.push(walker.currentNode.localName);
+log('walker', names.join());
+var sel = document.createElement('select');
+sel.innerHTML = '<option>a<option value=v selected>b<option>c';
+log('select', sel.value, sel.selectedIndex, sel.options.length);
+sel.value = 'c';
+log('select2', sel.selectedIndex, sel.options[2].selected);
+var inp = document.createElement('input');
+inp.type = 'checkbox';
+log('input', inp.type, inp.checked, inp.value);
+inp.checked = true;
+log('checked', inp.getAttribute('checked'));
+</script>

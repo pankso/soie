@@ -422,6 +422,70 @@ reversed, edit the entry and say why; do not leave stale rules here.
   remaining gaps are in grid placement details and in var()-computed
   track lists.
 
+## JavaScript (phase 10)
+
+- QuickJS, as the brief says: small, complete ES2023, embeddable,
+  MIT. It lives in an extension (`ext/script.so`), built from the
+  QuickJS release sources (`make QUICKJS_SRC=dir`): the SliTaz
+  quickjs-dev package only ships a non-PIC static library, which a
+  shared module cannot link. Sources compiled in also make one build
+  for every distribution and for i486. Fixing the package (adding
+  -fPIC) would let us link it instead.
+- The library runs the scripts, the extension is the engine
+  (`lib/script.c`, the script hooks of `ext.h`). The library walks the
+  parsed document's `<script>` elements in order (classic, then defer,
+  async and module ones), fetches external ones through the host,
+  fires `load`/`error` on them, then DOMContentLoaded and load. So
+  another engine would only implement start, stop, run, event and
+  tick.
+- Scripts run after the parse, not during it: no incremental parser,
+  no blocking. `document.write()` during a script inserts after the
+  running script (its scripts run), after loading it appends to
+  `<body>`. Most pages that still write survive this; the ones that
+  open a whole new document do not.
+- Script-inserted scripts: inline ones run at insertion, external
+  ones from a task, like async scripts. They do not delay load.
+  Scripts in markup set through innerHTML never run (as specified).
+- The DOM is written in JavaScript (`ext/script/dom.js`, embedded at
+  build time) over a few dozen C natives on Soie nodes: tree walking,
+  attributes, mutation, queries, serialization, layout, the host's
+  services. JS is shorter for the web platform's many small rules
+  (classList, dataset, URL, events, forms...), C keeps what must be
+  fast (selector matching, serialization, textContent). Each node a
+  script touches gets one wrapper with the node's prototype
+  (HTMLAnchorElement, SVGElement...), kept until the page goes away:
+  expandos and listeners survive, nothing dangles. The cost is that a
+  page's wrappers live as long as it.
+- Lists (childNodes, children, querySelectorAll, getElementsBy*) are
+  arrays made on each access, not live collections: code that keeps
+  one while changing the tree sees the old state. Simple, and rare.
+- Events: capture, target and bubble phases, once, passive, signal,
+  handleEvent objects, on* attributes and properties, preventDefault
+  reported to the host so that it skips the default action (link,
+  submit, checkbox). The host sends mouse (down, up, click), key
+  (keydown, input), focus, blur, change and submit events.
+- Timers, requestAnimationFrame (16 ms) and the like live in JS; the
+  host asks `soie_script_tick()` for the delay to the next one and
+  waits on its event loop meanwhile. Promise jobs run after every
+  entry into JS.
+- Networking is the host's blocking request: fetch() and asynchronous
+  XHR do it from a task, so callers' code runs first as on the web;
+  the UI waits during the request. Response bodies are bytes as a
+  Latin-1 string, decoded to text by text()/json().
+- Only what pages use most, the rest absent so that feature tests
+  fail cleanly: no shadow DOM, iframes are empty, canvas has no
+  context, MutationObserver never fires, IntersectionObserver reports
+  every target visible once (what lazy loaders wait for), no service
+  workers, localStorage lasts as long as the page, crypto has
+  getRandomValues and randomUUID (from /dev/urandom) but no subtle.
+  ES modules with import maps (imports, not scopes).
+- Limits: 5 s of running per entry (then an exception), 256 MB of
+  JavaScript heap per page. Errors go to the host (`SOIE_DEBUG=1`
+  prints them in the browser).
+- Tests: `make check-js` runs the pages of `tests/js` and compares
+  their console output; `soie-render -j` runs a page's scripts.
+- Cost: Wikipedia takes 0.3 s more CPU and 11 MB more with scripts.
+
 ## Character encoding
 
 - The tokenizer only ever sees valid UTF-8 with normalized newlines.

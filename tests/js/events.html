@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<div id=outer><a id=link href="next.html"><span id=inner>click</span></a></div>
+<form id=form action="search"><input name=q value="x y"><input type=checkbox name=c checked><button id=go>Go</button></form>
+<p id=inline onclick="console.log('inline', this.id, event.type); return false">p</p>
+<script>
+var log = (...a) => console.log(a.map(String).join(' '));
+var order = [];
+var outer = document.getElementById('outer'), inner = document.getElementById('inner');
+outer.addEventListener('click', e => order.push('outer-capture-' + e.eventPhase), true);
+outer.addEventListener('click', e => order.push('outer-bubble-' + e.eventPhase));
+inner.addEventListener('click', e => order.push('inner-' + e.eventPhase));
+document.addEventListener('click', e => order.push('document'));
+window.addEventListener('click', e => order.push('window'));
+document.getElementById('link').addEventListener('click', e => { order.push('link'); e.preventDefault(); });
+inner.click();
+log('order', order.join(','));
+order = [];
+outer.addEventListener('click', function stop(e) { order.push('stop'); e.stopPropagation(); });
+inner.click();
+log('stopped', order.join(','));
+var n = 0;
+document.body.addEventListener('ping', () => n++, { once: true });
+document.body.dispatchEvent(new Event('ping'));
+document.body.dispatchEvent(new Event('ping'));
+log('once', n);
+var got;
+document.addEventListener('custom', e => { got = e.detail.x + ' ' + e.bubbles + ' ' + (e.target === inner); });
+inner.dispatchEvent(new CustomEvent('custom', { bubbles: true, detail: { x: 7 } }));
+log('custom', got);
+var ev = new Event('x', { cancelable: true });
+inner.addEventListener('x', e => e.preventDefault());
+log('prevented', inner.dispatchEvent(ev), ev.defaultPrevented);
+var p = document.getElementById('inline');
+log('handler', typeof p.onclick);
+p.click();
+p.onclick = () => log('property handler');
+p.click();
+var obj = { handleEvent(e) { log('handleEvent', e.type); } };
+p.addEventListener('h', obj);
+p.dispatchEvent(new Event('h'));
+p.removeEventListener('h', obj);
+p.dispatchEvent(new Event('h'));
+var form = document.getElementById('form');
+form.addEventListener('submit', e => {
+  var d = new FormData(form);
+  log('submit', e.submitter && e.submitter.id, [...d].map(x => x.join('=')).join('&'));
+  e.preventDefault();
+});
+document.getElementById('go').click();
+var cb = form.elements.c;
+cb.addEventListener('change', () => log('change', cb.checked));
+cb.click();
+var k = new KeyboardEvent('keydown', { key: 'a' });
+log('key', k.key, k.keyCode, k.code);
+try { document.dispatchEvent('nope'); } catch (e) { log('error', e.name); }
+var ac = new AbortController();
+document.addEventListener('sig', () => log('not removed'), { signal: ac.signal });
+ac.abort();
+document.dispatchEvent(new Event('sig'));
+log('aborted', ac.signal.aborted);
+</script>

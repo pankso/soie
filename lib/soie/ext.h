@@ -146,4 +146,83 @@ char *soie_cookies_get(const char *url, const char *first_party,
 void soie_cookies_set(const char *url, const char *first_party,
 	const char *line, int script);
 
+/*
+ * Scripts. The host gives these services to the script engine; the
+ * engine runs <script> elements through soie_script_start() and the
+ * calls below, and changes the tree through the public DOM API. The
+ * host restyles when the document's generation moved
+ * (soie_document_update()).
+ */
+enum {
+	SOIE_MSG_LOG,		/* console.log, console.info */
+	SOIE_MSG_WARN,
+	SOIE_MSG_ERROR,		/* console.error, uncaught exceptions */
+	SOIE_MSG_ALERT		/* alert() */
+};
+
+typedef struct {
+	void *data;
+	/* blocking: the engine calls it for scripts, fetch(), XHR */
+	soie_request_fn request;
+	/* location changes: the host loads url once the script returns */
+	void (*navigate)(void *data, const char *url, int replace);
+	void (*message)(void *data, int kind, const char *text);
+	/* viewport size and scroll position, CSS px; and scrolling */
+	void (*viewport)(void *data, int *w, int *h, float *sx, float *sy);
+	void (*scroll)(void *data, float x, float y);
+} soie_script_host;
+
+#define SOIE_MOD_SHIFT 1
+#define SOIE_MOD_CTRL 2
+#define SOIE_MOD_ALT 4
+#define SOIE_MOD_META 8
+
+typedef struct {
+	const char *type;	/* "click", "keydown", "input", "submit"... */
+	float x, y;		/* mouse: viewport coordinates */
+	int button;		/* 0 main, 1 middle, 2 secondary */
+	int mods;		/* SOIE_MOD_* */
+	const char *key;	/* keys: the DOM key value ("a", "Enter") */
+} soie_event;
+
+struct soie_ext_script {
+	struct soie_ext base;
+	/* A context for one document; NULL on failure. host stays valid
+	 * until stop. */
+	void *(*start)(void *data, soie_node *doc, const char *url,
+		const soie_script_host *host);
+	void (*stop)(void *ctx);
+	/* Run a script: src (UTF-8, len bytes) of element el, from url
+	 * (the page's for inline scripts); module for type=module. */
+	void (*run)(void *ctx, soie_node *el, const char *src, size_t len,
+		const char *url, int module);
+	/* Dispatch ev at target (NULL: the window). Nonzero when a
+	 * listener cancelled it: the host skips the default action. */
+	int (*event)(void *ctx, soie_node *target, const soie_event *ev);
+	/* Run due timers and jobs; ms until the next timer, -1: none. */
+	int (*tick)(void *ctx);
+};
+
+/*
+ * Start the first script engine on a parsed (and preferably styled)
+ * document: run its scripts in order, external ones fetched through
+ * host->request, deferred and module scripts after the others, then
+ * fire DOMContentLoaded and load. -1 without a script engine.
+ */
+int soie_script_start(soie_node *doc, const char *url,
+	const soie_script_host *host);
+/* Run a script element the engine just inserted, once. */
+int soie_script_element(soie_node *el);
+/* Mark a script element as never to run (innerHTML insertions). */
+void soie_script_skip(soie_node *el);
+/* The script element running now, or NULL. */
+soie_node *soie_script_current(const soie_node *doc);
+/* Dispatch an event; 1 when cancelled (skip the default action). */
+int soie_script_event(soie_node *doc, soie_node *target,
+	const soie_event *ev);
+/* Timers: run the due ones; ms until the next one, -1 when none. */
+int soie_script_tick(soie_node *doc);
+/* Stop scripts (soie_node_free() on the document does it too). */
+void soie_script_stop(soie_node *doc);
+
 #endif

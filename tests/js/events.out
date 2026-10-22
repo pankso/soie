@@ -1,0 +1,14 @@
+log: order outer-capture-1,inner-2,link,outer-bubble-3,document,window
+log: stopped outer-capture-1,inner-2,link,outer-bubble-3,stop
+log: once 1
+log: custom 7 true true
+log: prevented false true
+log: handler function
+log: inline inline click
+log: property handler
+log: handleEvent h
+log: submit go q=x y&c=on
+log: change false
+log: key a 65 KeyA
+log: error TypeError
+log: aborted true

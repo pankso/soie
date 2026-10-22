@@ -1,0 +1,9 @@
+log: rect 10 10 112 32 122 42
+log: offset 112 32 10 10
+log: wide 312 300px
+log: gone 0 none
+log: inline style 327 20px
+log: new 50 52 768
+log: viewport 1024 768 true false
+log: computed rgb(0, 0, 0) 1px
+log: scroll 100 100

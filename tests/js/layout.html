@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<style>
+body { margin: 0 }
+#box { width: 100px; height: 20px; padding: 5px; border: 1px solid; margin: 10px }
+.wide { width: 300px !important }
+.gone { display: none }
+</style>
+<div id=box>box</div>
+<script>
+var log = (...a) => console.log(a.map(String).join(' '));
+var box = document.getElementById('box');
+var r = box.getBoundingClientRect();
+log('rect', r.x, r.y, r.width, r.height, r.right, r.bottom);
+log('offset', box.offsetWidth, box.offsetHeight, box.offsetTop, box.offsetLeft);
+box.classList.add('wide');
+log('wide', box.offsetWidth, getComputedStyle(box).width);
+box.classList.add('gone');
+log('gone', box.offsetWidth, getComputedStyle(box).display);
+box.classList.remove('gone');
+box.style.paddingLeft = '20px';
+log('inline style', box.offsetWidth, getComputedStyle(box).paddingLeft);
+var d = document.createElement('div');
+d.style.height = '50px';
+document.body.appendChild(d);
+log('new', d.offsetHeight, d.offsetTop, document.documentElement.scrollHeight);
+log('viewport', innerWidth, innerHeight, matchMedia('(min-width: 1000px)').matches,
+    matchMedia('(max-width: 600px)').matches);
+log('computed', getComputedStyle(box).color, getComputedStyle(box).getPropertyValue('border-top-width'));
+scrollTo(0, 100);
+log('scroll', scrollY, pageYOffset);
+</script>

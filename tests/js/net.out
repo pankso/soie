@@ -1,0 +1,16 @@
+log: xhr sent 1
+log: sync xhr 200 3
+log: url http://example.org/d/a/b.html?x=1&y=2#top example.org /d/a/b.html ?x=1&y=2 #top http://example.org
+log: params ?x=1&y=2&z=a+b 2
+log: url2 http://example.org/ false
+log: search params a=1&b=%C3%A9%26 a,b
+log: base64 U29pZSE= Soie!
+log: utf8 2 é
+log: json {"a":[1,{"b":null}]}
+log: headers text/html false
+log: aborted AbortError
+log: xhr state 4 200
+log: xhr load soie null
+log: fetch true 200
+log: fetch failed TypeError
+log: json soie 1+2+3

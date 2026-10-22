@@ -5,6 +5,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "internal.h"
+#include "soie/ext.h"
 
 #define STR(x) #x
 #define XSTR(x) STR(x)
@@ -608,6 +609,7 @@ static void node_free_one(soie_node *n)
 		free(n->u.doctype.system_id);
 		break;
 	case SOIE_DOCUMENT:
+		soie_script_stop(n);
 		if (n->u.doc.layout)
 			layout_free(n->u.doc.layout);
 		if (n->u.doc.styles)

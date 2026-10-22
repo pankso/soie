@@ -31,7 +31,7 @@ LIB_OBJS = lib/dom.o lib/dump.o lib/encoding.o lib/tokenizer.o \
 	lib/props.o lib/media.o lib/cascade.o lib/url.o lib/ua-css.o \
 	lib/text.o lib/boxes.o lib/block.o lib/inline.o lib/table.o lib/font.o lib/paint.o \
 	lib/image.o lib/svg.o lib/forms.o lib/flex.o lib/grid.o lib/ext.o \
-	lib/query.o
+	lib/query.o lib/script.o
 LIBS = $(shell pkg-config --libs $(FONT_PKGS) libpng) -ljpeg -lm -ldl
 PNG_LIBS =
 CPPFLAGS += $(shell pkg-config --cflags libpng)
@@ -46,6 +46,11 @@ INTERNAL = lib/internal.h lib/parser.h lib/tags.h lib/css.h lib/props.h \
 EXTS = ext/cookies.so ext/block.so
 ifeq ($(shell pkg-config --exists libwebp && echo y),y)
 EXTS += ext/webp.so
+endif
+# JavaScript: QuickJS sources (an unpacked release), built in.
+QUICKJS_SRC ?=
+ifneq ($(QUICKJS_SRC),)
+EXTS += ext/script.so
 endif
 
 all: lib/libsoie.a lib/libsoie.so.$(SOVERSION) tools/soie-render browser/soie \
@@ -81,6 +86,27 @@ ext/%.so: ext/%.c lib/libsoie.so.$(SOVERSION) $(HEADERS)
 
 ext/webp.so: CPPFLAGS += $(shell pkg-config --cflags libwebp)
 ext/webp.so: EXT_LIBS = $(shell pkg-config --libs libwebp)
+
+QJS_OBJS = ext/script/qjs-quickjs.o ext/script/qjs-libregexp.o \
+	ext/script/qjs-libunicode.o ext/script/qjs-cutils.o ext/script/qjs-libbf.o
+ext/script/qjs-%.o: $(QUICKJS_SRC)/%.c
+	$(CC) $(CFLAGS:-pedantic=) -w -fPIC -DNDEBUG -D_GNU_SOURCE \
+		-DCONFIG_VERSION=\"$$(cat $(QUICKJS_SRC)/VERSION)\" \
+		-c -o $@ $<
+
+ext/script/dom-js.c: ext/script/dom.js
+	{ echo 'const char dom_js[] ='; \
+	  sed 's/\\/\\\\/g; s/"/\\"/g; s/^/"/; s/$$/\\n"/' $<; \
+	  echo ';'; } > $@
+
+ext/script/script.o: CPPFLAGS += -isystem $(QUICKJS_SRC)
+ext/script/dom-js.o: CFLAGS += -Wno-overlength-strings
+ext/script/script.o ext/script/dom-js.o: $(HEADERS)
+ext/script.so: ext/script/script.o ext/script/dom-js.o $(QJS_OBJS) \
+	lib/libsoie.so.$(SOVERSION)
+	$(CC) -shared $(LDFLAGS) -o $@ ext/script/script.o \
+		ext/script/dom-js.o $(QJS_OBJS) lib/libsoie.so.$(SOVERSION) \
+		-lm -lpthread
 
 tests/html5lib: tests/html5lib.o lib/libsoie.a
 	$(CC) $(LDFLAGS) -o $@ tests/html5lib.o lib/libsoie.a $(LIBS)
@@ -127,6 +153,13 @@ check: tests/unit tests/html5lib tests/painttest tests/exttest $(EXTS)
 	./tests/painttest tests/paint/*.html
 	./tests/html5lib tests/tree/*.dat tests/style/*.dat tests/layout/*.dat
 
+# Scripts: each tests/js page's console output against its .out file.
+check-js: tools/soie-render ext/script.so
+	@fail=0; for f in tests/js/*.html; do \
+		tools/soie-render -S -x ext/script.so -j $$f 2>&1 >/dev/null | \
+			cmp -s - $${f%.html}.out || { echo "FAIL $$f"; fail=1; }; \
+	done; [ $$fail = 0 ] && echo "js: all passed"
+
 # The html5lib tree construction corpus, fetched on demand.
 $(H5TESTS):
 	git clone -q $(H5TESTS_URL) $@
@@ -159,6 +192,7 @@ clean:
 	rm -f lib/*.o lib/libsoie.a lib/libsoie.so.* tools/*.o \
 		tools/soie-render browser/*.o browser/soie tests/*.o tests/html5lib tests/unit \
 		tests/csstest tests/cssvalue tests/painttest tests/exttest lib/ua-css.c \
-		tests/paint/*.out.png ext/*.so
+		tests/paint/*.out.png ext/*.so \
+		ext/script/*.o ext/script/dom-js.c
 
-.PHONY: all check check-html5lib check-css install clean
+.PHONY: all check check-js check-html5lib check-css install clean

@@ -2,9 +2,11 @@
  * soie-render: render a page with libsoie, from the command line:
  * DOM, computed styles, box tree or PNG.
  */
+#define _POSIX_C_SOURCE 200809L
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <unistd.h>
 #include <png.h>
 #include <soie/soie.h>
@@ -25,6 +27,7 @@ static void usage(void)
 	      "  -D          prefers-color-scheme: dark\n"
 	      "  -S          stub font (0.5em per character), as the tests\n"
 	      "  -b URL      base URL (default: the file's file:// URL)\n"
+	      "  -j          run the page's scripts (and timers, 2 s at most)\n"
 	      "  -x MODULE   load an extension module (.so), may repeat\n"
 	      "  -X          load the installed extensions\n"
 	      "  -V          print the library version\n", stderr);
@@ -97,6 +100,86 @@ static int fetch(void *data, const char *url, char **buf, size_t *len)
 	return *buf ? 0 : -1;
 }
 
+/* Scripts: the same files through the request interface; messages
+ * and navigations go to stderr. */
+static int request(void *data, const soie_request *rq, soie_response *res)
+{
+	char *buf;
+	size_t len;
+
+	memset(res, 0, sizeof(*res));
+	if (fetch(data, rq->url, &buf, &len))
+		return -1;
+	res->status = 200;
+	res->url = strdup(rq->url);
+	res->headers = strdup("");
+	res->body = buf ? buf : malloc(1);
+	res->len = len;
+	return 0;
+}
+
+static void message(void *data, int kind, const char *text)
+{
+	static const char *const names[] = { "log", "warn", "error",
+		"alert" };
+
+	(void)data;
+	fprintf(stderr, "%s: %s\n", names[kind & 3], text);
+}
+
+static void navigate(void *data, const char *url, int replace)
+{
+	(void)data;
+	fprintf(stderr, "navigate%s: %s\n", replace ? " (replace)" : "", url);
+}
+
+static int vp_w = 1024, vp_h = 768;
+static float vp_y;
+
+static void viewport(void *data, int *w, int *h, float *sx, float *sy)
+{
+	(void)data;
+	*w = vp_w;
+	*h = vp_h;
+	*sx = 0;
+	*sy = vp_y;
+}
+
+static void scroll(void *data, float x, float y)
+{
+	(void)data;
+	(void)x;
+	vp_y = y;
+}
+
+/* Run the page's scripts, then its timers for up to ms. */
+static void run_scripts(soie_node *doc, const char *url, int ms)
+{
+	static soie_script_host host = { NULL, request, navigate, message,
+		viewport, scroll };
+	struct timespec t0, t;
+	int d, spent;
+
+	if (soie_script_start(doc, url, &host)) {
+		fputs("soie-render: no script extension (-x ext/script.so)\n",
+			stderr);
+		return;
+	}
+	clock_gettime(CLOCK_MONOTONIC, &t0);
+	while ((d = soie_script_tick(doc)) >= 0) {
+		clock_gettime(CLOCK_MONOTONIC, &t);
+		spent = (int)((t.tv_sec - t0.tv_sec) * 1000 +
+			(t.tv_nsec - t0.tv_nsec) / 1000000);
+		if (spent + d > ms)
+			break;
+		if (d > 0) {
+			t.tv_sec = d / 1000;
+			t.tv_nsec = (long)(d % 1000) * 1000000;
+			nanosleep(&t, NULL);
+		}
+	}
+}
+
 static char *read_file(FILE *f, size_t *len)
 {
 	char *buf = NULL;
@@ -127,7 +210,7 @@ int main(int argc, char **argv)
 	soie_html_options opts = { NULL, 0 };
 	soie_style_options so;
 	const char *context = NULL, *props = NULL, *base = NULL;
-	int layout = 0, all = 0;
+	int layout = 0, all = 0, scripts = 0;
 	const char *png = NULL;
 	char cwd[4096], file_url[8192];
 	soie_node *doc, *root;
@@ -163,6 +246,8 @@ int main(int argc, char **argv)
 			soie_fonts_stub(1);
 		else if (!strcmp(argv[i], "-b") && i + 1 < argc)
 			base = argv[++i];
+		else if (!strcmp(argv[i], "-j"))
+			scripts = opts.scripting = so.scripting = 1;
 		else if (!strcmp(argv[i], "-x") && i + 1 < argc) {
 			if (soie_ext_load(argv[++i])) {
 				fprintf(stderr, "soie-render: cannot load %s\n",
@@ -188,21 +273,29 @@ int main(int argc, char **argv)
 		doc = soie_html_parse(buf, len, &opts);
 		root = doc;
 	}
-	if (props || layout || png) {
-		if (!base && strcmp(argv[i], "-")) {
-			if (argv[i][0] == '/')
-				snprintf(file_url, sizeof(file_url), "file://%s",
-					argv[i]);
-			else if (getcwd(cwd, sizeof(cwd)))
-				snprintf(file_url, sizeof(file_url),
-					"file://%s/%s", cwd, argv[i]);
-			base = file_url;
-		}
-		so.base_url = base;
-		so.fetch = fetch;
-		if (root == doc)
-			soie_ext_document(doc, base);
+	if (!base && strcmp(argv[i], "-")) {
+		if (argv[i][0] == '/')
+			snprintf(file_url, sizeof(file_url), "file://%s", argv[i]);
+		else if (getcwd(cwd, sizeof(cwd)))
+			snprintf(file_url, sizeof(file_url), "file://%s/%s", cwd,
+				argv[i]);
+		base = file_url;
+	}
+	so.base_url = base;
+	so.fetch = fetch;
+	if (root == doc)
+		soie_ext_document(doc, base);
+	if (scripts && root == doc) {
 		so.user_css = user_css = soie_ext_user_css(NULL, base);
+		vp_w = so.width > 0 ? so.width : 1024;
+		vp_h = so.height > 0 ? so.height : 768;
+		soie_style_document(doc, &so);
+		soie_layout_document(doc, so.width, so.height);
+		run_scripts(doc, base ? base : "about:blank", 2000);
+	}
+	if (props || layout || png) {
+		if (!user_css)
+			so.user_css = user_css = soie_ext_user_css(NULL, base);
 		soie_style_document(doc, &so);
 		if (png) {
 			int w = so.width > 0 ? so.width : 1024;

@@ -1,0 +1,35 @@
+log: tag DIV div DIV 1
+log: children 2 3 p1 p2
+log: siblings 8 p2
+log: text "One twoThree"
+log: class a b 2 true
+log: classList b c d true
+log: dataset 42 true
+log: data attr x userId,fooBar
+log: style color: red; margin-top: 4px; --v: 1; red 3
+log: style2 margin-top: 4px; --v: 1;
+log: inner <p id="p1">One <b>two</b></p><!-- c --><p id="p2" data-user-id="42" data-foo-bar="x" style="margin-top: 4px; --v: 1;">Three</p>
+log: after 3 <div id="root" class="b c d"><span>new</span> &amp; <i>more</i></div>
+log: adjacent first last
+log: clone 5 0 true false
+log: fragment 0 8
+log: normalize 8
+log: query 2 new root true true
+log: removed null 1
+log: prepend true true
+log: replace null xyz
+log: position 20 10
+log: attrs id,class true 2
+log: attr case T T
+log: hidden true
+log: svg http://www.w3.org/2000/svg svg true
+log: title DOM head body html CSS1Compat html
+log: title2 New title
+log: instanceof true true true true true
+log: error HierarchyRequestError
+log: error InvalidCharacterError
+log: walker div,span,i,em,br,script
+log: select v 1 3
+log: select2 2 true
+log: input checkbox false on
+log: checked 

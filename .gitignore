@@ -14,3 +14,4 @@ tests/paint/*.out.png
 browser/soie
 tests/exttest
 ext/*.so
+ext/script/dom-js.c

@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<script>
+var log = (...a) => console.log(a.map(String).join(' '));
+log('inline 1', document.readyState, document.currentScript.localName);
+document.addEventListener('DOMContentLoaded', () => log('DOMContentLoaded', document.readyState));
+document.addEventListener('readystatechange', () => log('readystatechange', document.readyState));
+window.addEventListener('load', () => log('load', document.readyState));
+window.onload = () => log('onload property');
+</script>
+<script defer src="load-defer.js"></script>
+<script async src="load-async.js"></script>
+<script type=module>log('module', document.currentScript === null);</script>
+<script src="load-sync.js" onload="log('script onload')"></script>
+<script src="missing.js" onerror="log('script onerror')"></script>
+<script type="text/plain">log('never: not JavaScript')</script>
+<script nomodule>log('never: nomodule')</script>
+<script>
+document.write('<p id=w>written <script>log("written script ran")<\/script></p>');
+log('after write', document.getElementById('w') !== null);
+var s = document.createElement('script');
+s.src = 'load-dynamic.js';
+s.onload = () => log('dynamic onload');
+document.head.appendChild(s);
+var s2 = document.createElement('script');
+s2.textContent = 'log("inline dynamic")';
+document.body.appendChild(s2);
+document.body.insertAdjacentHTML('beforeend', '<script>log("never: innerHTML")<\/script>');
+log('inline 2');
+</script>
+<noscript><p>noscript content</p></noscript>
