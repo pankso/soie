@@ -12,6 +12,9 @@
 #include <jpeglib.h>
 #include "image.h"
 
+#define LARGE (256 << 10)	/* decoded later than this many bytes */
+#define BUDGET (32 << 20)	/* large images decoded at once */
+
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
 #endif
@@ -379,6 +382,7 @@ void images_free(struct images *im)
 	for (i = 0; i < im->n; i++) {
 		free(im->v[i].url);
 		free(im->v[i].rgba);
+		free(im->v[i].data);
 		if (im->v[i].svgdoc)
 			soie_node_free(im->v[i].svgdoc);
 	}
@@ -430,8 +434,55 @@ const struct image *image_get(soie_node *doc, const char *url)
 	if (!im->fetch || im->fetch(im->data, abs, &buf, &len) || !buf ||
 	    !decode_image((unsigned char *)buf, len, x))
 		x->failed = 1;
+	if (x->rgba && (size_t)x->w * (size_t)x->h * 4 > LARGE) {
+		/* keep the bytes, decode again when painted */
+		free(x->rgba);
+		x->rgba = NULL;
+		x->data = (unsigned char *)buf;
+		x->len = len;
+		buf = NULL;
+	}
+	x->owner = im;
 	free(buf);
 	return x->failed ? NULL : x;
+}
+
+/*
+ * The pixels of an image about to be painted. Large ones are decoded
+ * now, and the least recently painted are dropped to stay within the
+ * budget: a page of big photos costs what a screenful of them does.
+ */
+static const unsigned char *image_pixels(struct image *x)
+{
+	struct images *im = x->owner;
+	struct image tmp;
+	size_t size = (size_t)x->w * (size_t)x->h * 4;
+	int i, old;
+
+	x->used = im ? ++im->tick : 0;
+	if (x->rgba || !x->data || !im)
+		return x->rgba;
+	memset(&tmp, 0, sizeof(tmp));
+	if (!decode_image(x->data, x->len, &tmp) || tmp.w != x->w ||
+	    tmp.h != x->h) {
+		free(tmp.rgba);
+		return NULL;
+	}
+	x->rgba = tmp.rgba;
+	im->pixels += size;
+	while (im->pixels > BUDGET) {
+		old = -1;
+		for (i = 0; i < im->n; i++)
+			if (im->v[i].rgba && im->v[i].data && &im->v[i] != x &&
+			    (old < 0 || im->v[i].used < im->v[old].used))
+				old = i;
+		if (old < 0)
+			break;
+		free(im->v[old].rgba);
+		im->v[old].rgba = NULL;
+		im->pixels -= (size_t)im->v[old].w * (size_t)im->v[old].h * 4;
+	}
+	return x->rgba;
 }
 
 /* The image of an <img>, <input type=image>, <object> or <embed>. */
@@ -473,6 +524,7 @@ static void blend_px(struct canvas *c, int x, int y, const unsigned char *s,
 void draw_image(struct canvas *c, const struct image *im, float x, float y,
 	float w, float h, const unsigned char *current)
 {
+	const unsigned char *px;
 	int i0, j0, i1, j1, i, j;
 
 	if (w <= 0 || h <= 0)
@@ -481,7 +533,7 @@ void draw_image(struct canvas *c, const struct image *im, float x, float y,
 		svg_render(c, im->svg, x, y, w, h, current);
 		return;
 	}
-	if (!im->rgba || !im->w || !im->h)
+	if (!im->w || !im->h)
 		return;
 	i0 = (int)floorf(x - c->ox);
 	j0 = (int)floorf(y - c->oy);
@@ -495,6 +547,8 @@ void draw_image(struct canvas *c, const struct image *im, float x, float y,
 		i1 = c->cx1;
 	if (j1 > c->cy1)
 		j1 = c->cy1;
+	if (i0 >= i1 || j0 >= j1 || !(px = image_pixels((struct image *)im)))
+		return;
 	for (j = j0; j < j1; j++) {
 		float sy = ((float)j + c->oy + 0.5f - y) * (float)im->h / h - 0.5f;
 		int y0 = (int)floorf(sy), y1 = y0 + 1;
@@ -524,10 +578,10 @@ void draw_image(struct canvas *c, const struct image *im, float x, float y,
 				fx = 0;
 			if (fy < 0)
 				fy = 0;
-			a = im->rgba + ((size_t)y0 * (size_t)im->w + (size_t)x0) * 4;
-			b = im->rgba + ((size_t)y0 * (size_t)im->w + (size_t)x1) * 4;
-			cc = im->rgba + ((size_t)y1 * (size_t)im->w + (size_t)x0) * 4;
-			d = im->rgba + ((size_t)y1 * (size_t)im->w + (size_t)x1) * 4;
+			a = px + ((size_t)y0 * (size_t)im->w + (size_t)x0) * 4;
+			b = px + ((size_t)y0 * (size_t)im->w + (size_t)x1) * 4;
+			cc = px + ((size_t)y1 * (size_t)im->w + (size_t)x0) * 4;
+			d = px + ((size_t)y1 * (size_t)im->w + (size_t)x1) * 4;
 			for (k = 0; k < 4; k++)
 				o[k] = (unsigned char)((a[k] * (1 - fx) +
 					b[k] * fx) * (1 - fy) + (cc[k] *

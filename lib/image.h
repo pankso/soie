@@ -14,6 +14,12 @@ struct image {
 	soie_node *svgdoc;	/* SVG: its own document */
 	const soie_node *svg;	/* its <svg> element */
 	int failed;
+	/* Large images keep their encoded bytes and are decoded when
+	 * painted, within a budget (see image_pixels()) */
+	unsigned char *data;
+	size_t len;
+	unsigned long used;
+	struct images *owner;
 };
 
 /* The per-document image cache, made by soie_style_document(). */
@@ -23,6 +29,8 @@ struct images {
 	soie_fetch_fn fetch;
 	void *data;
 	char *base;
+	size_t pixels;		/* bytes of large images decoded now */
+	unsigned long tick;
 };
 
 void images_setup(soie_node *doc, soie_fetch_fn fetch, void *data,

@@ -340,6 +340,13 @@ reversed, edit the entry and say why; do not leave stale rules here.
   (keywords, lengths, percentages), -repeat. The background shorthand
   keeps each layer's position, size and repeat. Images are scaled
   bilinearly; object-fit is honored.
+- Large images (over 256 KB of pixels) keep their encoded bytes and
+  are decoded again when painted, within a 32 MB budget of decoded
+  pixels: the least recently painted are dropped first. A page of
+  photos then costs a screenful of them, not all of them (GitHub's
+  home page went from 197 to 101 MB). The cost is a second decode of
+  large images, once for their size and again on screen; reading
+  sizes from headers would save the first one.
 
 ## The browser (phase 7)
 
