@@ -10,7 +10,7 @@ CFLAGS ?= -O2 -g
 CFLAGS += -std=c99 -Wall -Wextra -pedantic -fPIC
 CPPFLAGS += -Ilib
 
-LIB_OBJS = lib/dom.o lib/dump.o
+LIB_OBJS = lib/dom.o lib/dump.o lib/encoding.o
 all: lib/libsoie.a lib/libsoie.so.$(SOVERSION)
 
 lib/libsoie.a: $(LIB_OBJS)
