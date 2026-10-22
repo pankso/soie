@@ -14,6 +14,14 @@
  */
 int soie_layout_document(soie_node *doc, int width, int height);
 
+/*
+ * After changes to the tree (a script), run the cascade and the layout
+ * again with the options and viewport of the last calls; style sheets
+ * are not parsed again unless <style>, <link> or <base> changed.
+ * Returns 1 when something was redone, 0 when all was up to date.
+ */
+int soie_document_update(soie_node *doc);
+
 /* Height of the laid out page, in CSS px. */
 float soie_layout_height(const soie_node *doc);
 

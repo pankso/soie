@@ -158,6 +158,9 @@ struct styledb {
 	const char *base;		/* document base URL */
 	const char *doc_charset;
 	int quirks;
+	/* What the rules were built from, to reuse them on a restyle */
+	unsigned sig;
+	soie_style_options saved;	/* a copy, for soie_document_update */
 };
 
 static unsigned hash_bytes(const void *p, size_t n, unsigned h)
@@ -275,6 +278,8 @@ void styledb_free(struct styledb *db)
 			free(v);
 		}
 	}
+	free((char *)db->saved.base_url);
+	free((char *)db->saved.user_css);
 	for (i = 0; i < db->ncalcs; i++)
 		calc_release(db->calcs[i]);
 	free(db->calcs);
@@ -2113,7 +2118,7 @@ static void parse_initial(struct styledb *db)
 	}
 }
 
-static char *document_base(soie_node *doc, const char *base)
+char *document_base(soie_node *doc, const char *base)
 {
 	soie_node *n = doc->first;
 
@@ -2136,13 +2141,94 @@ static char *document_base(soie_node *doc, const char *base)
 	return base ? xstrndup(base, strlen(base)) : NULL;
 }
 
+static unsigned hash_str(const char *s, unsigned h)
+{
+	return s ? hash_bytes(s, strlen(s) + 1, h) : hash_bytes("", 0, h ^ 1);
+}
+
+/*
+ * A hash of everything the rules come from: options, the base URL, and
+ * the <style>, <link> and <base> elements. When it has not changed, a
+ * restyle (after a script changed the tree) keeps the parsed rules
+ * and only runs the cascade again.
+ */
+static unsigned sheet_signature(soie_node *doc, const soie_style_options *o)
+{
+	static const char *const attrs[] = { "href", "rel", "media", "type",
+		"disabled", NULL };
+	unsigned h = 2166136261u;
+	soie_node *n = doc->first;
+	struct buf b = { 0 };
+	int i;
+
+	if (o) {
+		int v[5];
+
+		v[0] = o->width;
+		v[1] = o->height;
+		v[2] = o->dark;
+		v[3] = o->print;
+		v[4] = o->scripting;
+		h = hash_bytes(v, sizeof(v), h);
+		h = hash_bytes(&o->fetch, sizeof(o->fetch), h);
+		h = hash_bytes(&o->fetch_data, sizeof(o->fetch_data), h);
+		h = hash_str(o->base_url, h);
+		h = hash_str(o->user_css, h);
+	}
+	h = hash_bytes(&doc->u.doc.quirks, 1, h);
+	while (n) {
+		if (n->type == SOIE_ELEMENT && n->ns == SOIE_NS_HTML &&
+		    (n->tag == TAG_STYLE || n->tag == TAG_LINK ||
+		     n->tag == TAG_BASE)) {
+			h = hash_bytes(&n, sizeof(n), h);
+			for (i = 0; attrs[i]; i++)
+				h = hash_str(soie_element_get_attr(n,
+					attrs[i]), h);
+			if (n->tag == TAG_STYLE) {
+				b.len = 0;
+				text_content(n, &b);
+				h = hash_bytes(b.s ? b.s : "", b.len, h);
+			}
+		}
+		if (n->first) {
+			n = n->first;
+			continue;
+		}
+		while (n && !n->next)
+			n = n->parent;
+		if (n)
+			n = n->next;
+	}
+	buf_free(&b);
+	return h;
+}
+
+static void save_options(struct styledb *db, const soie_style_options *o)
+{
+	char *base = NULL, *css = NULL;
+
+	if (o && o->base_url)
+		base = xstrndup(o->base_url, strlen(o->base_url));
+	if (o && o->user_css)
+		css = xstrndup(o->user_css, strlen(o->user_css));
+	/* o may be db->saved itself (soie_document_update) */
+	free((char *)db->saved.base_url);
+	free((char *)db->saved.user_css);
+	if (o)
+		db->saved = *o;
+	else
+		memset(&db->saved, 0, sizeof(db->saved));
+	db->saved.base_url = base;
+	db->saved.user_css = css;
+}
+
 int soie_style_document(soie_node *doc, const soie_style_options *opts)
 {
 	struct styledb *db;
 	struct pctx pc;
 	soie_node *n;
 	char *base;
-	unsigned next;
+	unsigned next, sig;
 	int i;
 	float rem = 16;
 
@@ -2153,11 +2239,23 @@ int soie_style_document(soie_node *doc, const soie_style_options *opts)
 		layout_free(doc->u.doc.layout);
 		doc->u.doc.layout = NULL;
 	}
-	if (doc->u.doc.styles)
-		styledb_free(doc->u.doc.styles);
+	sig = sheet_signature(doc, opts);
+	db = doc->u.doc.styles;
+	if (db && db->sig == sig) {
+		/* same rules: only the cascade again */
+		base = document_base(doc, opts ? opts->base_url : NULL);
+		db->opts = opts;
+		db->base = base;
+		images_setup(doc, opts ? opts->fetch : NULL,
+			opts ? opts->fetch_data : NULL, base);
+		goto cascade;
+	}
+	if (db)
+		styledb_free(db);
 	db = xmalloc(sizeof(*db));
 	memset(db, 0, sizeof(*db));
 	doc->u.doc.styles = db;
+	db->sig = sig;
 	db->opts = opts;
 	db->env.width = opts && opts->width > 0 ? (float)opts->width : 1024;
 	db->env.height = opts && opts->height > 0 ? (float)opts->height : 768;
@@ -2209,6 +2307,7 @@ int soie_style_document(soie_node *doc, const soie_style_options *opts)
 		layer_rank(&db->roots[i], &next);
 	}
 
+cascade:
 	/* Every element, in tree order, after its parent. */
 	n = doc->first;
 	while (n) {
@@ -2231,10 +2330,50 @@ int soie_style_document(soie_node *doc, const soie_style_options *opts)
 		if (n)
 			n = n->next;
 	}
+	save_options(db, opts);
+	doc->u.doc.styled_gen = doc->u.doc.gen;
 	db->opts = NULL;
 	db->base = NULL;
 	free(base);
 	return 0;
+}
+
+int soie_media_matches(const soie_node *doc, const char *query)
+{
+	const struct styledb *db = doc->doc->u.doc.styles;
+	struct env e;
+	struct cvlist l;
+	int m;
+
+	if (db) {
+		e = db->env;
+	} else {
+		memset(&e, 0, sizeof(e));
+		e.width = 1024;
+		e.height = 768;
+	}
+	css_component_values(query, strlen(query), &l);
+	m = media_match(&l, 0, l.n, &e);
+	cvlist_free(&l);
+	return m;
+}
+
+int soie_document_update(soie_node *doc)
+{
+	struct styledb *db = doc->u.doc.styles;
+	int done = 0;
+
+	if (doc->type != SOIE_DOCUMENT || !db)
+		return 0;
+	if (doc->u.doc.gen != doc->u.doc.styled_gen) {
+		soie_style_document(doc, &db->saved);
+		done = 1;
+	}
+	if (doc->u.doc.lay_w && (done || !doc->u.doc.layout)) {
+		soie_layout_document(doc, doc->u.doc.lay_w, doc->u.doc.lay_h);
+		done = 1;
+	}
+	return done;
 }
 
 static const struct style *pick(const soie_node *el, const char *pseudo)

@@ -87,6 +87,9 @@ struct soie_node {
 			int caret;
 			struct soie_node *all;	/* anext list */
 			unsigned long gen;	/* bumped by every change */
+			/* what soie_document_update() redoes */
+			unsigned long styled_gen;
+			int lay_w, lay_h;
 		} doc;
 	} u;
 };
@@ -113,6 +116,8 @@ void styledb_free(struct styledb *db);
 void layout_free(struct layout *l);
 void fonts_drop_document(const void *doc);
 void images_free(struct images *im);
+/* The URL <base href> gives, else base; malloc()ed. */
+char *document_base(soie_node *doc, const char *base);
 unsigned char *ext_decode_image(const unsigned char *d, size_t len,
 	int *w, int *h);
 

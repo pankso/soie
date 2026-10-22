@@ -431,6 +431,78 @@ int soie_node_set_data(soie_node *n, const char *s, size_t len)
 	return 0;
 }
 
+/* One node, without children. */
+static soie_node *clone_one(const soie_node *n, soie_node *doc)
+{
+	soie_node *c;
+	unsigned i;
+
+	switch (n->type) {
+	case SOIE_ELEMENT:
+		c = element_new_tag(doc, n->ns, n->tag, n->name,
+			strlen(n->name));
+		c->html_ip = n->html_ip;
+		for (i = 0; i < n->u.el.nattrs; i++)
+			element_add_attr(c, n->u.el.attrs[i].ns,
+				n->u.el.attrs[i].name, n->u.el.attrs[i].value,
+				strlen(n->u.el.attrs[i].value));
+		return c;
+	case SOIE_TEXT:
+	case SOIE_COMMENT:
+		return chardata_new(doc, n->type, n->u.text.data,
+			n->u.text.len);
+	case SOIE_DOCTYPE:
+		c = node_new(doc, SOIE_DOCTYPE);
+		c->name = xstrndup(n->name, strlen(n->name));
+		c->name_owned = 1;
+		c->u.doctype.public_id = xstrndup(n->u.doctype.public_id,
+			strlen(n->u.doctype.public_id));
+		c->u.doctype.system_id = xstrndup(n->u.doctype.system_id,
+			strlen(n->u.doctype.system_id));
+		return c;
+	case SOIE_DOCUMENT_FRAGMENT:
+		return soie_document_fragment_new(doc);
+	default:
+		return NULL;
+	}
+}
+
+soie_node *soie_node_clone(const soie_node *n, int deep)
+{
+	soie_node *root = clone_one(n, n->doc), *into = root, *c;
+	const soie_node *s;
+
+	if (!root || !deep)
+		return root;
+	if (n->type == SOIE_ELEMENT && n->u.el.content) {
+		/* a <template>: its content, not its (absent) children */
+		soie_node_free(root->u.el.content);
+		root->u.el.content = soie_node_clone(n->u.el.content, 1);
+	}
+	for (s = n->first; s; ) {
+		c = clone_one(s, n->doc);
+		if (c) {
+			node_insert(into, c, NULL);
+			if (s->type == SOIE_ELEMENT && s->u.el.content) {
+				soie_node_free(c->u.el.content);
+				c->u.el.content =
+					soie_node_clone(s->u.el.content, 1);
+			}
+		}
+		if (s->first && c) {
+			into = c;
+			s = s->first;
+			continue;
+		}
+		while (s != n && !s->next) {
+			s = s->parent;
+			into = into->parent;
+		}
+		s = s == n ? NULL : s->next;
+	}
+	return root;
+}
+
 void soie_node_set_user(soie_node *n, void *p) { n->user = p; }
 void *soie_node_user(const soie_node *n) { return n->user; }
 

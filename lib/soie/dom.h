@@ -92,6 +92,10 @@ void soie_node_remove(soie_node *n);
 /* Free a node and its subtree. The node is removed first if needed. */
 void soie_node_free(soie_node *n);
 
+/* A copy of n (and its subtree when deep), not in the tree. NULL for
+ * a document. */
+soie_node *soie_node_clone(const soie_node *n, int deep);
+
 /* One pointer per node for the host (a script engine's wrapper). */
 void soie_node_set_user(soie_node *n, void *p);
 void *soie_node_user(const soie_node *n);
@@ -99,6 +103,25 @@ void *soie_node_user(const soie_node *n);
 /* A counter bumped by every change to the tree, attributes or text:
  * the host restyles when it moved. */
 unsigned long soie_document_generation(const soie_node *doc);
+
+/*
+ * HTML serialization: the children of n (innerHTML), or n itself
+ * with outer (outerHTML). A string to free(); len may be NULL.
+ */
+char *soie_node_serialize(const soie_node *n, int outer, size_t *len);
+
+/*
+ * Selectors: 1 when el matches, 0 when not, -1 for a selector list
+ * that does not parse (a SyntaxError for scripts).
+ */
+int soie_element_matches(const soie_node *el, const char *selectors);
+/*
+ * The descendant elements of root that match, in tree order, at most
+ * max of them (0: all): a NULL-terminated array to free(), count gets
+ * their number. NULL for a selector list that does not parse.
+ */
+soie_node **soie_query(soie_node *root, const char *selectors, size_t max,
+	size_t *count);
 
 /*
  * Dump a node (or the children of a document or fragment) in the

@@ -292,6 +292,64 @@ static void test_style_api(void)
 	soie_node_free(doc);
 }
 
+/* What script engines use: queries, serialization, clones, updates. */
+static void test_script_api(void)
+{
+	static const char html[] = "<!DOCTYPE html><style>.w{width:50px}"
+		"</style><div id=a class=x><p>1</p><p class=x>2 &amp; "
+		"<br>&nbsp;</p><template><i>t</i></template></div>";
+	soie_node *doc = soie_html_parse(html, sizeof(html) - 1, NULL);
+	soie_node *a, *c, **v;
+	size_t n;
+	char *s;
+	float x, y, w, h;
+	unsigned long gen;
+	soie_style_options so;
+
+	v = soie_query(doc, ".x", 0, &n);
+	CHECK(v && n == 2 && !v[2]);
+	a = v ? v[0] : NULL;
+	free(v);
+	CHECK(a && !strcmp(soie_element_get_attr(a, "id"), "a"));
+	v = soie_query(doc, "p", 1, &n);
+	CHECK(v && n == 1);
+	free(v);
+	CHECK(soie_query(doc, "p[", 0, &n) == NULL);
+	CHECK(soie_element_matches(a, "body > div.x") == 1);
+	CHECK(soie_element_matches(a, "p") == 0);
+	CHECK(soie_element_matches(a, "!!") == -1);
+
+	s = soie_node_serialize(a, 0, NULL);
+	CHECK(!strcmp(s, "<p>1</p><p class=\"x\">2 &amp; <br>&nbsp;</p>"
+		"<template><i>t</i></template>"));
+	free(s);
+	c = soie_node_clone(a, 1);
+	s = soie_node_serialize(c, 1, NULL);
+	CHECK(!strncmp(s, "<div id=\"a\" class=\"x\"><p>1</p>", 30));
+	CHECK(strstr(s, "<template><i>t</i></template></div>") != NULL);
+	free(s);
+	CHECK(soie_node_parent(c) == NULL);
+	soie_node_remove(a);	/* detached: still the document's */
+
+	/* restyle and relayout after a change */
+	soie_node_append(soie_node_last_child(soie_document_element(doc)), a);
+	memset(&so, 0, sizeof(so));
+	so.width = 300;
+	so.height = 200;
+	CHECK(soie_style_document(doc, &so) == 0);
+	CHECK(soie_layout_document(doc, 300, 200) == 0);
+	CHECK(soie_document_update(doc) == 0);
+	CHECK(!soie_element_rect(a, &x, &y, &w, &h) && w == 284);
+	gen = soie_document_generation(doc);
+	soie_element_set_attr(a, "class", "w");
+	CHECK(soie_document_generation(doc) != gen);
+	CHECK(soie_document_update(doc) == 1);
+	CHECK(!soie_element_rect(a, &x, &y, &w, &h) && w == 50);
+	CHECK(soie_media_matches(doc, "(max-width: 400px)") == 1);
+	CHECK(soie_media_matches(doc, "print") == 0);
+	soie_node_free(doc);
+}
+
 static void test_deep(void)
 {
 	/* Deep nesting must not exhaust the stack when freeing. */
@@ -316,6 +374,7 @@ int main(void)
 	test_entities();
 	test_url();
 	test_style_api();
+	test_script_api();
 	test_deep();
 	printf("unit: %s (%d failures)\n", failures ? "FAIL" : "ok", failures);
 	return failures != 0;

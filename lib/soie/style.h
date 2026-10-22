@@ -49,6 +49,10 @@ char *soie_computed_value(const soie_node *el, const char *pseudo,
 char *soie_node_dump_style(const soie_node *n, const char *props,
 	size_t *len);
 
+/* Whether a media query list matches the document's last cascade
+ * (its viewport and preferences); matchMedia() for scripts. */
+int soie_media_matches(const soie_node *doc, const char *query);
+
 /* Resolve a URL reference against a base URL; free() the result. */
 char *soie_url_resolve(const char *base, const char *ref);
 

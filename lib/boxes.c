@@ -864,6 +864,8 @@ int soie_layout_document(soie_node *doc, int width, int height)
 	if (l->root)
 		layout_root(l);
 	doc->u.doc.layout = l;
+	doc->u.doc.lay_w = (int)l->width;
+	doc->u.doc.lay_h = (int)l->height;
 	return 0;
 }
 

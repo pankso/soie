@@ -216,6 +216,21 @@ reversed, edit the entry and say why; do not leave stale rules here.
   56 MB: the rule data is about a million small allocations. An arena
   for style sheet data is the planned fix if real pages need it.
 
+### Restyling
+
+- `soie_style_document()` hashes what the rules come from (options,
+  base URL, the `<style>`, `<link>` and `<base>` elements); when the
+  hash is the same as last time, the parsed rules are kept and only
+  the cascade runs again. Scripts change the tree all the time and
+  rarely the style sheets: GitHub's restyle went from 0.65 to 0.41 s.
+  The cascade itself still covers the whole document; incremental
+  restyling (only what changed) is future work.
+- `soie_document_update()` redoes cascade and layout with the last
+  options and viewport (the library keeps a copy) when the document's
+  change counter moved: the host calls it after scripts ran, and the
+  script engine before answering layout questions (offsetWidth,
+  getBoundingClientRect, getComputedStyle).
+
 ## Layout
 
 - Phase 3 covers CSS 2 visual formatting: block and inline formatting
