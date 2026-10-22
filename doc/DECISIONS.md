@@ -239,6 +239,31 @@ reversed, edit the entry and say why; do not leave stale rules here.
 - `soie_fonts_stub(1)` keeps the 0.5em stub font: the test runner and
   `soie-render -S` use it, so layout tests do not depend on fonts.
 
+## Painting (phase 5)
+
+- `soie_paint()` draws the laid out page into the host's buffer:
+  RGBA bytes, any stride, a scroll offset. The engine never owns the
+  screen; hosts blit (X11, framebuffer, GTK, Wayland...).
+- One software rasterizer, straight alpha source-over on 8-bit RGBA:
+  anti-aliased rectangles by exact pixel coverage, rounded rectangles
+  by 4x4 supersampling, glyphs from FreeType (light hinting, gray
+  anti-aliasing, cached), synthetic bold and oblique when the face
+  lacks them.
+- Order: canvas background (root, or body when root has none), then
+  each box's background and borders, blocks before floats, lines
+  (inline boxes, then text and atomics), outlines; positioned boxes
+  after the flow sorted by z-index, stable. Negative z-index boxes are
+  not under the flow yet, and opacity multiplies colors instead of
+  compositing a layer: both are cheap approximations.
+- Borders: solid, dashed, dotted, double, inset/outset/groove/ridge
+  (shaded); corners are not mitred. Rounded borders draw one color.
+- overflow other than visible clips to the padding box (rectangles
+  only; rounded clipping later).
+- Paint tests (`tests/paint/*.html`, 320x240, stub font drawn as one
+  box per character) compare pixels with reference PNGs. References
+  are written with `tests/painttest -u` and checked by eye before
+  they are committed.
+
 ## Character encoding
 
 - The tokenizer only ever sees valid UTF-8 with normalized newlines.
@@ -274,6 +299,8 @@ reversed, edit the entry and say why; do not leave stale rules here.
 - `tests/html5lib-known` lists the expected failures of that corpus
   with the reason. Today: the four `<selectedcontent>` tests, which
   need form state (option selectedness), not parsing.
+- libpng is used by soie-render (-o) and the paint tests now; the
+  library itself needs it from phase 6 (image decoding).
 - No valgrind or ASan on the SliTaz toolchain: leaks are checked with
   glibc `mtrace()` through an `LD_PRELOAD` shim, crashes with a random
   tag-soup fuzzer under `MALLOC_CHECK_=3`. Both live outside the repo

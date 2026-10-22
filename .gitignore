@@ -9,3 +9,5 @@ tests/csstest
 tests/cssvalue
 tests/css-parsing-tests/
 lib/ua-css.c
+tests/painttest
+tests/paint/*.out.png

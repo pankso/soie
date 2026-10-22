@@ -29,12 +29,14 @@ CSSTESTS_REV = 203ce36bffd617db7f118c551e32794561fb273d
 LIB_OBJS = lib/dom.o lib/dump.o lib/encoding.o lib/tokenizer.o \
 	lib/treebuilder.o lib/csssyntax.o lib/selector.o lib/values.o \
 	lib/props.o lib/media.o lib/cascade.o lib/url.o lib/ua-css.o \
-	lib/text.o lib/boxes.o lib/block.o lib/inline.o lib/table.o lib/font.o
+	lib/text.o lib/boxes.o lib/block.o lib/inline.o lib/table.o lib/font.o lib/paint.o
 LIBS = $(shell pkg-config --libs $(FONT_PKGS)) -lm
+PNG_LIBS = $(shell pkg-config --libs libpng)
+CPPFLAGS += $(shell pkg-config --cflags libpng)
 HEADERS = lib/soie/soie.h lib/soie/dom.h lib/soie/html.h lib/soie/style.h \
 	lib/soie/layout.h
 INTERNAL = lib/internal.h lib/parser.h lib/tags.h lib/css.h lib/props.h \
-	lib/layout.h lib/font.h
+	lib/layout.h lib/font.h lib/paint.h
 
 all: lib/libsoie.a lib/libsoie.so.$(SOVERSION) tools/soie-render
 
@@ -56,13 +58,18 @@ lib/ua-css.c: lib/ua.css
 	  echo '0 };'; } > $@
 
 tools/soie-render: tools/soie-render.o lib/libsoie.a
-	$(CC) $(LDFLAGS) -o $@ tools/soie-render.o lib/libsoie.a $(LIBS)
+	$(CC) $(LDFLAGS) -o $@ tools/soie-render.o lib/libsoie.a $(LIBS) \
+		$(PNG_LIBS)
 
 tests/html5lib: tests/html5lib.o lib/libsoie.a
 	$(CC) $(LDFLAGS) -o $@ tests/html5lib.o lib/libsoie.a $(LIBS)
 
 tests/unit: tests/unit.o lib/libsoie.a
 	$(CC) $(LDFLAGS) -o $@ tests/unit.o lib/libsoie.a $(LIBS)
+
+tests/painttest: tests/painttest.o lib/libsoie.a
+	$(CC) $(LDFLAGS) -o $@ tests/painttest.o lib/libsoie.a $(LIBS) \
+		$(PNG_LIBS)
 
 tests/csstest: tests/csstest.o lib/libsoie.a
 	$(CC) $(LDFLAGS) -o $@ tests/csstest.o lib/libsoie.a $(LIBS)
@@ -72,7 +79,7 @@ tests/cssvalue: tests/cssvalue.o lib/libsoie.a
 
 tests/csstest.o tests/cssvalue.o: $(INTERNAL)
 
-tools/soie-render.o tests/html5lib.o tests/unit.o: $(HEADERS)
+tools/soie-render.o tests/html5lib.o tests/unit.o tests/painttest.o: $(HEADERS)
 tests/csstest.o tests/cssvalue.o: CPPFLAGS += -Ilib
 
 # FreeType is needed; HarfBuzz is optional (make HARFBUZZ=0).
@@ -85,8 +92,9 @@ endif
 CPPFLAGS += $(shell pkg-config --cflags $(FONT_PKGS))
 
 # Our own corpus, no network needed.
-check: tests/unit tests/html5lib
+check: tests/unit tests/html5lib tests/painttest
 	./tests/unit
+	./tests/painttest tests/paint/*.html
 	./tests/html5lib tests/tree/*.dat tests/style/*.dat tests/layout/*.dat
 
 # The html5lib tree construction corpus, fetched on demand.
@@ -118,6 +126,7 @@ install: all
 clean:
 	rm -f lib/*.o lib/libsoie.a lib/libsoie.so.* tools/*.o \
 		tools/soie-render tests/*.o tests/html5lib tests/unit \
-		tests/csstest tests/cssvalue lib/ua-css.c
+		tests/csstest tests/cssvalue tests/painttest lib/ua-css.c \
+		tests/paint/*.out.png
 
 .PHONY: all check check-html5lib check-css install clean

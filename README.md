@@ -5,7 +5,7 @@ reference browser. No toolkit, no JavaScript in the core, built to
 render modern pages on old machines. See `doc/DECISIONS.md` for what
 Soie is and is not, and how extensions plug in.
 
-Status: phase 4 done. The HTML parser follows the WHATWG algorithm
+Status: phase 5 done (painting to PNG). The HTML parser follows the WHATWG algorithm
 and passes the html5lib tree-construction tests; the CSS parser,
 selectors, cascade and computed values pass css-parsing-tests,
 including all of CSS Color 4; block and inline layout work, with a
@@ -30,6 +30,7 @@ Needs a C99 compiler, GNU make, pkg-config, FreeType and (optional,
     tools/soie-render -p display,color,margin-top page.html
                                          # computed styles, after the cascade
     tools/soie-render -l -w 800 page.html # box tree and geometry
+    tools/soie-render -o page.png -a page.html # render the whole page
 
 ## Layout
 

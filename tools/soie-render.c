@@ -6,6 +6,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <png.h>
 #include <soie/soie.h>
 
 static void usage(void)
@@ -18,6 +19,7 @@ static void usage(void)
 	      "  -p PROPS    run the cascade, dump these computed properties\n"
 	      "              (comma separated, e.g. display,color)\n"
 	      "  -l          run cascade and layout, dump the box tree\n"
+	      "  -o FILE.png render the viewport (or -a: whole page) to PNG\n"
 	      "  -w WIDTH    viewport width (1024), -H HEIGHT (768)\n"
 	      "  -D          prefers-color-scheme: dark\n"
 	      "  -S          stub font (0.5em per character), as the tests\n"
@@ -27,6 +29,35 @@ static void usage(void)
 }
 
 static char *read_file(FILE *f, size_t *len);
+
+static int write_png(const char *path, const unsigned char *rgba, int w,
+	int h)
+{
+	FILE *f = fopen(path, "wb");
+	png_structp png;
+	png_infop info;
+	int y;
+
+	if (!f)
+		return -1;
+	png = png_create_write_struct(PNG_LIBPNG_VER_STRING, NULL, NULL, NULL);
+	info = png ? png_create_info_struct(png) : NULL;
+	if (!info || setjmp(png_jmpbuf(png))) {
+		fclose(f);
+		return -1;
+	}
+	png_init_io(png, f);
+	png_set_IHDR(png, info, (png_uint_32)w, (png_uint_32)h, 8,
+		PNG_COLOR_TYPE_RGB_ALPHA, PNG_INTERLACE_NONE,
+		PNG_COMPRESSION_TYPE_DEFAULT, PNG_FILTER_TYPE_DEFAULT);
+	png_write_info(png, info);
+	for (y = 0; y < h; y++)
+		png_write_row(png, (png_bytep)(rgba + (size_t)y * (size_t)w * 4));
+	png_write_end(png, info);
+	png_destroy_write_struct(&png, &info);
+	fclose(f);
+	return 0;
+}
 
 static char *read_all(const char *path, size_t *len)
 {
@@ -93,7 +124,8 @@ int main(int argc, char **argv)
 	soie_html_options opts = { NULL, 0 };
 	soie_style_options so;
 	const char *context = NULL, *props = NULL, *base = NULL;
-	int layout = 0;
+	int layout = 0, all = 0;
+	const char *png = NULL;
 	char cwd[4096], file_url[8192];
 	soie_node *doc, *root;
 	char *buf, *dump;
@@ -112,6 +144,10 @@ int main(int argc, char **argv)
 			opts.scripting = so.scripting = 1;
 		else if (!strcmp(argv[i], "-l"))
 			layout = 1;
+		else if (!strcmp(argv[i], "-o") && i + 1 < argc)
+			png = argv[++i];
+		else if (!strcmp(argv[i], "-a"))
+			all = 1;
 		else if (!strcmp(argv[i], "-p") && i + 1 < argc)
 			props = argv[++i];
 		else if (!strcmp(argv[i], "-w") && i + 1 < argc)
@@ -141,7 +177,7 @@ int main(int argc, char **argv)
 		doc = soie_html_parse(buf, len, &opts);
 		root = doc;
 	}
-	if (props || layout) {
+	if (props || layout || png) {
 		if (!base && strcmp(argv[i], "-")) {
 			if (argv[i][0] == '/')
 				snprintf(file_url, sizeof(file_url), "file://%s",
@@ -154,7 +190,24 @@ int main(int argc, char **argv)
 		so.base_url = base;
 		so.fetch = fetch;
 		soie_style_document(doc, &so);
-		if (layout) {
+		if (png) {
+			int w = so.width > 0 ? so.width : 1024;
+			int h = so.height > 0 ? so.height : 768;
+			unsigned char *px;
+
+			soie_layout_document(doc, w, h);
+			if (all && soie_layout_height(doc) > h)
+				h = (int)(soie_layout_height(doc) + 0.99f);
+			px = malloc((size_t)w * (size_t)h * 4);
+			soie_paint(doc, px, w, h, w * 4, 0, 0);
+			if (write_png(png, px, w, h)) {
+				perror(png);
+				return 1;
+			}
+			free(px);
+			dump = calloc(1, 1);
+			len = 0;
+		} else if (layout) {
 			soie_layout_document(doc, so.width, so.height);
 			dump = soie_layout_dump(doc, &len);
 		} else {

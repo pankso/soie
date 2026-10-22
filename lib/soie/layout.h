@@ -25,6 +25,15 @@ float soie_layout_height(const soie_node *doc);
 char *soie_layout_dump(const soie_node *doc, size_t *len);
 
 /*
+ * Paint the laid out page into rgba (width x height pixels, R G B A
+ * bytes, stride bytes per row), the pixel (0, 0) showing page point
+ * (sx, sy): scrolling is the host's offset. Returns 0, or -1 when doc
+ * has no layout.
+ */
+int soie_paint(soie_node *doc, unsigned char *rgba, int width, int height,
+	int stride, int sx, int sy);
+
+/*
  * Fonts: system fonts are found under /usr/share/fonts and ~/.fonts;
  * add_dir() adds a directory (returns the number of faces found).
  * stub(1) replaces every font by a fixed-advance stub (0.5em per
