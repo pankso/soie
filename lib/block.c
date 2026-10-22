@@ -275,7 +275,13 @@ void content_sizes(struct box *b, float *mn, float *mx)
 		*mx = b->w;
 		return;
 	}
-	if (b->flags & BF_INLINE_KIDS) {
+	if (is_flexgrid(b)) {
+		if (kw(b->style, P_DISPLAY, "flex") ||
+		    kw(b->style, P_DISPLAY, "inline-flex"))
+			flex_sizes(b, mn, mx);
+		else
+			grid_sizes(b, mn, mx);
+	} else if (b->flags & BF_INLINE_KIDS) {
 		inline_sizes(b, mn, mx);
 	} else {
 		for (c = b->first; c; c = c->next) {
@@ -348,6 +354,12 @@ static float layout_contents(struct box *b, struct bfc *f, float y,
 	struct box *c;
 	float end, h;
 
+	if (is_flexgrid(b)) {
+		b->y = y;
+		return kw(b->style, P_DISPLAY, "flex") ||
+			kw(b->style, P_DISPLAY, "inline-flex") ?
+			layout_flex(b, cbh) : layout_grid(b, cbh);
+	}
 	if (b->flags & BF_INLINE_KIDS) {
 		float top = collapse_top ? y + strut_val(s) : y;
 
@@ -735,6 +747,47 @@ void layout_cell(struct box *c, float x, float y, float w)
 	w -= hedges(c);
 	layout_alone(c, x + c->b[3] + c->p[3], y + c->b[0] + c->p[0],
 		w < 0 ? 0 : w, -1);
+}
+
+/* For flex and grid */
+
+float box_spec_w(const struct box *b, int prop, float cbw)
+{
+	return spec_width(b, prop, cbw);
+}
+
+float box_spec_h(const struct box *b, int prop, float cbh)
+{
+	return spec_height(b, prop, cbh);
+}
+
+float box_clamp_w(const struct box *b, float w, float cbw)
+{
+	return clamp_w(b, w, cbw);
+}
+
+float box_clamp_h(const struct box *b, float h, float cbh)
+{
+	return clamp_h(b, h, cbh);
+}
+
+/*
+ * A flex or grid item: content box at (x, y), width w; h >= 0 forces
+ * the content height (stretch, definite sizes). Edges must be set.
+ */
+void layout_item(struct box *b, float x, float y, float w, float h)
+{
+	if (b->type == B_REPLACED) {
+		b->x = x;
+		b->y = y;
+		b->w = w;
+		if (h >= 0)
+			b->h = h;
+		return;
+	}
+	layout_alone(b, x, y, w < 0 ? 0 : w, -1);
+	if (h >= 0)
+		b->h = h;
 }
 
 /* Inline-blocks and inline replaced boxes, at the origin. */

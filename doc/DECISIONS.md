@@ -319,6 +319,34 @@ reversed, edit the entry and say why; do not leave stale rules here.
   soie_set_focus() for this. No cookies and no JavaScript: phase 9
   and 10 extensions.
 
+## Flexbox and grid (phase 8)
+
+- Flexbox follows the algorithm of CSS Flexbox 1 section 9: order,
+  flex base size (flex-basis, then width/height, then max-content),
+  the automatic minimum size (min-content), lines with flex-wrap,
+  flexible lengths with the freeze loop for min/max violations, auto
+  margins first, justify-content (start, end, center, space-*),
+  align-items/align-self (stretch by default), align-content, gaps,
+  reverse directions and columns. Baseline alignment is start.
+- Grid: track lists with px, %, em, fr, auto, min/max-content,
+  minmax(), fit-content(), repeat() including auto-fill and auto-fit
+  (both behave as auto-fill: empty tracks are kept), line names and
+  grid-template-areas; placement by line numbers (negative too),
+  spans, names and areas; row (or column) flow auto placement without
+  dense packing; implicit tracks from grid-auto-rows/columns; track
+  sizing: fixed tracks, single-span content contributions, auto tracks
+  growing toward max-content, fr sharing with inflexible tracks taken
+  out; item alignment (justify/align-self and -items) and content
+  alignment. Not yet: multi-span contributions, subgrid, masonry,
+  baseline alignment, auto-fit collapsing, vw/vh in track sizes (taken
+  as 1024x768).
+- Text directly in a flex or grid container becomes an anonymous item,
+  even when there are no block children.
+- Real sites built on complex grids (Wikipedia's Vector skin, the
+  Tailwind site) render largely right but not yet like browsers: the
+  remaining gaps are in grid placement details and in var()-computed
+  track lists.
+
 ## Character encoding
 
 - The tokenizer only ever sees valid UTF-8 with normalized newlines.

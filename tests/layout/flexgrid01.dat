@@ -1,0 +1,113 @@
+#data
+<!DOCTYPE html><body style="margin:0"><div style="display:flex;gap:10px"><div style="flex:1">a</div><div style="flex:2">bb</div><div style="width:30px">c</div></div>
+#errors
+#layout
+width=200
+#document
+| block <html> 0,0 200x20
+|   block <body> 0,0 200x20
+|     block <div> 0,0 200x20
+|       block <div> 0,0 50x20
+|         line 0,0 50x20
+|           text "a" 0,2 8x16
+|       block <div> 60,0 100x20
+|         line 60,0 100x20
+|           text "bb" 60,2 16x16
+|       block <div> 170,0 30x20
+|         line 170,0 30x20
+|           text "c" 170,2 8x16
+
+#data
+<!DOCTYPE html><body style="margin:0"><div style="display:flex;justify-content:space-between;align-items:center;height:60px"><span>ab</span><span style="height:30px;display:block">c</span><span>d</span></div>
+#errors
+#layout
+width=200
+#document
+| block <html> 0,0 200x60
+|   block <body> 0,0 200x60
+|     block <div> 0,0 200x60
+|       block <span> 0,20 16x20
+|         line 0,20 16x20
+|           text "ab" 0,22 16x16
+|       block <span> 100,15 8x30
+|         line 100,15 8x20
+|           text "c" 100,17 8x16
+|       block <span> 192,20 8x20
+|         line 192,20 8x20
+|           text "d" 192,22 8x16
+
+#data
+<!DOCTYPE html><body style="margin:0"><div style="display:flex;flex-wrap:wrap"><div style="width:60px">a</div><div style="width:60px">b</div><div style="width:30px;margin-left:auto">c</div></div>
+#errors
+#layout
+width=100
+#document
+| block <html> 0,0 100x40
+|   block <body> 0,0 100x40
+|     block <div> 0,0 100x40
+|       block <div> 0,0 60x20
+|         line 0,0 60x20
+|           text "a" 0,2 8x16
+|       block <div> 0,20 60x20
+|         line 0,20 60x20
+|           text "b" 0,22 8x16
+|       block <div> 70,20 30x20
+|         line 70,20 30x20
+|           text "c" 70,22 8x16
+
+#data
+<!DOCTYPE html><body style="margin:0"><div style="display:flex;flex-direction:column;height:100px"><div style="flex:1">a</div><div>b</div></div>
+#errors
+#layout
+width=200
+#document
+| block <html> 0,0 200x100
+|   block <body> 0,0 200x100
+|     block <div> 0,0 200x100
+|       block <div> 0,0 200x80
+|         line 0,0 200x20
+|           text "a" 0,2 8x16
+|       block <div> 0,80 200x20
+|         line 0,80 200x20
+|           text "b" 0,82 8x16
+
+#data
+<!DOCTYPE html><body style="margin:0"><div style="display:grid;grid-template-columns:50px 1fr 2fr;gap:10px"><div>a</div><div>b</div><div>c</div><div style="grid-column:1 / span 2">d</div></div>
+#errors
+#layout
+width=200
+#document
+| block <html> 0,0 200x50
+|   block <body> 0,0 200x50
+|     block <div> 0,0 200x50
+|       block <div> 0,0 50x20
+|         line 0,0 50x20
+|           text "a" 0,2 8x16
+|       block <div> 60,0 43.3333x20
+|         line 60,0 43.3333x20
+|           text "b" 60,2 8x16
+|       block <div> 113.3333,0 86.6667x20
+|         line 113.3333,0 86.6667x20
+|           text "c" 113.3333,2 8x16
+|       block <div> 0,30 103.3333x20
+|         line 0,30 103.3333x20
+|           text "d" 0,32 8x16
+
+#data
+<!DOCTYPE html><body style="margin:0"><div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(100px,1fr));grid-template-areas:'h h' 'n m'"><div style="grid-area:h">head</div><div style="grid-area:m">main</div><div style="grid-area:n">nav</div></div>
+#errors
+#layout
+width=300
+#document
+| block <html> 0,0 300x40
+|   block <body> 0,0 300x40
+|     block <div> 0,0 300x40
+|       block <div> 0,0 200x20
+|         line 0,0 200x20
+|           text "head" 0,2 32x16
+|       block <div> 100,20 100x20
+|         line 100,20 100x20
+|           text "main" 100,22 32x16
+|       block <div> 0,20 100x20
+|         line 0,20 100x20
+|           text "nav" 0,22 24x16

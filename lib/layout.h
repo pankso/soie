@@ -119,6 +119,18 @@ void inline_sizes(struct box *b, float *min, float *max);
 
 char *layout_dump(const struct box *root, size_t *len);
 
+/* flex.c, grid.c */
+int is_flexgrid(const struct box *b);
+float layout_flex(struct box *b, float cbh);
+float layout_grid(struct box *b, float cbh);
+void flex_sizes(struct box *b, float *min, float *max);
+void grid_sizes(struct box *b, float *min, float *max);
+void layout_item(struct box *b, float x, float y, float w, float h);
+float box_spec_w(const struct box *b, int prop, float cbw);
+float box_spec_h(const struct box *b, int prop, float cbh);
+float box_clamp_w(const struct box *b, float w, float cbw);
+float box_clamp_h(const struct box *b, float h, float cbh);
+
 /* table.c */
 void table_fixup(struct styledb *db, struct box *b);
 void layout_table(struct box *t, float avail);

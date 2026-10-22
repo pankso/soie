@@ -30,7 +30,7 @@ LIB_OBJS = lib/dom.o lib/dump.o lib/encoding.o lib/tokenizer.o \
 	lib/treebuilder.o lib/csssyntax.o lib/selector.o lib/values.o \
 	lib/props.o lib/media.o lib/cascade.o lib/url.o lib/ua-css.o \
 	lib/text.o lib/boxes.o lib/block.o lib/inline.o lib/table.o lib/font.o lib/paint.o \
-	lib/image.o lib/svg.o lib/forms.o
+	lib/image.o lib/svg.o lib/forms.o lib/flex.o lib/grid.o
 LIBS = $(shell pkg-config --libs $(FONT_PKGS) libpng) -ljpeg -lm
 PNG_LIBS =
 CPPFLAGS += $(shell pkg-config --cflags libpng)

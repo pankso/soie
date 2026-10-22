@@ -712,7 +712,17 @@ static int sh_pair(int a, int b, struct cur *c, struct svec *out, int slash)
 			r[1].from = i + 1;
 			r[1].to = c->n;
 		} else {
-			r[1].from = -1;
+			/* a lone custom ident is also the end */
+			struct cur t;
+			const struct cv *v;
+
+			t.v = c->v;
+			t.i = r[0].from;
+			t.n = r[0].to;
+			v = cur_next(&t);
+			if (!(v && v->type == CT_IDENT && !cv_ident(v, "auto") &&
+			      !cv_ident(v, "span") && cur_end(&t)))
+				r[1].from = -1;
 		}
 		c->i = c->n;
 	} else if ((v = cur_peek(c))) {
@@ -1154,8 +1164,23 @@ static int sh_grid_area(struct cur *c, struct svec *out)
 	if (i < c->n)
 		return 0;
 	c->i = c->n;
-	for (i = n; i < 4; i++)
-		r[i].from = -1;
+	/* missing parts copy a custom ident: column-start from row-start,
+	 * the ends from their starts (CSS Grid 8.4); else auto */
+	for (i = n; i < 4; i++) {
+		int from = i == 1 ? 0 : i - 2;
+		struct cur t;
+		const struct cv *v;
+
+		t.v = c->v;
+		t.i = r[from].from;
+		t.n = r[from].from >= 0 ? r[from].to : 0;
+		v = r[from].from >= 0 ? cur_next(&t) : NULL;
+		if (v && v->type == CT_IDENT && !cv_ident(v, "auto") &&
+		    !cv_ident(v, "span") && cur_end(&t))
+			r[i] = r[from];
+		else
+			r[i].from = -1;
+	}
 	for (i = 0; i < 4; i++)
 		emit_range(lh[i], c, r[i], out);
 	return 1;

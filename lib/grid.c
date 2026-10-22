@@ -1,0 +1,888 @@
+/*
+ * Grid layout (CSS Grid 1, simplified): track lists with px, %, fr,
+ * auto, min-content, max-content, minmax(), fit-content(), repeat()
+ * (with auto-fill/auto-fit), line names and template areas; explicit
+ * and row-flow auto placement; implicit tracks; track sizing; gaps;
+ * item and content alignment.
+ */
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include "layout.h"
+
+enum { TK_LEN, TK_PCT, TK_FR, TK_AUTO, TK_MIN, TK_MAX };
+
+struct tsize {
+	int kind;
+	float v;
+};
+
+struct track {
+	struct tsize min, max;
+	float base;		/* used size */
+	float cmin, cmax;	/* content contributions */
+};
+
+struct tracks {
+	struct track *t;
+	int n;
+	char **names;		/* line names, "a b " per line */
+};
+
+struct area {
+	char name[64];
+	int r0, c0, r1, c1;
+};
+
+struct gitem {
+	struct box *b;
+	int r0, r1, c0, c1;	/* lines, 0-based, end exclusive */
+	int rdef, cdef;		/* definite position in that axis */
+};
+
+static struct ucontext unit_ctx(const struct style *st)
+{
+	struct ucontext u;
+
+	memset(&u, 0, sizeof(u));
+	u.em = st->v[P_FONT_SIZE].u.len.px;
+	u.ex = u.ch = u.em / 2;
+	u.rem = 16;
+	u.vw = 1024;
+	u.vh = 768;
+	return u;
+}
+
+static int track_size(struct cur *c, const struct style *st,
+	struct tsize *s)
+{
+	const struct cv *v = cur_peek(c);
+	struct ucontext u = unit_ctx(st);
+
+	if (!v)
+		return 0;
+	if (v->type == CT_DIMENSION && ascii_ieq(v->str, "fr")) {
+		s->kind = TK_FR;
+		s->v = (float)v->num;
+		cur_next(c);
+		return 1;
+	}
+	if (cv_ident(v, "auto")) {
+		s->kind = TK_AUTO;
+	} else if (cv_ident(v, "min-content")) {
+		s->kind = TK_MIN;
+	} else if (cv_ident(v, "max-content")) {
+		s->kind = TK_MAX;
+	} else {
+		struct slen *l = parse_length(c, 0);
+		struct len r;
+
+		if (!l)
+			return 0;
+		slen_resolve(l, &u, &r);
+		slen_free(l);
+		if (r.calc)
+			calc_release(r.calc);
+		s->kind = r.pct ? TK_PCT : TK_LEN;
+		s->v = r.pct ? r.pct : r.px;
+		return 1;
+	}
+	cur_next(c);
+	return 1;
+}
+
+static void add_track(struct tracks *t, struct tsize mn, struct tsize mx)
+{
+	t->t = xrealloc(t->t, (size_t)(t->n + 1) * sizeof(*t->t));
+	memset(&t->t[t->n], 0, sizeof(*t->t));
+	t->t[t->n].min = mn;
+	t->t[t->n].max = mx;
+	t->n++;
+	t->names = xrealloc(t->names, (size_t)(t->n + 1) * sizeof(*t->names));
+	t->names[t->n] = NULL;
+	if (t->n == 1)
+		t->names[0] = NULL;
+}
+
+static void add_names(struct tracks *t, const struct cv *block)
+{
+	int line = t->n, i;
+	struct buf b = { 0 };
+
+	if (!t->names) {
+		t->names = xmalloc(sizeof(*t->names));
+		t->names[0] = NULL;
+	}
+	buf_add(&b, " ", 1);
+	if (t->names[line]) {
+		buf_add(&b, t->names[line], strlen(t->names[line]));
+		free(t->names[line]);
+	}
+	for (i = 0; i < block->kids.n; i++)
+		if (block->kids.v[i].type == CT_IDENT) {
+			buf_add(&b, block->kids.v[i].str,
+				strlen(block->kids.v[i].str));
+			buf_putc(&b, ' ');
+		}
+	t->names[line] = b.s;
+}
+
+/* One <track-size>, minmax() or fit-content(). */
+static int one_track(struct cur *c, const struct style *st, struct tracks *t)
+{
+	const struct cv *v = cur_peek(c);
+	struct tsize a, b;
+
+	if (cv_func(v, "minmax") || cv_func(v, "fit-content")) {
+		struct cur in;
+
+		cur_init(&in, &v->kids);
+		if (cv_func(v, "fit-content")) {
+			if (!track_size(&in, st, &b))
+				return 0;
+			a.kind = TK_AUTO;
+			a.v = 0;
+		} else if (!track_size(&in, st, &a) || !cur_next(&in) ||
+			   !track_size(&in, st, &b)) {
+			return 0;
+		}
+		cur_next(c);
+		add_track(t, a, b);
+		return 1;
+	}
+	if (!track_size(c, st, &a))
+		return 0;
+	b = a;
+	if (a.kind == TK_FR) {
+		a.kind = TK_AUTO;	/* 1fr is minmax(auto, 1fr) */
+		a.v = 0;
+	}
+	add_track(t, a, b);
+	return 1;
+}
+
+static float fixed_size(const struct tsize *s, float avail)
+{
+	if (s->kind == TK_LEN)
+		return s->v;
+	if (s->kind == TK_PCT)
+		return avail > 0 ? s->v * avail / 100 : 0;
+	return 0;
+}
+
+static void parse_tracks(const char *text, const struct style *st,
+	float avail, float g, struct tracks *t)
+{
+	struct cvlist l;
+	struct cur c;
+	const struct cv *v;
+
+	memset(t, 0, sizeof(*t));
+	if (!text || !strcmp(text, "none") || !strncmp(text, "subgrid", 7))
+		return;
+	css_component_values(text, strlen(text), &l);
+	cur_init(&c, &l);
+	while ((v = cur_peek(&c))) {
+		if (v->type == CT_BLOCK && v->delim == '[') {
+			add_names(t, v);
+			cur_next(&c);
+		} else if (cv_func(v, "repeat")) {
+			struct cur in;
+			const struct cv *n;
+			int count = 1, k, first, auto_rep = 0;
+
+			cur_init(&in, &v->kids);
+			n = cur_next(&in);
+			if (n && n->type == CT_NUMBER)
+				count = (int)n->num;
+			else if (cv_ident(n, "auto-fill") ||
+				 cv_ident(n, "auto-fit"))
+				auto_rep = 1;
+			cur_next(&in);	/* comma */
+			first = t->n;
+			{
+				struct cur body = in;
+
+				while (cur_peek(&body)) {
+					const struct cv *b = cur_peek(&body);
+
+					if (b->type == CT_BLOCK && b->delim == '[') {
+						add_names(t, b);
+						cur_next(&body);
+					} else if (!one_track(&body, st, t)) {
+						break;
+					}
+				}
+			}
+			if (auto_rep) {
+				/* as many as fit, at least one */
+				float one = 0;
+				int per = t->n - first;
+
+				for (k = first; k < t->n; k++) {
+					float s = fixed_size(&t->t[k].max, avail);
+
+					if (s <= 0)
+						s = fixed_size(&t->t[k].min, avail);
+					one += s + g;
+				}
+				count = one > 0 && avail > 0 ?
+					(int)((avail + g) / one) : 1;
+				if (count < 1)
+					count = 1;
+				if (count > 1000)
+					count = 1000;
+				(void)per;
+			}
+			if (count > 1000)
+				count = 1000;
+			{
+				int per = t->n - first, r;
+
+				for (r = 1; r < count; r++)
+					for (k = 0; k < per; k++)
+						add_track(t, t->t[first + k].min,
+							t->t[first + k].max);
+			}
+			cur_next(&c);
+		} else if (!one_track(&c, st, t)) {
+			cur_next(&c);	/* skip what we do not know */
+		}
+	}
+	cvlist_free(&l);
+}
+
+static void free_tracks(struct tracks *t)
+{
+	int i;
+
+	for (i = 0; t->names && i <= t->n; i++)
+		free(t->names[i]);
+	free(t->names);
+	free(t->t);
+}
+
+/* grid-template-areas: "a a b" "c c b" */
+static int parse_areas(const char *text, struct area *a, int max, int *rows,
+	int *cols)
+{
+	struct cvlist l;
+	int n = 0, r = 0, i;
+
+	*rows = *cols = 0;
+	if (!text || !strcmp(text, "none"))
+		return 0;
+	css_component_values(text, strlen(text), &l);
+	for (i = 0; i < l.n; i++) {
+		const char *s;
+		int col = 0;
+
+		if (l.v[i].type != CT_STRING)
+			continue;
+		for (s = l.v[i].str; *s; ) {
+			char name[64];
+			size_t k = 0;
+			int j;
+
+			while (*s == ' ' || *s == '\t' || *s == '\n')
+				s++;
+			if (!*s)
+				break;
+			while (*s && *s != ' ' && *s != '\t' && *s != '\n' &&
+			       k < sizeof(name) - 1)
+				name[k++] = *s++;
+			name[k] = '\0';
+			if (name[0] != '.') {
+				for (j = 0; j < n; j++)
+					if (!strcmp(a[j].name, name))
+						break;
+				if (j == n && n < max) {
+					memset(&a[n], 0, sizeof(a[n]));
+					strcpy(a[n].name, name);
+					a[n].r0 = r;
+					a[n].c0 = col;
+					n++;
+				}
+				if (j < n) {
+					a[j].r1 = r + 1;
+					a[j].c1 = col + 1;
+				}
+			}
+			col++;
+		}
+		if (col > *cols)
+			*cols = col;
+		r++;
+	}
+	*rows = r;
+	cvlist_free(&l);
+	return n;
+}
+
+/* A line by name ("a" for the n-th line named a, area edges too). */
+static int named_line(const struct tracks *t, const struct area *areas,
+	int nareas, const char *name, int end, int row)
+{
+	char key[80];
+	int i;
+
+	for (i = 0; i < nareas; i++)
+		if (!strcmp(areas[i].name, name))
+			return row ? (end ? areas[i].r1 : areas[i].r0) :
+				(end ? areas[i].c1 : areas[i].c0);
+	snprintf(key, sizeof(key), " %s ", name);
+	for (i = 0; t->names && i <= t->n; i++)
+		if (t->names[i] && strstr(t->names[i], key))
+			return i;
+	return -1;
+}
+
+/* grid-row-start and friends: line (0-based) or -1 auto; *span. */
+static int line_of(const char *s, const struct tracks *t,
+	const struct area *areas, int nareas, int end, int row, int *span)
+{
+	struct cvlist l;
+	struct cur c;
+	const struct cv *v;
+	int line = -1, n = 0, is_span = 0;
+	const char *name = NULL;
+
+	*span = 0;
+	if (!s || !strcmp(s, "auto"))
+		return -1;
+	css_component_values(s, strlen(s), &l);
+	cur_init(&c, &l);
+	while ((v = cur_next(&c))) {
+		if (cv_ident(v, "span"))
+			is_span = 1;
+		else if (v->type == CT_NUMBER)
+			n = (int)v->num;
+		else if (v->type == CT_IDENT)
+			name = v->str;
+	}
+	if (is_span) {
+		*span = n > 0 ? n : 1;
+	} else if (name) {
+		line = named_line(t, areas, nareas, name, end, row);
+	} else if (n > 0) {
+		line = n - 1;
+	} else if (n < 0) {
+		line = t->n + 1 + n;
+		if (line < 0)
+			line = 0;
+	}
+	cvlist_free(&l);
+	return line;
+}
+
+/* Fill [from, to) of an occupancy grid. */
+struct occ {
+	char *cell;
+	int rows, cols;
+};
+
+static void occ_grow(struct occ *o, int rows, int cols)
+{
+	char *n;
+	int r;
+
+	if (rows <= o->rows && cols <= o->cols)
+		return;
+	if (rows < o->rows)
+		rows = o->rows;
+	if (cols < o->cols)
+		cols = o->cols;
+	n = calloc((size_t)rows * (size_t)cols + 1, 1);
+	if (!n)
+		abort();
+	for (r = 0; r < o->rows; r++)
+		memcpy(n + r * cols, o->cell + r * o->cols, (size_t)o->cols);
+	free(o->cell);
+	o->cell = n;
+	o->rows = rows;
+	o->cols = cols;
+}
+
+static int occ_free(struct occ *o, int r0, int r1, int c0, int c1)
+{
+	int r, c;
+
+	for (r = r0; r < r1; r++)
+		for (c = c0; c < c1; c++)
+			if (r < o->rows && c < o->cols &&
+			    o->cell[r * o->cols + c])
+				return 0;
+	return 1;
+}
+
+static void occ_set(struct occ *o, int r0, int r1, int c0, int c1)
+{
+	int r, c;
+
+	occ_grow(o, r1, c1);
+	for (r = r0; r < r1; r++)
+		for (c = c0; c < c1; c++)
+			o->cell[r * o->cols + c] = 1;
+}
+
+/* Implicit tracks get grid-auto-rows/columns (first track only). */
+static void extend(struct tracks *t, int n, const char *autos,
+	const struct style *st)
+{
+	struct tracks a;
+
+	parse_tracks(autos, st, 0, 0, &a);
+	while (t->n < n) {
+		struct tsize s = { TK_AUTO, 0 };
+
+		if (a.n)
+			add_track(t, a.t[0].min, a.t[0].max);
+		else
+			add_track(t, s, s);
+	}
+	free_tracks(&a);
+}
+
+/* Size tracks for a total of avail (or -1: intrinsic). */
+static void size_tracks(struct tracks *t, float avail, float g)
+{
+	float sum = 0, fr = 0, free_space;
+	int i, flex = 0, again;
+
+	for (i = 0; i < t->n; i++) {
+		struct track *k = &t->t[i];
+
+		if (k->min.kind == TK_LEN || k->min.kind == TK_PCT)
+			k->base = fixed_size(&k->min, avail);
+		else if (k->min.kind == TK_MAX)
+			k->base = k->cmax;
+		else
+			k->base = k->cmin;	/* auto, min-content */
+		if ((k->max.kind == TK_LEN || k->max.kind == TK_PCT) &&
+		    fixed_size(&k->max, avail) < k->base &&
+		    k->min.kind != TK_AUTO)
+			k->base = fixed_size(&k->max, avail);
+		sum += k->base;
+	}
+	sum += g * (float)(t->n > 0 ? t->n - 1 : 0);
+	free_space = avail >= 0 ? avail - sum : 0;
+	/* grow auto and max-content maxima toward their content */
+	for (i = 0; i < t->n && (free_space > 0 || avail < 0); i++) {
+		struct track *k = &t->t[i];
+		float want = 0;
+
+		if (k->max.kind == TK_AUTO || k->max.kind == TK_MAX)
+			want = k->cmax - k->base;
+		else if ((k->max.kind == TK_LEN || k->max.kind == TK_PCT) &&
+			 k->min.kind == TK_AUTO)
+			want = (fixed_size(&k->max, avail) < k->cmax ?
+				fixed_size(&k->max, avail) : k->cmax) - k->base;
+		if (want <= 0)
+			continue;
+		if (avail >= 0 && want > free_space)
+			want = free_space;
+		k->base += want;
+		free_space -= want;
+	}
+	/* flexible tracks share what is left (12.7) */
+	for (i = 0; i < t->n; i++)
+		if (t->t[i].max.kind == TK_FR) {
+			fr += t->t[i].max.v;
+			flex = 1;
+		}
+	if (!flex || avail < 0)
+		goto stretch;
+	do {
+		float rest = avail - g * (float)(t->n > 0 ? t->n - 1 : 0), unit;
+
+		again = 0;
+		fr = 0;
+		for (i = 0; i < t->n; i++) {
+			struct track *k = &t->t[i];
+
+			if (k->max.kind == TK_FR && k->max.v > 0)
+				fr += k->max.v;
+			else
+				rest -= k->base;
+		}
+		unit = fr > 0 ? rest / (fr < 1 ? 1 : fr) : 0;
+		for (i = 0; i < t->n; i++) {
+			struct track *k = &t->t[i];
+
+			if (k->max.kind == TK_FR && k->max.v > 0 &&
+			    k->max.v * unit < k->base) {
+				/* too small for its content: inflexible */
+				k->max.kind = TK_LEN;
+				k->max.v = k->base;
+				again = 1;
+			}
+		}
+		if (!again)
+			for (i = 0; i < t->n; i++)
+				if (t->t[i].max.kind == TK_FR)
+					t->t[i].base = t->t[i].max.v * unit >
+						0 ? t->t[i].max.v * unit : 0;
+	} while (again);
+	return;
+stretch:
+	/* auto tracks take the rest (normal content alignment) */
+	if (avail >= 0 && free_space > 0) {
+		int autos = 0;
+
+		for (i = 0; i < t->n; i++)
+			autos += t->t[i].max.kind == TK_AUTO;
+		for (i = 0; autos && i < t->n; i++)
+			if (t->t[i].max.kind == TK_AUTO)
+				t->t[i].base += free_space / (float)autos;
+	}
+}
+
+static float span_size(const struct tracks *t, int a, int b, float g)
+{
+	float s = 0;
+	int i;
+
+	for (i = a; i < b && i < t->n; i++)
+		s += t->t[i].base;
+	return s + g * (float)(b - a - 1 > 0 ? b - a - 1 : 0);
+}
+
+static float track_pos(const struct tracks *t, int a, float g)
+{
+	float s = 0;
+	int i;
+
+	for (i = 0; i < a && i < t->n; i++)
+		s += t->t[i].base + g;
+	return s;
+}
+
+static int align_kw(const char *s, int def)
+{
+	if (!s || !strcmp(s, "normal") || !strcmp(s, "auto") ||
+	    !strcmp(s, "legacy"))
+		return def;
+	if (strstr(s, "center"))
+		return 'c';
+	if (strstr(s, "end") || strstr(s, "right"))
+		return 'e';
+	if (strstr(s, "stretch"))
+		return 's';
+	if (strstr(s, "space-between"))
+		return 'b';
+	if (strstr(s, "space-around"))
+		return 'a';
+	if (strstr(s, "space-evenly"))
+		return 'v';
+	return 'f';
+}
+
+static float gapv(const struct style *st, int prop, float ref)
+{
+	return st->v[prop].kw ? 0 : len_val(&st->v[prop], ref);
+}
+
+/* Shared by layout and intrinsic sizes. */
+static int place(struct box *gb, float W, struct tracks *cols,
+	struct tracks *rows, struct gitem **out, float cg, float rg)
+{
+	const struct style *st = gb->style;
+	struct area areas[64];
+	int nareas, arows, acols, n = 0, i, cur_r = 0, cur_c = 0;
+	struct gitem *v = NULL;
+	struct occ o = { NULL, 0, 0 };
+	struct box *c;
+	int column_flow = strstr(st->v[P_GRID_AUTO_FLOW].u.str, "column") !=
+		NULL;
+
+	parse_tracks(st->v[P_GRID_TEMPLATE_COLUMNS].u.str, st, W, cg, cols);
+	parse_tracks(st->v[P_GRID_TEMPLATE_ROWS].u.str, st, -1, rg, rows);
+	nareas = parse_areas(st->v[P_GRID_TEMPLATE_AREAS].u.str, areas, 64,
+		&arows, &acols);
+	extend(cols, acols, st->v[P_GRID_AUTO_COLUMNS].u.str, st);
+	extend(rows, arows, st->v[P_GRID_AUTO_ROWS].u.str, st);
+	occ_grow(&o, rows->n ? rows->n : 1, cols->n ? cols->n : 1);
+	for (c = gb->first; c; c = c->next) {
+		struct gitem *it;
+		int rs, re, cs, ce, s1, s2;
+
+		if (c->flags & BF_ABS) {
+			box_edges(c, W);
+			abs_static(c, gb->x, gb->y);
+			continue;
+		}
+		v = xrealloc(v, (size_t)(n + 1) * sizeof(*v));
+		it = &v[n++];
+		memset(it, 0, sizeof(*it));
+		it->b = c;
+		cs = line_of(c->style->v[P_GRID_COLUMN_START].u.str, cols, areas,
+			nareas, 0, 0, &s1);
+		ce = line_of(c->style->v[P_GRID_COLUMN_END].u.str, cols, areas,
+			nareas, 1, 0, &s2);
+		if (cs >= 0) {
+			it->c0 = cs;
+			it->c1 = ce > cs ? ce : cs + (s2 ? s2 : 1);
+			it->cdef = 1;
+		} else if (ce >= 0) {
+			it->c1 = ce;
+			it->c0 = ce - (s1 ? s1 : 1);
+			if (it->c0 < 0)
+				it->c0 = 0;
+			it->cdef = 1;
+		} else {
+			it->c1 = s1 ? s1 : s2 ? s2 : 1;
+		}
+		rs = line_of(c->style->v[P_GRID_ROW_START].u.str, rows, areas,
+			nareas, 0, 1, &s1);
+		re = line_of(c->style->v[P_GRID_ROW_END].u.str, rows, areas,
+			nareas, 1, 1, &s2);
+		if (rs >= 0) {
+			it->r0 = rs;
+			it->r1 = re > rs ? re : rs + (s2 ? s2 : 1);
+			it->rdef = 1;
+		} else if (re >= 0) {
+			it->r1 = re;
+			it->r0 = re - (s1 ? s1 : 1);
+			if (it->r0 < 0)
+				it->r0 = 0;
+			it->rdef = 1;
+		} else {
+			it->r1 = s1 ? s1 : s2 ? s2 : 1;
+		}
+		if (it->cdef && it->rdef)
+			occ_set(&o, it->r0, it->r1, it->c0, it->c1);
+	}
+	/* auto placement, row by row (or column by column) */
+	for (i = 0; i < n; i++) {
+		struct gitem *it = &v[i];
+		int rspan = it->r1 - it->r0, cspan = it->c1 - it->c0;
+		int ncols = o.cols > cspan ? o.cols : cspan;
+
+		if (it->cdef && it->rdef)
+			continue;
+		if (it->rdef && !it->cdef) {
+			int col = 0;
+
+			while (!occ_free(&o, it->r0, it->r1, col, col + cspan))
+				col++;
+			it->c0 = col;
+			it->c1 = col + cspan;
+		} else if (it->cdef && !it->rdef) {
+			int row = 0;
+
+			while (!occ_free(&o, row, row + rspan, it->c0, it->c1))
+				row++;
+			it->r0 = row;
+			it->r1 = row + rspan;
+		} else if (column_flow) {
+			int nrows = o.rows > rspan ? o.rows : rspan;
+
+			for (;;) {
+				if (cur_r + rspan > nrows) {
+					cur_r = 0;
+					cur_c++;
+				}
+				if (occ_free(&o, cur_r, cur_r + rspan, cur_c,
+					     cur_c + cspan))
+					break;
+				cur_r++;
+			}
+			it->r0 = cur_r;
+			it->r1 = cur_r + rspan;
+			it->c0 = cur_c;
+			it->c1 = cur_c + cspan;
+			cur_r += rspan;
+		} else {
+			for (;;) {
+				if (cur_c + cspan > ncols) {
+					cur_c = 0;
+					cur_r++;
+				}
+				if (occ_free(&o, cur_r, cur_r + rspan, cur_c,
+					     cur_c + cspan))
+					break;
+				cur_c++;
+			}
+			it->r0 = cur_r;
+			it->r1 = cur_r + rspan;
+			it->c0 = cur_c;
+			it->c1 = cur_c + cspan;
+			cur_c += cspan;
+		}
+		occ_set(&o, it->r0, it->r1, it->c0, it->c1);
+	}
+	for (i = 0; i < n; i++) {
+		extend(cols, v[i].c1, st->v[P_GRID_AUTO_COLUMNS].u.str, st);
+		extend(rows, v[i].r1, st->v[P_GRID_AUTO_ROWS].u.str, st);
+	}
+	free(o.cell);
+	*out = v;
+	return n;
+}
+
+static void column_contributions(struct tracks *cols, struct gitem *v, int n)
+{
+	int i;
+
+	for (i = 0; i < n; i++) {
+		float mn, mx;
+
+		if (v[i].c1 - v[i].c0 != 1)
+			continue;
+		box_sizes(v[i].b, &mn, &mx);
+		if (mn > cols->t[v[i].c0].cmin)
+			cols->t[v[i].c0].cmin = mn;
+		if (mx > cols->t[v[i].c0].cmax)
+			cols->t[v[i].c0].cmax = mx;
+	}
+}
+
+float layout_grid(struct box *gb, float cbh)
+{
+	const struct style *st = gb->style;
+	struct tracks cols, rows;
+	struct gitem *v;
+	float W = gb->w, H = box_spec_h(gb, P_HEIGHT, cbh);
+	float cg = gapv(st, P_COLUMN_GAP, W), rg = gapv(st, P_ROW_GAP, 0);
+	float total, xoff = 0, yoff = 0, xs = 0, ys = 0;
+	int n, i;
+
+	n = place(gb, W, &cols, &rows, &v, cg, rg);
+	column_contributions(&cols, v, n);
+	size_tracks(&cols, W, cg);
+	/* items at their column widths give the row contributions */
+	for (i = 0; i < n; i++) {
+		struct box *b = v[i].b;
+		float aw = span_size(&cols, v[i].c0, v[i].c1, cg), w, h;
+
+		box_edges(b, aw);
+		w = box_spec_w(b, P_WIDTH, aw);
+		if (w < 0 || b->type == B_REPLACED)
+			w = b->type == B_REPLACED ? -1 : aw - b->m[1] - b->m[3] -
+				b->b[1] - b->b[3] - b->p[1] - b->p[3];
+		if (b->type == B_REPLACED)
+			w = b->iw > 0 ? b->iw : 0;
+		layout_item(b, 0, 0, box_clamp_w(b, w, aw),
+			box_spec_h(b, P_HEIGHT, -1));
+		if (b->type == B_REPLACED && b->ih > 0)
+			b->h = b->ih;
+		h = b->h + b->m[0] + b->m[2] + b->b[0] + b->b[2] + b->p[0] +
+			b->p[2];
+		if (v[i].r1 - v[i].r0 == 1) {
+			if (h > rows.t[v[i].r0].cmin)
+				rows.t[v[i].r0].cmin = h;
+			if (h > rows.t[v[i].r0].cmax)
+				rows.t[v[i].r0].cmax = h;
+		}
+	}
+	size_tracks(&rows, H, rg);
+	/* content alignment of the whole grid */
+	total = span_size(&cols, 0, cols.n, cg);
+	if (total < W) {
+		switch (align_kw(st->v[P_JUSTIFY_CONTENT].u.str, 'f')) {
+		case 'c': xoff = (W - total) / 2; break;
+		case 'e': xoff = W - total; break;
+		case 'b': xs = cols.n > 1 ? (W - total) / (float)(cols.n - 1) :
+			0; break;
+		}
+	}
+	total = span_size(&rows, 0, rows.n, rg);
+	if (H >= 0 && total < H) {
+		switch (align_kw(st->v[P_ALIGN_CONTENT].u.str, 'f')) {
+		case 'c': yoff = (H - total) / 2; break;
+		case 'e': yoff = H - total; break;
+		case 'b': ys = rows.n > 1 ? (H - total) / (float)(rows.n - 1) :
+			0; break;
+		}
+	}
+	for (i = 0; i < n; i++) {
+		struct box *b = v[i].b;
+		float ax = gb->x + xoff + track_pos(&cols, v[i].c0, cg + xs) ;
+		float ay = gb->y + yoff + track_pos(&rows, v[i].r0, rg + ys);
+		float aw = span_size(&cols, v[i].c0, v[i].c1, cg);
+		float ah = span_size(&rows, v[i].r0, v[i].r1, rg);
+		const char *js = b->style->v[P_JUSTIFY_SELF].u.str;
+		const char *as = b->style->v[P_ALIGN_SELF].u.str;
+		int jal = align_kw(js && strcmp(js, "auto") ? js :
+			st->v[P_JUSTIFY_ITEMS].u.str, b->type == B_REPLACED ?
+			'f' : 's');
+		int aal = align_kw(as && strcmp(as, "auto") ? as :
+			st->v[P_ALIGN_ITEMS].u.str, b->type == B_REPLACED ?
+			'f' : 's');
+		float ew = b->m[1] + b->m[3] + b->b[1] + b->b[3] + b->p[1] +
+			b->p[3];
+		float eh = b->m[0] + b->m[2] + b->b[0] + b->b[2] + b->p[0] +
+			b->p[2];
+		float dx = 0, dy = 0;
+
+		if (jal == 's' && is_auto(b->style, P_WIDTH) &&
+		    b->type != B_REPLACED &&
+		    b->w != box_clamp_w(b, aw - ew, aw)) {
+			layout_item(b, 0, 0, box_clamp_w(b, aw - ew, aw), -1);
+		} else if (jal != 's') {
+			/* shrink to fit when not stretched */
+			if (is_auto(b->style, P_WIDTH) &&
+			    b->type != B_REPLACED) {
+				float mn, mx, w;
+
+				content_sizes(b, &mn, &mx);
+				w = mx < aw - ew ? mx : aw - ew;
+				if (w < mn)
+					w = mn;
+				layout_item(b, 0, 0, w, -1);
+			}
+			if (jal == 'c')
+				dx = (aw - b->w - ew) / 2;
+			else if (jal == 'e')
+				dx = aw - b->w - ew;
+		}
+		if (aal == 's' && is_auto(b->style, P_HEIGHT) &&
+		    b->type != B_REPLACED)
+			b->h = box_clamp_h(b, ah - eh, ah);
+		else if (aal == 'c')
+			dy = (ah - b->h - eh) / 2;
+		else if (aal == 'e')
+			dy = ah - b->h - eh;
+		translate(b, ax + dx + b->m[3] + b->b[3] + b->p[3] - b->x,
+			ay + dy + b->m[0] + b->b[0] + b->p[0] - b->y);
+		{
+			float rx, ry;
+
+			rel_offset(b, W, &rx, &ry);
+			if (rx || ry)
+				translate(b, rx, ry);
+		}
+	}
+	total = yoff + span_size(&rows, 0, rows.n, rg + ys);
+	free(v);
+	free_tracks(&cols);
+	free_tracks(&rows);
+	return H >= 0 ? H : total;
+}
+
+void grid_sizes(struct box *gb, float *mn, float *mx)
+{
+	struct tracks cols, rows;
+	struct gitem *v;
+	float cg = gapv(gb->style, P_COLUMN_GAP, 0);
+	int n, i;
+
+	n = place(gb, -1, &cols, &rows, &v, cg, 0);
+	column_contributions(&cols, v, n);
+	*mn = *mx = 0;
+	for (i = 0; i < cols.n; i++) {
+		struct track *k = &cols.t[i];
+		float a = k->min.kind == TK_LEN ? k->min.v : k->cmin;
+		float b = k->max.kind == TK_LEN ? k->max.v : k->cmax;
+
+		if (b < a)
+			b = a;
+		*mn += a;
+		*mx += b;
+	}
+	*mn += cg * (float)(cols.n > 1 ? cols.n - 1 : 0);
+	*mx += cg * (float)(cols.n > 1 ? cols.n - 1 : 0);
+	free(v);
+	free_tracks(&cols);
+	free_tracks(&rows);
+}

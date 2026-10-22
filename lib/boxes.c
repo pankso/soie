@@ -575,6 +575,16 @@ static int collapsible_only(const struct box *b)
 
 static void fixup(struct styledb *db, struct box *b);
 
+/* Flex and grid containers: their text becomes anonymous items. */
+int is_flexgrid(const struct box *b)
+{
+	const struct style *st = b->style;
+
+	return st && (b->type == B_BLOCK || b->type == B_ATOMIC) && !b->role &&
+		(kw(st, P_DISPLAY, "flex") || kw(st, P_DISPLAY, "inline-flex") ||
+		 kw(st, P_DISPLAY, "grid") || kw(st, P_DISPLAY, "inline-grid"));
+}
+
 /* Block containers below b, inline boxes crossed. */
 static void fixup_inside(struct styledb *db, struct box *b)
 {
@@ -627,7 +637,7 @@ static void fixup(struct styledb *db, struct box *b)
 			blocks = 1;
 	}
 	fixup_inside(db, b);
-	if (!blocks) {
+	if (!blocks && !is_flexgrid(b)) {
 		b->flags |= BF_INLINE_KIDS;
 		return;
 	}

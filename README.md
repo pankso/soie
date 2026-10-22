@@ -5,8 +5,8 @@ reference browser. No toolkit, no JavaScript in the core, built to
 render modern pages on old machines. See `doc/DECISIONS.md` for what
 Soie is and is not, and how extensions plug in.
 
-Status: phase 7 done: `browser/soie` browses the web (HTTPS, forms,
-history), without JavaScript or cookies yet. The HTML parser follows the WHATWG algorithm
+Status: phase 8 done: flexbox and grid. `browser/soie` browses the
+web (HTTPS, forms, history), without JavaScript or cookies yet. The HTML parser follows the WHATWG algorithm
 and passes the html5lib tree-construction tests; the CSS parser,
 selectors, cascade and computed values pass css-parsing-tests,
 including all of CSS Color 4; block and inline layout work, with a
