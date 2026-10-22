@@ -18,9 +18,10 @@ CSSTESTS_URL = https://github.com/SimonSapin/css-parsing-tests.git
 CSSTESTS_REV = 203ce36bffd617db7f118c551e32794561fb273d
 
 LIB_OBJS = lib/dom.o lib/dump.o lib/encoding.o lib/tokenizer.o \
-	lib/treebuilder.o lib/csssyntax.o lib/values.o lib/selector.o
+	lib/treebuilder.o lib/csssyntax.o lib/values.o lib/selector.o \
+	lib/url.o
 LIBS = -lm
-HEADERS = lib/soie/soie.h lib/soie/dom.h lib/soie/html.h
+HEADERS = lib/soie/soie.h lib/soie/dom.h lib/soie/html.h lib/soie/style.h
 INTERNAL = lib/internal.h lib/parser.h lib/tags.h lib/css.h
 
 all: lib/libsoie.a lib/libsoie.so.$(SOVERSION) tools/soie-render
