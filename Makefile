@@ -84,6 +84,7 @@ ext/%.so: ext/%.c lib/libsoie.so.$(SOVERSION) $(HEADERS)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -shared $(LDFLAGS) -o $@ $< \
 		lib/libsoie.so.$(SOVERSION) $(EXT_LIBS)
 
+ext/cookies.so: EXT_LIBS = -lpthread
 ext/webp.so: CPPFLAGS += $(shell pkg-config --cflags libwebp)
 ext/webp.so: EXT_LIBS = $(shell pkg-config --libs libwebp)
 
@@ -119,7 +120,7 @@ BROWSER_PKGS = x11 gnutls zlib libpng
 browser/soie: browser/soie.o browser/net.o lib/libsoie.so.$(SOVERSION)
 	$(CC) $(LDFLAGS) $(RPATH) -o $@ browser/soie.o browser/net.o \
 		lib/libsoie.so.$(SOVERSION) $(LIBS) \
-		$(shell pkg-config --libs $(BROWSER_PKGS))
+		$(shell pkg-config --libs $(BROWSER_PKGS)) -lpthread
 
 browser/soie.o browser/net.o: browser/net.h $(HEADERS)
 browser/soie.o browser/net.o: CPPFLAGS += \

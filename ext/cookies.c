@@ -15,6 +15,7 @@
 #include <ctype.h>
 #include <time.h>
 #include <fcntl.h>
+#include <pthread.h>
 #include <unistd.h>
 #include <sys/stat.h>
 
@@ -35,6 +36,8 @@ static struct cookie *jar;
 static int njar, capjar;
 static char *file;		/* NULL: memory only */
 static long long serial;	/* creation order within one second */
+/* media players fetch from their own threads */
+static pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
 
 struct url {
 	char scheme[16];
@@ -363,7 +366,19 @@ static char *trim(const char *s, size_t len)
 	return sdup(s, len);
 }
 
+static void set_locked(const char *url, const char *first_party,
+	const char *line, int script);
+
 static void set(void *data, const char *url, const char *first_party,
+	const char *line, int script)
+{
+	(void)data;
+	pthread_mutex_lock(&lock);
+	set_locked(url, first_party, line, script);
+	pthread_mutex_unlock(&lock);
+}
+
+static void set_locked(const char *url, const char *first_party,
 	const char *line, int script)
 {
 	struct cookie c;
@@ -373,7 +388,6 @@ static void set(void *data, const char *url, const char *first_party,
 	long long now = (long long)time(NULL), maxage = 0, exp;
 	int has_maxage = 0, i;
 
-	(void)data;
 	if (!line || strlen(line) > MAX_SIZE || parse_url(url, &u) ||
 	    third_party(&u, first_party) ||
 	    (strcmp(u.scheme, "http") && strcmp(u.scheme, "https")))
@@ -481,7 +495,22 @@ static int by_path(const void *a, const void *b)
 	return x->created < y->created ? -1 : x->created > y->created;
 }
 
+static char *get_locked(const char *url, const char *first_party,
+	int script);
+
 static char *get(void *data, const char *url, const char *first_party,
+	int script)
+{
+	char *r;
+
+	(void)data;
+	pthread_mutex_lock(&lock);
+	r = get_locked(url, first_party, script);
+	pthread_mutex_unlock(&lock);
+	return r;
+}
+
+static char *get_locked(const char *url, const char *first_party,
 	int script)
 {
 	struct cookie **v;
@@ -490,7 +519,6 @@ static char *get(void *data, const char *url, const char *first_party,
 	size_t len = 0;
 	int i, n = 0;
 
-	(void)data;
 	if (parse_url(url, &u) || third_party(&u, first_party))
 		return NULL;
 	purge((long long)time(NULL));

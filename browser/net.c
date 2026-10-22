@@ -14,6 +14,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
+#include <pthread.h>
 #include <unistd.h>
 #include <sys/socket.h>
 #include <gnutls/gnutls.h>
@@ -24,22 +25,27 @@
 
 static gnutls_certificate_credentials_t creds;
 
-static int tls_init(void)
-{
-	static int done;
+static int tls_ok;
 
-	if (done)
-		return done > 0;
-	done = -1;
+static void tls_setup(void)
+{
 	if (gnutls_global_init() < 0 ||
 	    gnutls_certificate_allocate_credentials(&creds) < 0)
-		return 0;
+		return;
 	if (gnutls_certificate_set_x509_system_trust(creds) <= 0)
 		gnutls_certificate_set_x509_trust_file(creds,
 			"/etc/ssl/certs/ca-certificates.crt",
 			GNUTLS_X509_FMT_PEM);
-	done = 1;
-	return 1;
+	tls_ok = 1;
+}
+
+/* Once, whichever thread comes first (media players fetch too). */
+static int tls_init(void)
+{
+	static pthread_once_t once = PTHREAD_ONCE_INIT;
+
+	pthread_once(&once, tls_setup);
+	return tls_ok;
 }
 
 struct conn {
