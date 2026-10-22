@@ -391,6 +391,8 @@ reversed, edit the entry and say why; do not leave stale rules here.
   placeholder, checks) and keeps the focus (soie_set_focus()).
 - History: a list of URLs and scroll positions; same-document
   fragments scroll without reloading.
+- `<meta http-equiv=refresh>` is followed after its delay, replacing
+  the page in the history (www.slitaz.org's home page is one).
 - `soie -o page.png URL` loads and renders without a display: the
   network and the engine can be tested headless.
 - The engine gained soie_hit_test(), soie_element_rect() and

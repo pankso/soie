@@ -84,6 +84,8 @@ static char status[4096];
 static int scripts = 1;		/* -s turns JavaScript off */
 static char *pending_nav;	/* a script's navigation, done after it */
 static int pending_replace;
+static char *refresh_url;	/* <meta http-equiv=refresh> */
+static double refresh_at;
 
 static Display *dpy;
 static Window win;
@@ -414,6 +416,91 @@ static void set_title(void)
 	}
 }
 
+static double now_s(void)
+{
+	struct timespec t;
+
+	clock_gettime(CLOCK_MONOTONIC, &t);
+	return (double)t.tv_sec + (double)t.tv_nsec / 1e9;
+}
+
+/*
+ * <meta http-equiv=refresh content="5; url=next.html"> (HTML 4.2.5.3):
+ * a delay, then the URL (the page itself when there is none).
+ */
+static void meta_refresh(void)
+{
+	soie_node **v;
+	size_t n, i;
+	const char *c, *e;
+	double delay;
+	char *u;
+
+	free(refresh_url);
+	refresh_url = NULL;
+	v = soie_query(page.doc, "meta[http-equiv=refresh i][content]", 0,
+		&n);
+	for (i = 0; v && i < n && !refresh_url; i++) {
+		c = soie_element_get_attr(v[i], "content");
+		while (*c == ' ' || *c == '\t' || *c == '\n')
+			c++;
+		if (!(*c >= '0' && *c <= '9') && *c != '.')
+			continue;
+		delay = strtod(c, (char **)&c);
+		while (*c == ' ' || *c == '\t' || *c == '\n' || *c == ';' ||
+		       *c == ',')
+			c++;
+		if (!strncasecmp(c, "url", 3)) {
+			e = c + 3;
+			while (*e == ' ' || *e == '\t')
+				e++;
+			if (*e == '=') {
+				c = e + 1;
+				while (*c == ' ' || *c == '\t')
+					c++;
+			}
+		}
+		u = strdup(c);
+		if (*u == '\'' || *u == '"') {
+			char q = *u, *end;
+
+			memmove(u, u + 1, strlen(u));
+			if ((end = strchr(u, q)))
+				*end = 0;
+		}
+		if (!*u) {
+			free(u);
+			u = strdup(page.url);
+		}
+		refresh_url = soie_url_resolve(page.url, u);
+		refresh_at = now_s() + (delay > 0 ? delay : 0);
+		free(u);
+	}
+	free(v);
+}
+
+/* A due refresh becomes a navigation that replaces this page. */
+static int refresh_due(void)
+{
+	if (!refresh_url || now_s() < refresh_at || pending_nav)
+		return 0;
+	pending_nav = refresh_url;
+	pending_replace = 1;
+	refresh_url = NULL;
+	return 1;
+}
+
+/* ms until the refresh, -1 without one */
+static int refresh_wait(void)
+{
+	double d;
+
+	if (!refresh_url)
+		return -1;
+	d = (refresh_at - now_s()) * 1000;
+	return d < 0 ? 0 : d > 1e9 ? 1000000000 : (int)d;
+}
+
 static void scroll_to_fragment(void)
 {
 	const char *h = strchr(page.url, '#');
@@ -525,6 +612,7 @@ static void load(const char *url, const char *post, int push)
 		hist.n = hist.cur + 1;
 	}
 	relayout();
+	meta_refresh();
 	if (js && strcmp(page.url, HOME) &&
 	    !soie_script_start(page.doc, page.url, &js_host))
 		after_scripts();
@@ -1149,6 +1237,15 @@ static void settle_offscreen(void)
 
 	clock_gettime(CLOCK_MONOTONIC, &t0);
 	for (;;) {
+		if (refresh_wait() >= 0 && refresh_wait() <= 3000 && hops < 5) {
+			struct timespec w;
+			int ms = refresh_wait();
+
+			w.tv_sec = ms / 1000;
+			w.tv_nsec = (long)(ms % 1000) * 1000000;
+			nanosleep(&w, NULL);
+			refresh_due();
+		}
 		if (pending_nav && hops++ < 5) {
 			after_scripts();
 			continue;
@@ -1262,6 +1359,10 @@ int main(int argc, char **argv)
 				m = soie_media_tick(page.doc, &repaint);
 			if (m >= 0 && (t < 0 || m < t))
 				t = m;
+			m = refresh_wait();
+			if (m >= 0 && (t < 0 || m < t))
+				t = m;
+			refresh_due();
 			if (after_scripts() || repaint)
 				redraw();
 			if (XPending(dpy))
