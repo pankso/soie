@@ -1,0 +1,81 @@
+#data
+<!DOCTYPE html><p>a<noscript><b>x</b></noscript>
+#errors
+#script-off
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|   <body>
+|     <p>
+|       "a"
+|       <noscript>
+|         <b>
+|           "x"
+
+#data
+<!DOCTYPE html><p>a<noscript><b>x</b></noscript>
+#errors
+#script-on
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|   <body>
+|     <p>
+|       "a"
+|       <noscript>
+|         "<b>x</b>"
+
+#data
+<td>a<td>b</tr><tr><th>c
+#errors
+#document-fragment
+tr
+#document
+| <td>
+|   "a"
+| <td>
+|   "b"
+| <th>
+|   "c"
+
+#data
+<option>a<option>b<optgroup><option>c
+#errors
+#document-fragment
+select
+#document
+| <option>
+|   "a"
+| <option>
+|   "b"
+| <optgroup>
+|   <option>
+|     "c"
+
+#data
+<!DOCTYPE html><select><div>x<option>y</select>z
+#errors
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|   <body>
+|     <select>
+|       <div>
+|         "x"
+|         <option>
+|           "y"
+|     "z"
+
+#data
+<b>x</td>y<p>z
+#errors
+#document-fragment
+td
+#document
+| <b>
+|   "xy"
+|   <p>
+|     "z"

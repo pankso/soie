@@ -1,0 +1,7 @@
+# Expected failures of the html5lib tree-construction tests.
+# <selectedcontent> mirrors the selected <option>: that is form state
+# (the selectedness algorithm), not parsing. Comes with forms.
+webkit02.dat 45
+webkit02.dat 46
+webkit02.dat 47
+webkit02.dat 48

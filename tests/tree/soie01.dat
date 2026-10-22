@@ -1,0 +1,305 @@
+#data
+<!DOCTYPE html><html lang=fr><head><meta charset=utf-8><title>Soie &amp; Toile</title></head><body><h1>Titre</h1><p>Un <b>paragraphe <i>mal</b> imbriqué</i>.</p></body></html>
+#errors
+#document
+| <!DOCTYPE html>
+| <html>
+|   lang="fr"
+|   <head>
+|     <meta>
+|       charset="utf-8"
+|     <title>
+|       "Soie & Toile"
+|   <body>
+|     <h1>
+|       "Titre"
+|     <p>
+|       "Un "
+|       <b>
+|         "paragraphe "
+|         <i>
+|           "mal"
+|       <i>
+|         " imbriqué"
+|       "."
+
+#data
+<!DOCTYPE html><table><tr><td>a<td>b</tr>texte<tr><th>c</table>après
+#errors
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|   <body>
+|     "texte"
+|     <table>
+|       <tbody>
+|         <tr>
+|           <td>
+|             "a"
+|           <td>
+|             "b"
+|         <tr>
+|           <th>
+|             "c"
+|     "après"
+
+#data
+<!DOCTYPE html><ul><li>un<li>deux<ol><li>trois</ul><dl><dt>t<dd>d<dt>t2</dl>
+#errors
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|   <body>
+|     <ul>
+|       <li>
+|         "un"
+|       <li>
+|         "deux"
+|         <ol>
+|           <li>
+|             "trois"
+|     <dl>
+|       <dt>
+|         "t"
+|       <dd>
+|         "d"
+|       <dt>
+|         "t2"
+
+#data
+<!DOCTYPE html><p>a<div>b</p>c</div><p>d<table><tr><td>e</table>
+#errors
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|   <body>
+|     <p>
+|       "a"
+|     <div>
+|       "b"
+|       <p>
+|       "c"
+|     <p>
+|       "d"
+|     <table>
+|       <tbody>
+|         <tr>
+|           <td>
+|             "e"
+
+#data
+<!DOCTYPE html><a href="/x?a=1&b=2&copy=3&amp;c=&copy">lien &copy &notin; &#x26; &#150;</a>
+#errors
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|   <body>
+|     <a>
+|       href="/x?a=1&b=2&copy=3&c=©"
+|       "lien © ∉ & –"
+
+#data
+<!DOCTYPE html><script>if (a < b && c > d) { document.write("<p>x</p>"); }</script><script><!--<script>x</script>y--></script>z
+#errors
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|     <script>
+|       "if (a < b && c > d) { document.write("<p>x</p>"); }"
+|     <script>
+|       "<!--<script>x</script>y-->"
+|   <body>
+|     "z"
+
+#data
+<!DOCTYPE html><textarea>
+<b>pas du html</b> &amp;</textarea><pre>
+
+ligne</pre><style>p > a { color: red }</style>
+#errors
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|   <body>
+|     <textarea>
+|       "<b>pas du html</b> &"
+|     <pre>
+|       "
+ligne"
+|     <style>
+|       "p > a { color: red }"
+
+#data
+<!DOCTYPE html><svg viewbox="0 0 10 10"><foreignobject><p>html<b>gras</svg></b>fin<math><mi>x</mi><annotation-xml encoding="text/html"><div>d</div></annotation-xml></math>
+#errors
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|   <body>
+|     <svg svg>
+|       viewBox="0 0 10 10"
+|       <svg foreignObject>
+|         <p>
+|           "html"
+|           <b>
+|             "gras"
+|           "fin"
+|           <math math>
+|             <math mi>
+|               "x"
+|             <math annotation-xml>
+|               encoding="text/html"
+|               <div>
+|                 "d"
+
+#data
+<!DOCTYPE html><template><tr><td>cellule</td></tr></template><template><p>p<template><b>b</template></template>
+#errors
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|     <template>
+|       content
+|         <tr>
+|           <td>
+|             "cellule"
+|     <template>
+|       content
+|         <p>
+|           "p"
+|           <template>
+|             content
+|               <b>
+|                 "b"
+|   <body>
+
+#data
+<html><frameset><frame src=a><noframes>rien</noframes></frameset></html>
+#errors
+#document
+| <html>
+|   <head>
+|   <frameset>
+|     <frame>
+|       src="a"
+|     <noframes>
+|       "rien"
+
+#data
+<!DOCTYPE html><b><b><b><b>x</b></b></b></b><p><b class=x><b class=x><b class=x><b class=x>y
+#errors
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|   <body>
+|     <b>
+|       <b>
+|         <b>
+|           <b>
+|             "x"
+|     <p>
+|       <b>
+|         class="x"
+|         <b>
+|           class="x"
+|           <b>
+|             class="x"
+|             <b>
+|               class="x"
+|               "y"
+
+#data
+<!-- commentaire --><!DOCTYPE html><body><!-- b --><?xml version="1.0"?><p>x<![CDATA[y]]></p></body><!-- fin -->
+#errors
+#document
+| <!--  commentaire  -->
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|   <body>
+|     <!--  b  -->
+|     <!-- ?xml version="1.0"? -->
+|     <p>
+|       "x"
+|       <!-- [CDATA[y]] -->
+|   <!--  fin  -->
+
+#data
+<!DOCTYPE html><form><input type=hidden name=a><table><form><input name=b></form></table><button>ok<button>ko</form>
+#errors
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|   <body>
+|     <form>
+|       <input>
+|         name="a"
+|         type="hidden"
+|       <input>
+|         name="b"
+|       <table>
+|       <button>
+|         "ok"
+|       <button>
+|         "ko"
+
+#data
+<!DOCTYPE html><font color=red><p>a</font>b<nobr>c<nobr>d<marquee>e</marquee><image src=i><isindex>
+#errors
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|   <body>
+|     <font>
+|       color="red"
+|     <p>
+|       <font>
+|         color="red"
+|         "a"
+|       "b"
+|       <nobr>
+|         "c"
+|       <nobr>
+|         "d"
+|         <marquee>
+|           "e"
+|         <img>
+|           src="i"
+|         <isindex>
+
+#data
+<!DOCTYPE html><table><caption>c<col><colgroup><col span=2></colgroup><thead><tr><th>h<tbody><tr><td>d<tfoot>
+#errors
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|   <body>
+|     <table>
+|       <caption>
+|         "c"
+|       <colgroup>
+|         <col>
+|       <colgroup>
+|         <col>
+|           span="2"
+|       <thead>
+|         <tr>
+|           <th>
+|             "h"
+|       <tbody>
+|         <tr>
+|           <td>
+|             "d"
+|       <tfoot>

@@ -10,6 +10,10 @@ CFLAGS ?= -O2 -g
 CFLAGS += -std=c99 -Wall -Wextra -pedantic -fPIC
 CPPFLAGS += -Ilib
 
+H5TESTS = tests/html5lib-tests
+H5TESTS_URL = https://github.com/html5lib/html5lib-tests.git
+H5TESTS_REV = 9329e64694e7835d0dcff9811e22856ef6ad16f9
+
 LIB_OBJS = lib/dom.o lib/dump.o lib/encoding.o lib/tokenizer.o \
 	lib/treebuilder.o
 HEADERS = lib/soie/soie.h lib/soie/dom.h lib/soie/html.h
@@ -31,7 +35,27 @@ lib/tokenizer.o: lib/entities.inc
 tools/soie-render: tools/soie-render.o lib/libsoie.a
 	$(CC) $(LDFLAGS) -o $@ tools/soie-render.o lib/libsoie.a
 
-tools/soie-render.o: $(HEADERS)
+tests/html5lib: tests/html5lib.o lib/libsoie.a
+	$(CC) $(LDFLAGS) -o $@ tests/html5lib.o lib/libsoie.a
+
+tests/unit: tests/unit.o lib/libsoie.a
+	$(CC) $(LDFLAGS) -o $@ tests/unit.o lib/libsoie.a
+
+tools/soie-render.o tests/html5lib.o tests/unit.o: $(HEADERS)
+
+# Our own corpus, no network needed.
+check: tests/unit tests/html5lib
+	./tests/unit
+	./tests/html5lib tests/tree/*.dat
+
+# The html5lib tree construction corpus, fetched on demand.
+$(H5TESTS):
+	git clone -q $(H5TESTS_URL) $@
+	cd $@ && git checkout -q $(H5TESTS_REV)
+
+check-html5lib: tests/html5lib $(H5TESTS)
+	./tests/html5lib -x tests/html5lib-known \
+		$(H5TESTS)/tree-construction/*.dat
 
 install: all
 	mkdir -p $(DESTDIR)$(PREFIX)/lib $(DESTDIR)$(PREFIX)/include/soie \
@@ -44,6 +68,6 @@ install: all
 
 clean:
 	rm -f lib/*.o lib/libsoie.a lib/libsoie.so.* tools/*.o \
-		tools/soie-render
+		tools/soie-render tests/*.o tests/html5lib tests/unit
 
-.PHONY: all install clean
+.PHONY: all check check-html5lib install clean
