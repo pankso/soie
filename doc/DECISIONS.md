@@ -529,9 +529,25 @@ started. In the order they stood in the way:
 - F12's page dump lists the computed values that most rendering bugs
   come down to (display, position, z-index, opacity, transform...).
 
-Still to do there: requests from scripts block the browser while they
-wait (the freeze felt on YouTube), the consent dialog's content is not
-stamped yet.
+- Requests from scripts no longer block the page: fetch() and
+  asynchronous XHR go to a few threads of the script extension (4,
+  shared by every page) that call the host's request function, still
+  a blocking one; tick() hands the answers to the scripts, and asks to
+  be called every 20 ms while requests are out (no new hook, ABI 1.0
+  holds; the host's request must be thread-safe since 1.1). A page
+  left abandons its requests: their threads free them when the
+  network answers. A request's steps (CORS preflight, request) are a
+  generator in dom.js, driven synchronously for synchronous XHR, in
+  the background otherwise. The browser answers requests from other
+  threads straight from the network, its page cache stays the main
+  thread's. YouTube shows its application at 11 s instead of 18.
+- SOIE_DEBUG=1 names what keeps the window from answering more than
+  100 ms. On YouTube: its first scripts, 5.5 s of QuickJS, then timers
+  that force restyles (0.1 to 1.3 s each) until 13 s; idle after.
+
+Still to do there: the consent dialog's content is not stamped yet;
+the time QuickJS spends in YouTube's scripts (profile it: DOM natives
+or the interpreter?).
 
 ## Resizing
 

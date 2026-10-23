@@ -14,6 +14,7 @@
 #include <string.h>
 #include <time.h>
 #include <sys/resource.h>
+#include <pthread.h>
 #include <quickjs.h>
 
 #include <soie/soie.h>
@@ -46,6 +47,10 @@ struct sctx {
 	 * freed with the context */
 	soie_node **docs;
 	size_t ndocs;
+	/* requests out in the background (fetch, async XHR) */
+	JSValue received;	/* api.received(id, response) */
+	struct job *done;	/* answered, for tick() */
+	int inflight, next_id;
 };
 
 static JSClassID node_class;
@@ -870,6 +875,225 @@ static JSValue n_resolve(JSContext *js, JSValueConst this, int argc,
 }
 
 /* request(method, url, headers, body) -> {status, url, headers, body} */
+/* A response for the scripts: status, url, headers, body */
+static JSValue response_object(JSContext *js, soie_response *res,
+	const char *url)
+{
+	JSValue o = JS_NewObject(js);
+
+	JS_SetPropertyStr(js, o, "status", JS_NewInt32(js, res->status));
+	JS_SetPropertyStr(js, o, "url", JS_NewString(js, res->url ? res->url :
+		url));
+	JS_SetPropertyStr(js, o, "headers", JS_NewString(js, res->headers ?
+		res->headers : ""));
+	JS_SetPropertyStr(js, o, "body", JS_NewStringLen(js, res->body ?
+		res->body : "", res->len));
+	return o;
+}
+
+/*
+ * Requests in the background: a few threads, shared by every page, run
+ * the host's (blocking) request function; tick() hands the answers to
+ * the scripts. A context that stops abandons its requests: their
+ * threads free them when the network answers.
+ */
+struct job {
+	struct sctx *c;		/* NULL: abandoned */
+	int id;
+	soie_request_fn fn;
+	void *data;
+	char *method, *url, *headers, *body, *first_party;
+	size_t blen;
+	int flags, r;
+	soie_response res;
+	struct job *next;	/* in the queue or a context's answers */
+	struct job *anext, *aprev;	/* every job */
+};
+
+#define WORKERS 4
+static pthread_mutex_t jobs_lock = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t jobs_wake = PTHREAD_COND_INITIALIZER;
+static struct job *queue, *queue_last, *all_jobs;
+static int workers, idle;
+
+static char *dup_or_null(const char *s, size_t n)
+{
+	char *d;
+
+	if (!s)
+		return NULL;
+	d = malloc(n + 1);
+	if (!d)
+		abort();
+	memcpy(d, s, n);
+	d[n] = 0;
+	return d;
+}
+
+/* Out of every list, freed; jobs_lock held */
+static void job_free(struct job *j)
+{
+	if (j->aprev)
+		j->aprev->anext = j->anext;
+	else
+		all_jobs = j->anext;
+	if (j->anext)
+		j->anext->aprev = j->aprev;
+	if (!j->r)
+		soie_response_free(&j->res);
+	free(j->method);
+	free(j->url);
+	free(j->headers);
+	free(j->body);
+	free(j->first_party);
+	free(j);
+}
+
+static void *worker(void *arg)
+{
+	struct job *j, **p;
+	soie_request rq;
+
+	(void)arg;
+	pthread_mutex_lock(&jobs_lock);
+	for (;;) {
+		while (!queue) {
+			idle++;
+			pthread_cond_wait(&jobs_wake, &jobs_lock);
+			idle--;
+		}
+		j = queue;
+		queue = j->next;
+		if (!queue)
+			queue_last = NULL;
+		j->next = NULL;
+		if (!j->c) {
+			job_free(j);
+			continue;
+		}
+		pthread_mutex_unlock(&jobs_lock);
+		memset(&rq, 0, sizeof(rq));
+		rq.method = j->method;
+		rq.url = j->url;
+		rq.headers = j->headers;
+		rq.body = j->body;
+		rq.body_len = j->blen;
+		rq.first_party = j->first_party;
+		rq.flags = j->flags;
+		j->r = j->fn ? j->fn(j->data, &rq, &j->res) : -1;
+		pthread_mutex_lock(&jobs_lock);
+		if (!j->c) {
+			job_free(j);
+			continue;
+		}
+		for (p = &j->c->done; *p; p = &(*p)->next)
+			;
+		*p = j;
+	}
+	return NULL;
+}
+
+/* requestAsync(method, url, headers, body, flags): an id, answered by
+ * api.received(id, response or null) from tick() */
+static JSValue n_request_async(JSContext *js, JSValueConst this, int argc,
+	JSValueConst *argv)
+{
+	struct sctx *c = ctx_of(js);
+	struct job *j = calloc(1, sizeof(*j));
+	const char *s;
+	size_t n;
+	int32_t flags = 0;
+	pthread_t t;
+	pthread_attr_t a;
+
+	(void)this;
+	if (!j)
+		abort();
+	j->c = c;
+	j->id = ++c->next_id;
+	j->fn = c->host->request;
+	j->data = c->host->data;
+	j->r = -1;
+	j->first_party = dup_or_null(c->url, strlen(c->url));
+	if (argc < 2 || !(s = JS_ToCStringLen(js, &n, argv[0])))
+		goto fail;
+	j->method = dup_or_null(s, n);
+	JS_FreeCString(js, s);
+	if (!(s = JS_ToCStringLen(js, &n, argv[1])))
+		goto fail;
+	j->url = dup_or_null(s, n);
+	JS_FreeCString(js, s);
+	if (argc > 2 && JS_IsString(argv[2]) &&
+	    (s = JS_ToCStringLen(js, &n, argv[2]))) {
+		j->headers = dup_or_null(s, n);
+		JS_FreeCString(js, s);
+	}
+	if (argc > 3 && JS_IsString(argv[3]) &&
+	    (s = JS_ToCStringLen(js, &n, argv[3]))) {
+		j->body = dup_or_null(s, n);
+		j->blen = n;
+		JS_FreeCString(js, s);
+	}
+	if (argc > 4)
+		JS_ToInt32(js, &flags, argv[4]);
+	j->flags = flags;
+	pthread_mutex_lock(&jobs_lock);
+	j->anext = all_jobs;
+	if (all_jobs)
+		all_jobs->aprev = j;
+	all_jobs = j;
+	if (queue_last)
+		queue_last->next = j;
+	else
+		queue = j;
+	queue_last = j;
+	c->inflight++;
+	if (!idle && workers < WORKERS) {
+		pthread_attr_init(&a);
+		pthread_attr_setdetachstate(&a, PTHREAD_CREATE_DETACHED);
+		if (!pthread_create(&t, &a, worker, NULL))
+			workers++;
+		pthread_attr_destroy(&a);
+	}
+	pthread_cond_signal(&jobs_wake);
+	pthread_mutex_unlock(&jobs_lock);
+	return JS_NewInt32(js, j->id);
+fail:
+	pthread_mutex_lock(&jobs_lock);
+	j->anext = all_jobs;
+	if (all_jobs)
+		all_jobs->aprev = j;
+	all_jobs = j;
+	job_free(j);
+	pthread_mutex_unlock(&jobs_lock);
+	return JS_EXCEPTION;
+}
+
+/* The answers that came: to the scripts */
+static void deliver(struct sctx *c)
+{
+	struct job *j, *next;
+	JSValue args[2], v;
+
+	pthread_mutex_lock(&jobs_lock);
+	j = c->done;
+	c->done = NULL;
+	pthread_mutex_unlock(&jobs_lock);
+	for (; j; j = next) {
+		next = j->next;
+		c->inflight--;
+		args[0] = JS_NewInt32(c->js, j->id);
+		args[1] = j->r ? JS_NULL : response_object(c->js, &j->res,
+			j->url);
+		v = JS_Call(c->js, c->received, JS_UNDEFINED, 2, args);
+		JS_FreeValue(c->js, args[1]);
+		settle(c, v);
+		pthread_mutex_lock(&jobs_lock);
+		job_free(j);
+		pthread_mutex_unlock(&jobs_lock);
+	}
+}
+
 static JSValue n_request(JSContext *js, JSValueConst this, int argc,
 	JSValueConst *argv)
 {
@@ -909,14 +1133,7 @@ static JSValue n_request(JSContext *js, JSValueConst this, int argc,
 			c->deadline = now_ms() + left;
 	}
 	if (!r) {
-		o = JS_NewObject(js);
-		JS_SetPropertyStr(js, o, "status", JS_NewInt32(js, res.status));
-		JS_SetPropertyStr(js, o, "url",
-			JS_NewString(js, res.url ? res.url : url));
-		JS_SetPropertyStr(js, o, "headers",
-			JS_NewString(js, res.headers ? res.headers : ""));
-		JS_SetPropertyStr(js, o, "body", JS_NewStringLen(js,
-			res.body ? res.body : "", res.len));
+		o = response_object(js, &res, url);
 		soie_response_free(&res);
 	}
 	JS_FreeCString(js, method);
@@ -1136,6 +1353,7 @@ static const JSCFunctionListEntry natives[] = {
 	JS_CFUNC_DEF("media", 1, n_media),
 	JS_CFUNC_DEF("resolve", 2, n_resolve),
 	JS_CFUNC_DEF("request", 5, n_request),
+	JS_CFUNC_DEF("requestAsync", 5, n_request_async),
 	JS_CFUNC_DEF("cookie", 1, n_cookie),
 	JS_CFUNC_DEF("navigate", 2, n_navigate),
 	JS_CFUNC_DEF("message", 2, n_message),
@@ -1284,6 +1502,7 @@ static void *start(void *data, soie_node *doc, const char *url,
 	c->proto_for = JS_GetPropertyStr(c->js, c->api, "protoFor");
 	c->dispatch = JS_GetPropertyStr(c->js, c->api, "dispatch");
 	c->tick = JS_GetPropertyStr(c->js, c->api, "tick");
+	c->received = JS_GetPropertyStr(c->js, c->api, "received");
 	/* the document object */
 	{
 		JSValue set = JS_GetPropertyStr(c->js, c->api, "setDocument");
@@ -1321,7 +1540,23 @@ static void stop(void *ctx)
 	JS_FreeValue(c->js, c->proto_for);
 	JS_FreeValue(c->js, c->dispatch);
 	JS_FreeValue(c->js, c->tick);
+	JS_FreeValue(c->js, c->received);
 	JS_FreeValue(c->js, c->api);
+	/* requests still out: abandoned, their threads free them */
+	{
+		struct job *j, *next;
+
+		pthread_mutex_lock(&jobs_lock);
+		for (j = all_jobs; j; j = j->anext)
+			if (j->c == c)
+				j->c = NULL;
+		for (j = c->done; j; j = next) {
+			next = j->next;
+			job_free(j);
+		}
+		c->done = NULL;
+		pthread_mutex_unlock(&jobs_lock);
+	}
 	JS_FreeContext(c->js);
 	JS_FreeRuntime(c->rt);
 	/* no wrapper points to them any more */
@@ -1390,11 +1625,15 @@ static int tick(void *ctx)
 	double d = -1;
 
 	c->deadline = now_ms() + RUN_MS;
+	deliver(c);
 	v = JS_Call(c->js, c->tick, JS_UNDEFINED, 0, NULL);
 	if (!JS_IsException(v))
 		JS_ToFloat64(c->js, &d, v);
 	settle(c, v);
 	c->deadline = 0;
+	/* answers are looked for while requests are out */
+	if (c->inflight && (d < 0 || d > 20))
+		d = 20;
 	return d < 0 ? -1 : d > 1e9 ? 1000000000 : (int)d;
 }
 

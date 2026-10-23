@@ -12,5 +12,5 @@ log: aborted AbortError
 log: xhr state 4 200
 log: xhr load soie null
 log: fetch true 200
-log: fetch failed TypeError
 log: json soie 1+2+3
+log: fetch failed TypeError

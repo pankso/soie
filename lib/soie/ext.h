@@ -168,7 +168,11 @@ enum {
 
 typedef struct {
 	void *data;
-	/* blocking: the engine calls it for scripts, fetch(), XHR */
+	/* blocking: the engine calls it for scripts, fetch(), XHR.
+	 * Since 1.1 the script engine may call it from threads of its
+	 * own (fetch, asynchronous XHR), even after stop for requests
+	 * still out: it must be thread-safe, and request and data stay
+	 * valid as long as the host runs. */
 	soie_request_fn request;
 	/* location changes: the host loads url once the script returns */
 	void (*navigate)(void *data, const char *url, int replace);

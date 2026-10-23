@@ -3398,7 +3398,10 @@ function simpleRequest(m, headers) {
 	return true;
 }
 
-function doRequest(m, url, headers, body, credentials = 'same-origin',
+/* A request's steps (a CORS preflight, the request): each yield is the
+ * arguments of a request, answered by the driver, synchronous
+ * (doRequest) or in the background (doRequestAsync) */
+function* requestSteps(m, url, headers, body, credentials = 'same-origin',
 	mode = 'cors') {
 	const same = sameOrigin(url);
 	const send = credentials === 'include' ||
@@ -3410,10 +3413,10 @@ function doRequest(m, url, headers, body, credentials = 'same-origin',
 	if (!same && mode !== 'no-cors' && !simpleRequest(m, headers)) {
 		const names = [...headers.keys()].filter((k) =>
 			!SIMPLE_HEADER.test(k)).join(',');
-		const p = api.request('OPTIONS', url, 'origin: ' +
+		const p = yield ['OPTIONS', url, 'origin: ' +
 			location.origin + '\r\naccess-control-request-method: ' + m +
 			'\r\n' + (names ? 'access-control-request-headers: ' +
-			names + '\r\n' : ''), null, NO_COOKIES);
+			names + '\r\n' : ''), null, NO_COOKIES];
 		if (!p || p.status < 200 || p.status > 299 ||
 		    !corsAllows(p, send))
 			return null;
@@ -3424,7 +3427,7 @@ function doRequest(m, url, headers, body, credentials = 'same-origin',
 		    !allowed.includes('*'))
 			return null;
 	}
-	const r = api.request(m, url, raw, body, send ? 0 : NO_COOKIES);
+	const r = yield [m, url, raw, body, send ? 0 : NO_COOKIES];
 	if (!r)
 		return null;
 	if (!same && mode === 'no-cors')
@@ -3433,6 +3436,35 @@ function doRequest(m, url, headers, body, credentials = 'same-origin',
 	if ((!same || !sameOrigin(r.url)) && !corsAllows(r, send))
 		return null;
 	return r;
+}
+
+function doRequest(...a) {
+	const it = requestSteps(...a);
+	let s = it.next();
+	while (!s.done)
+		s = it.next(api.request(...s.value));
+	return s.value;
+}
+
+/* Requests out in the background, by id: what to call with the answer */
+const out = new Map();
+api.received = function (id, r) {
+	const f = out.get(id);
+	out.delete(id);
+	if (f)
+		f(r);
+};
+
+async function doRequestAsync(...a) {
+	const it = requestSteps(...a);
+	let s = it.next();
+	while (!s.done) {
+		const args = s.value;
+		s = it.next(await new Promise((resolve) => {
+			out.set(api.requestAsync(...args), resolve);
+		}));
+	}
+	return s.value;
 }
 
 function fetch(input, init = {}) {
@@ -3455,8 +3487,15 @@ function fetch(input, init = {}) {
 			const h = req.headers;
 			if (req._body !== null && !h.has('content-type'))
 				h.set('content-type', 'text/plain;charset=UTF-8');
-			const r = doRequest(req.method, req.url, h, req._body,
-				req.credentials, req.mode);
+			doRequestAsync(req.method, req.url, h, req._body,
+				req.credentials, req.mode).then(answered, () =>
+				reject(new TypeError('Failed to fetch')));
+		}, 0, [], false);
+		function answered(r) {
+			if (req.signal && req.signal.aborted) {
+				reject(new DOMException('aborted', 'AbortError'));
+				return;
+			}
 			if (!r) {
 				reject(new TypeError('Failed to fetch'));
 				return;
@@ -3473,7 +3512,7 @@ function fetch(input, init = {}) {
 			res.url = r.url;
 			res.redirected = r.url !== req.url;
 			resolve(res);
-		}, 0, [], false);
+		}
 	});
 }
 
@@ -3570,9 +3609,16 @@ class XMLHttpRequest extends EventTarget {
 			if (b !== null && !this._headers.has('content-type'))
 				this._headers.set('content-type',
 					'text/plain;charset=UTF-8');
-			const r = doRequest(this._method, this._url,
-				this._headers, b, this.withCredentials ? 'include' :
-				'same-origin');
+			const args = [this._method, this._url, this._headers, b,
+				this.withCredentials ? 'include' : 'same-origin'];
+			/* asynchronous ones in the background: the page lives
+			 * on while they wait */
+			if (this._async)
+				doRequestAsync(...args).then(done, () => done(null));
+			else
+				done(doRequest(...args));
+		};
+		const done = (r) => {
 			if (this._aborted)
 				return;
 			if (!r) {

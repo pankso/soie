@@ -10,6 +10,7 @@
 #include <poll.h>
 #include <time.h>
 #include <unistd.h>
+#include <pthread.h>
 #include <png.h>
 #include <soie/soie.h>
 #include "net.h"
@@ -68,6 +69,8 @@ static struct {
 } page;
 
 static int fetch_fd = -1;	/* readable when jobs finish */
+static pthread_t main_thread;	/* the page's: scripts' background
+				 * requests come from others */
 static int in_style;		/* page_fetch() called by the cascade */
 static struct job *deferred;	/* a page that came while scripts ran */
 
@@ -302,6 +305,10 @@ static int page_request(void *data, const soie_request *req,
 	struct res *r = NULL;
 	struct pollfd p;
 
+	/* from the script engine's threads (fetch, async XHR): straight to
+	 * the network, the page's resources are the main thread's */
+	if (!pthread_equal(pthread_self(), main_thread))
+		return net_request(data, req, res);
 	if (!req->body && (!req->method || !strcmp(req->method, "GET")))
 		r = res_find(req->url);
 	if (!r || r->state == R_GIVEN)
@@ -1460,10 +1467,14 @@ int shell_find(const char *text, int dir, int *cur)
 
 int shell_tick(int *repaint)
 {
+	double t0 = now_s(), t1;
 	int t = page.doc ? soie_script_tick(page.doc) : -1, m, r = 0;
 	soie_node *d = page.doc;
 	int l = page.loading, n = res_pending(-1);
 
+	/* what keeps the window from answering */
+	if ((t1 = now_s()) - t0 > 0.1)
+		debug(1, "busy %.2f s: timers and answers of scripts", t1 - t0);
 	*repaint = 0;
 	/* a new page, a new stage, a resource: show it */
 	collect_jobs(0);
@@ -1483,8 +1494,12 @@ int shell_tick(int *repaint)
 	if (m >= 0 && (t < 0 || m < t))
 		t = m;
 	refresh_due();
+	t1 = now_s();
 	if (after_scripts())
 		*repaint = 1;
+	if (now_s() - t1 > 0.1)
+		debug(1, "busy %.2f s: the scripts' changes (restyle, layout)",
+			now_s() - t1);
 	if (pending_nav)
 		t = 0;
 	if (page.doc && !page.done && page.loading == L_NONE &&
@@ -1588,6 +1603,7 @@ int shell_init(int js)
 	int k;
 
 	debug_init();
+	main_thread = pthread_self();
 	scripts = js;
 	/* not installed: run from the source tree, its extensions */
 	if (!dir && access(SOIE_EXT_DIR, F_OK) &&
