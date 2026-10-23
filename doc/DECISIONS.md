@@ -507,8 +507,9 @@ started. In the order they stood in the way:
   ownerDocument, importNode and adoptNode follow. A script element
   runs only once in the page's own tree, not in any document.
 - `ProcessingInstruction` was missing (ShadyDOM patches it).
-- QuickJS keeps scripts within 256 KB of C stack: 40 calls of Polymer's
-  big compiled functions. Now 4 MB, at most half the thread's stack.
+- QuickJS kept scripts within 256 KB of C stack (1 MB since 2025):
+  40 calls of Polymer's big compiled functions, 1300 simple ones. Now
+  4 MB, at most half the thread's stack: 5200 calls.
 - Custom elements are constructed when they are made, as the spec's
   reactions do: by innerHTML, a clone or an import (not in a template's
   content nor another document), with attributeChangedCallback for

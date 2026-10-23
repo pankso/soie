@@ -22,9 +22,10 @@
 
 #define RUN_MS 5000		/* longest a script may run at once */
 #define MEMORY_LIMIT (256 << 20)
-/* C stack for scripts: a call of a big compiled function takes a few
- * KB of it, QuickJS's 256 KB is 40 calls deep (YouTube went over).
- * At most half the thread's stack. */
+/* C stack for scripts: a JS call takes 800 bytes of it, a few KB for
+ * big compiled functions. QuickJS's 1 MB is 1300 calls deep, 4 MB
+ * 5200 (browsers allow 10000 or more). At most half the thread's
+ * stack. */
 #define STACK_SIZE (4 << 20)
 
 extern const char dom_js[];
