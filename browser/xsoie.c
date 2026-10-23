@@ -996,6 +996,10 @@ int main(int argc, char **argv)
 				redraw();
 			break;
 		case ConfigureNotify:
+			/* a window dragged bigger sends many: the last one */
+			while (XCheckTypedWindowEvent(dpy, win, ConfigureNotify,
+			    &ev))
+				;
 			if (ev.xconfigure.width != win_w ||
 			    ev.xconfigure.height != win_h) {
 				resize(ev.xconfigure.width, ev.xconfigure.height);

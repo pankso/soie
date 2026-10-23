@@ -827,8 +827,14 @@ static void collect_jobs(int nested)
 					debug(1, "failed, %s: %s", j->r.error,
 						j->url);
 			}
-			if (r->kind == K_STYLE || !strcmp(j->r.type, "text/css") ||
+			/* a style sheet or a font, whoever asked (a restyle
+			 * from a script is not in_style): copied to the
+			 * engine each time, never given, or every restyle
+			 * would fetch it again */
+			if (!strcmp(j->r.type, "text/css") ||
 			    strstr(j->r.type, "font"))
+				r->kind = K_STYLE;
+			if (r->kind == K_STYLE)
 				page.restyle = 1;
 			else
 				page.relayout = 1;

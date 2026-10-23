@@ -488,6 +488,24 @@ reversed, edit the entry and say why; do not leave stale rules here.
 - The window has a class (`xsoie`, `Xsoie`) for window managers and
   an icon painted by Soie.
 
+## Resizing
+
+- The viewport's size is not part of what the style rules are built
+  from any more: every media query the rules were chosen by is kept
+  with its answer, and another size keeps the rules (parsed sheets,
+  fonts) when no answer changes; only the cascade runs again, all of
+  it, for the viewport units. YouTube: 0.22 s to 0.01 s a resize
+  within a breakpoint (its grid has one every 20 to 30 px, crossing
+  one still rebuilds).
+- A font or sheet a script's restyle asked for (soie_document_update(),
+  outside the browser's relayout) was taken for an image: given to
+  the engine, so asked again and fetched again at every restyle, and
+  the rules, never complete, were rebuilt each time. The response's
+  type now decides: CSS and fonts are copied, never given.
+- xsoie keeps only the last of the ConfigureNotify events waiting: a
+  window dragged bigger cost one relayout per event (40 for a short
+  drag on YouTube, 10 s behind the mouse); now one per relayout time.
+
 ## Debugging the browser
 
 - A fatal signal (SEGV, BUS, FPE, ILL, ABRT) writes a crash report,

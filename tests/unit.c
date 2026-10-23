@@ -292,6 +292,51 @@ static void test_style_api(void)
 	soie_node_free(doc);
 }
 
+/* Another viewport: rules kept when the media queries say the same,
+ * chosen again when one changes, viewport units computed again. */
+static void test_resize(void)
+{
+	static const char html[] = "<!DOCTYPE html><style>"
+		"p{color:blue;width:50vw}"
+		"@media (min-width:800px){p{color:red}}</style>"
+		"<style media='(max-width:500px)'>p{margin-top:7px}</style>"
+		"<p id=p>t";
+	static const struct { int w; const char *color, *width, *mt; } want[] = {
+		{ 1000, "rgb(255, 0, 0)", "500px", "16px" },
+		{ 900, "rgb(255, 0, 0)", "450px", "16px" },
+		{ 600, "rgb(0, 0, 255)", "300px", "16px" },
+		{ 400, "rgb(0, 0, 255)", "200px", "7px" },
+		{ 1000, "rgb(255, 0, 0)", "500px", "16px" },
+	};
+	soie_style_options o;
+	soie_node *doc, *p;
+	char *v;
+	size_t i, n;
+	soie_node **q;
+
+	doc = soie_html_parse(html, sizeof(html) - 1, NULL);
+	q = soie_query(doc, "#p", 1, &n);
+	p = q && n ? q[0] : NULL;
+	free(q);
+	CHECK(p != NULL);
+	memset(&o, 0, sizeof(o));
+	for (i = 0; p && i < sizeof(want) / sizeof(*want); i++) {
+		o.width = want[i].w;
+		o.height = 600;
+		CHECK(soie_style_document(doc, &o) == 0);
+		v = soie_computed_value(p, NULL, "color");
+		CHECK(v && !strcmp(v, want[i].color));
+		free(v);
+		v = soie_computed_value(p, NULL, "width");
+		CHECK(v && !strcmp(v, want[i].width));
+		free(v);
+		v = soie_computed_value(p, NULL, "margin-top");
+		CHECK(v && !strcmp(v, want[i].mt));
+		free(v);
+	}
+	soie_node_free(doc);
+}
+
 /* What script engines use: queries, serialization, clones, updates. */
 static void test_script_api(void)
 {
@@ -386,6 +431,7 @@ int main(void)
 	test_entities();
 	test_url();
 	test_style_api();
+	test_resize();
 	test_script_api();
 	test_deep();
 	printf("unit: %s (%d failures)\n", failures ? "FAIL" : "ok", failures);

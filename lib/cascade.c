@@ -166,6 +166,13 @@ struct styledb {
 	int nanchors, capanchors;
 	float rem;		/* the root's font size */
 	soie_style_options saved;	/* a copy, for soie_document_update */
+	/* The media queries the rules were chosen by, and their answers:
+	 * another viewport keeps the rules when none changes */
+	struct mq {
+		struct cvlist q;
+		int match;
+	} *mqs;
+	int nmqs, capmqs;
 };
 
 static unsigned hash_bytes(const void *p, size_t n, unsigned h)
@@ -251,10 +258,16 @@ static void bucket_free(struct bucket *b)
 		}
 }
 
+static int media_check(struct styledb *db, const struct cvlist *l, int from,
+	int to);
+
 void styledb_free(struct styledb *db)
 {
 	int i, j;
 
+	for (i = 0; i < db->nmqs; i++)
+		cvlist_free(&db->mqs[i].q);
+	free(db->mqs);
 	for (i = 0; i < NBUCKETS; i++) {
 		struct istr *s, *sn;
 		struct style *st, *stn;
@@ -723,7 +736,7 @@ static void at_import(struct styledb *db, struct crule *r,
 			return;
 		i++;
 	}
-	if (!media_match(&r->prelude, i, n, &db->env))
+	if (!media_check(db, &r->prelude, i, n))
 		return;
 	url = soie_url_resolve(pc->base, href);
 	fetch_sheet(db, url, &sub);
@@ -810,8 +823,8 @@ static void at_rule(struct styledb *db, struct crule *r,
 	struct pctx sub = *pc;
 
 	if (ascii_ieq(n, "media")) {
-		if (r->has_block && media_match(&r->prelude, 0, r->prelude.n,
-						&db->env))
+		if (r->has_block && media_check(db, &r->prelude, 0,
+						r->prelude.n))
 			conditional_block(db, r, pc);
 	} else if (ascii_ieq(n, "supports")) {
 		if (r->has_block && supports_match(&r->prelude, 0,
@@ -908,6 +921,66 @@ static void text_content(const soie_node *el, struct buf *b)
 			buf_add(b, c->u.text.data, c->u.text.len);
 }
 
+static void cv_copy(struct cv *d, const struct cv *s)
+{
+	int i;
+
+	*d = *s;
+	d->str = s->str ? xstrndup(s->str, strlen(s->str)) : NULL;
+	d->repr = s->repr ? xstrndup(s->repr, strlen(s->repr)) : NULL;
+	memset(&d->kids, 0, sizeof(d->kids));
+	for (i = 0; i < s->kids.n; i++) {
+		struct cv c;
+
+		cv_copy(&c, &s->kids.v[i]);
+		cvlist_add(&d->kids, &c);
+	}
+}
+
+/* media_match(), the query and its answer kept */
+static int media_check(struct styledb *db, const struct cvlist *l, int from,
+	int to)
+{
+	struct mq *m;
+	int i;
+
+	if (db->nmqs == db->capmqs) {
+		db->capmqs = db->capmqs ? db->capmqs * 2 : 16;
+		db->mqs = xrealloc(db->mqs, (size_t)db->capmqs *
+			sizeof(*db->mqs));
+	}
+	m = &db->mqs[db->nmqs++];
+	memset(m, 0, sizeof(*m));
+	for (i = from; i < to; i++) {
+		struct cv c;
+
+		cv_copy(&c, &l->v[i]);
+		cvlist_add(&m->q, &c);
+	}
+	m->match = media_match(&m->q, 0, m->q.n, &db->env);
+	return m->match;
+}
+
+/* The environment of opts; 1 when the rules of db hold in it too. */
+static int env_of(const struct styledb *db, const soie_style_options *opts,
+	struct env *e)
+{
+	int i;
+
+	e->width = opts && opts->width > 0 ? (float)opts->width : 1024;
+	e->height = opts && opts->height > 0 ? (float)opts->height : 768;
+	e->dark = opts ? opts->dark : 0;
+	e->print = opts ? opts->print : 0;
+	e->scripting = opts ? opts->scripting : 0;
+	if (!db)
+		return 0;
+	for (i = 0; i < db->nmqs; i++)
+		if (media_match(&db->mqs[i].q, 0, db->mqs[i].q.n, e) !=
+		    db->mqs[i].match)
+			return 0;
+	return 1;
+}
+
 static int media_attr(struct styledb *db, const soie_node *el)
 {
 	const char *m = soie_element_get_attr(el, "media");
@@ -917,7 +990,7 @@ static int media_attr(struct styledb *db, const soie_node *el)
 	if (!m)
 		return 1;
 	css_component_values(m, strlen(m), &l);
-	r = media_match(&l, 0, l.n, &db->env);
+	r = media_check(db, &l, 0, l.n);
 	cvlist_free(&l);
 	return r;
 }
@@ -2382,13 +2455,12 @@ static unsigned sheet_signature(soie_node *doc, const soie_style_options *o)
 	int i;
 
 	if (o) {
-		int v[5];
+		int v[3];
 
-		v[0] = o->width;
-		v[1] = o->height;
-		v[2] = o->dark;
-		v[3] = o->print;
-		v[4] = o->scripting;
+		/* not the viewport's size: media_check() answers for it */
+		v[0] = o->dark;
+		v[1] = o->print;
+		v[2] = o->scripting;
 		h = hash_bytes(v, sizeof(v), h);
 		h = hash_bytes(&o->fetch, sizeof(o->fetch), h);
 		h = hash_bytes(&o->fetch_data, sizeof(o->fetch_data), h);
@@ -2449,7 +2521,8 @@ int soie_style_document(soie_node *doc, const soie_style_options *opts)
 	soie_node *n;
 	char *base;
 	unsigned next, sig;
-	int i, reuse = 0;
+	int i, reuse = 0, resized = 0;
+	struct env env;
 
 	if (doc->type != SOIE_DOCUMENT)
 		return -1;
@@ -2460,8 +2533,14 @@ int soie_style_document(soie_node *doc, const soie_style_options *opts)
 	}
 	sig = sheet_signature(doc, opts);
 	db = doc->u.doc.styles;
-	if (db && db->sig == sig) {
-		/* same rules: only the cascade again */
+	if (db && db->sig == sig && env_of(db, opts, &env)) {
+		/* same rules: only the cascade again, all of it when the
+		 * viewport (its units) changed */
+		resized = env.width != db->env.width ||
+			env.height != db->env.height;
+		db->env = env;
+		db->vp.vw = env.width;
+		db->vp.vh = env.height;
 		base = document_base(doc, opts ? opts->base_url : NULL);
 		db->opts = opts;
 		db->base = base;
@@ -2477,11 +2556,7 @@ int soie_style_document(soie_node *doc, const soie_style_options *opts)
 	doc->u.doc.styles = db;
 	db->sig = sig;
 	db->opts = opts;
-	db->env.width = opts && opts->width > 0 ? (float)opts->width : 1024;
-	db->env.height = opts && opts->height > 0 ? (float)opts->height : 768;
-	db->env.dark = opts ? opts->dark : 0;
-	db->env.print = opts ? opts->print : 0;
-	db->env.scripting = opts ? opts->scripting : 0;
+	env_of(NULL, opts, &db->env);
 	db->vp.vw = db->env.width;
 	db->vp.vh = db->env.height;
 	db->doc_charset = doc->u.doc.charset;
@@ -2528,12 +2603,13 @@ int soie_style_document(soie_node *doc, const soie_style_options *opts)
 	}
 
 cascade:
-	if (reuse && !doc->u.doc.restyle_all && doc->u.doc.ndirty &&
+	if (reuse && !resized && !doc->u.doc.restyle_all && doc->u.doc.ndirty &&
 	    !(soie_document_element(doc) &&
 	      soie_document_element(doc)->dirty == SUBTREE)) {
 		/* only what changed */
 		style_marked(db, doc);
-	} else if (!reuse || doc->u.doc.ndirty || doc->u.doc.restyle_all) {
+	} else if (!reuse || resized || doc->u.doc.ndirty ||
+		   doc->u.doc.restyle_all) {
 		/* every element, in tree order, after its parent */
 		db->rem = 16;
 		for (n = doc->first; n; n = n->next)
