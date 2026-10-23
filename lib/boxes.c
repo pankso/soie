@@ -900,6 +900,26 @@ static int inside(float x, float y, float bx, float by, float bw, float bh)
 	return x >= bx && y >= by && x < bx + bw && y < by + bh;
 }
 
+static soie_node *hit(struct box *b, float x, float y);
+
+/* Floats and positioned boxes inside the inline boxes of b: the last
+ * one under x, y */
+static soie_node *hit_in_inline(struct box *b, float x, float y)
+{
+	struct box *c;
+	soie_node *r, *top = NULL;
+
+	for (c = b->first; c; c = c->next)
+		if (c->type == B_INLINE) {
+			if ((r = hit_in_inline(c, x, y)))
+				top = r;
+		} else if ((c->flags & (BF_FLOAT | BF_ABS)) &&
+			   b->type == B_INLINE && (r = hit(c, x, y))) {
+			top = r;
+		}
+	return top;
+}
+
 static soie_node *hit(struct box *b, float x, float y)
 {
 	struct box *c, *kids[4096];
@@ -914,6 +934,8 @@ static soie_node *hit(struct box *b, float x, float y)
 		    (r = hit(kids[i], x, y)))
 			return r;
 	if (b->flags & BF_INLINE_KIDS) {
+		if ((r = hit_in_inline(b, x, y)))
+			return r;
 		for (i = b->nfrags - 1; i >= 0; i--) {
 			struct frag *f = &b->frags[i];
 
@@ -1031,6 +1053,21 @@ static int same(const char *a, const char *b, size_t n)
 	return 1;
 }
 
+static void find_in(struct box *b, struct find *f);
+
+/* Floats and positioned boxes of an inline formatting context, inside
+ * its inline boxes too */
+static void find_out_of_flow(struct box *b, struct find *f)
+{
+	struct box *c;
+
+	for (c = b->first; c; c = c->next)
+		if (c->flags & (BF_FLOAT | BF_ABS))
+			find_in(c, f);
+		else if (c->type == B_INLINE)
+			find_out_of_flow(c, f);
+}
+
 static void find_in(struct box *b, struct find *f)
 {
 	struct box *c;
@@ -1067,9 +1104,7 @@ static void find_in(struct box *b, struct find *f)
 			k += f->len;
 		}
 	}
-	for (c = b->first; c; c = c->next)
-		if (c->flags & (BF_FLOAT | BF_ABS))
-			find_in(c, f);
+	find_out_of_flow(b, f);
 }
 
 int soie_find(soie_node *doc, const char *text, int n, float *x, float *y,

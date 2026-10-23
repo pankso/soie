@@ -1,0 +1,15 @@
+<!DOCTYPE html>
+<!-- Positioned boxes inside inline ones are painted, by z-index over
+     the rest of the page (YouTube's consent dialog sits in a <span>
+     like this one, under a backdrop's z-index) -->
+<style>body{margin:0}</style>
+<div style="position:absolute;top:0;left:0;width:320px">
+ <span>text <div style="position:fixed;top:40px;left:40px;width:120px;
+  height:60px;background:red;z-index:12">over</div></span>
+ <span><span style="position:absolute;top:150px;left:200px;width:60px;
+  height:40px;background:blue">deep</span></span>
+</div>
+<div style="position:fixed;top:0;left:0;width:200px;height:200px;
+ background:rgba(0,0,0,.5);z-index:11"></div>
+<div style="position:fixed;top:120px;left:100px;width:60px;height:60px;
+ background:lime;z-index:13"></div>

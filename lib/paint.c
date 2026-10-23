@@ -548,6 +548,19 @@ static int zcmp(const void *a, const void *b)
 	return x->order - y->order;
 }
 
+/* Floats and positioned boxes met in the text, also inside inline
+ * boxes (a <span> around a dialog) */
+static void paint_out_of_flow(struct canvas *c, struct box *b)
+{
+	struct box *k;
+
+	for (k = b->first; k; k = k->next)
+		if (k->flags & (BF_FLOAT | BF_ABS))
+			paint_box(c, k, 0);
+		else if (k->type == B_INLINE)
+			paint_out_of_flow(c, k);
+}
+
 /*
  * Paint b and its descendants. Positioned descendants are deferred to
  * the z-list unless stacking (painting b itself as a unit).
@@ -590,10 +603,7 @@ static void paint_box(struct canvas *c, struct box *b, int stacking)
 			b->x + b->w + b->p[1], b->y + b->h + b->p[2]);
 	if (b->flags & BF_INLINE_KIDS) {
 		paint_lines(c, b);
-		/* floats and positioned boxes met in the text */
-		for (k = b->first; k; k = k->next)
-			if (k->flags & (BF_FLOAT | BF_ABS))
-				paint_box(c, k, 0);
+		paint_out_of_flow(c, b);
 	} else {
 		/* blocks, then floats over them (Appendix E, steps 4-5) */
 		for (k = b->first; k; k = k->next)
