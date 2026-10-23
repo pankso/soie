@@ -18,11 +18,14 @@
 #include <time.h>
 #include <unistd.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <gnutls/gnutls.h>
 #include <zlib.h>
 #include "net.h"
 
 #define TIMEOUT_MS 20000
+#define MAX_BODY (256u << 20)	/* response bodies, files */
+#define MAX_INFLATED (64u << 20)	/* what gzip may grow into */
 
 static gnutls_certificate_credentials_t creds;
 
@@ -202,24 +205,42 @@ static int parse_url(const char *u, struct url *p)
 	n = (size_t)((colon ? colon : e) - h);
 	if (memchr(h, '@', (size_t)(e - h)))
 		return -1;	/* no credentials in URLs */
-	if (n >= sizeof(p->host))
-		return -1;
+	if (!n || n >= sizeof(p->host) ||
+	    strspn(h, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+		"0123456789.-_") < n)
+		return -1;	/* only a host name goes on the wire */
 	memcpy(p->host, h, n);
-	if (colon && (size_t)(e - colon - 1) < sizeof(p->port))
+	if (colon && (size_t)(e - colon - 1) < sizeof(p->port) &&
+	    e - colon > 1 &&
+	    strspn(colon + 1, "0123456789") == (size_t)(e - colon - 1))
 		memcpy(p->port, colon + 1, (size_t)(e - colon - 1));
+	else if (colon)
+		return -1;
 	else
 		strcpy(p->port, !strcmp(p->scheme, "https") ? "443" : "80");
+	/* the request target: controls, spaces and 8-bit bytes encoded,
+	 * so that nothing typed or pasted can end the request line */
 	n = strcspn(e, "#");
-	p->path = malloc(n + 2);
+	p->path = malloc(n * 3 + 2);
 	if (!p->path)
 		return -1;
-	if (!n || *e != '/') {
-		p->path[0] = '/';
-		memcpy(p->path + 1, e, n);
-		p->path[n + 1] = '\0';
-	} else {
-		memcpy(p->path, e, n);
-		p->path[n] = '\0';
+	{
+		char *o = p->path;
+		size_t i;
+
+		if (*e != '/')
+			*o++ = '/';
+		for (i = 0; i < n; i++) {
+			unsigned char c = (unsigned char)e[i];
+
+			if (c <= 0x20 || c >= 0x7f) {
+				sprintf(o, "%%%02X", c);
+				o += 3;
+			} else {
+				*o++ = (char)c;
+			}
+		}
+		*o = '\0';
 	}
 	return 0;
 }
@@ -304,79 +325,152 @@ static size_t chunked_end(const char *s, size_t n, size_t *pos)
 			}
 		}
 		p = (size_t)(e - s) + 1;
+		if (size > MAX_BODY)
+			return (size_t)-1;	/* no chunk is that big */
 		if (n - p < size + 2)
 			return 0;
-		p += size + 2;		/* data and its CRLF */
+		if (s[p + size] != '\r' || s[p + size + 1] != '\n')
+			return (size_t)-1;	/* data not followed by CRLF */
+		p += size + 2;
 		*pos = p;
 	}
 }
 
+/* A token in a header's comma separated list ("close", "chunked") */
+static int has_token(const char *v, size_t len, const char *tok)
+{
+	size_t n = strlen(tok), i = 0, k;
+
+	while (i < len) {
+		while (i < len && (v[i] == ' ' || v[i] == '\t' || v[i] == ','))
+			i++;
+		for (k = i; k < len && v[k] != ','; k++)
+			;
+		while (k > i && (v[k - 1] == ' ' || v[k - 1] == '\t'))
+			k--;
+		if (k - i == n && !strncasecmp(v + i, tok, n))
+			return 1;
+		while (i < len && v[i] != ',')
+			i++;
+	}
+	return 0;
+}
+
+/* The last token of a list: Transfer-Encoding ends with chunked */
+static int last_token(const char *v, size_t len, const char *tok)
+{
+	size_t n = strlen(tok), k = len;
+
+	while (k && (v[k - 1] == ' ' || v[k - 1] == '\t'))
+		k--;
+	return k >= n && !strncasecmp(v + k - n, tok, n) &&
+		(k == n || v[k - n - 1] == ',' || v[k - n - 1] == ' ' ||
+		 v[k - n - 1] == '\t');
+}
+
 /*
  * Read one response, headers and raw body, framed as HTTP/1.1 says:
- * Content-Length, chunked, nothing (HEAD, 204, 304), or until the peer
- * closes. *reuse: the connection can carry another request.
+ * chunked, Content-Length, nothing (HEAD, 204, 304), or until the peer
+ * closes. *reuse: the connection can carry another request, only when
+ * the frame is sure and nothing past it was read. Headers are looked
+ * up in the header block only, never in the body.
  */
 static int read_response(struct conn *c, struct response *raw,
 	const char *method, int *reuse)
 {
-	char buf[16384];
-	const char *hend = NULL, *v;
-	size_t head = 0, want = 0, pos = 0, end;
+	char buf[16384], *hb = NULL;
+	const char *v;
+	size_t head = 0, want = 0, pos = 0, end, n;
 	ssize_t k;
-	int status = 0, mode = 0, http11;	/* 0 close, 1 length, 2 chunked */
+	int status = 0, mode = 0, have = 0;	/* 0 close, 1 length, 2 chunked */
 
 	*reuse = 0;
 	for (;;) {
-		if (!hend) {
-			hend = raw->len ? strstr(raw->body, "\r\n\r\n") : NULL;
-			if (hend) {
-				head = (size_t)(hend - raw->body) + 4;
-				if (sscanf(raw->body, "HTTP/%*s %d", &status) == 1 &&
-				    status >= 100 && status < 200) {
-					/* 100 Continue and friends: skip */
-					memmove(raw->body, raw->body + head,
-						raw->len - head + 1);
-					raw->len -= head;
-					hend = NULL;
-					continue;
-				}
-				http11 = !strncmp(raw->body, "HTTP/1.1", 8);
-				v = header(raw->body, "Connection");
-				*reuse = v ? !strncasecmp(v, "keep-alive", 10) :
-					http11;
-				if (!strcmp(method, "HEAD") || status == 204 ||
-				    status == 304) {
-					mode = 1;
-					want = 0;
-				} else if ((v = header(raw->body,
-					    "Transfer-Encoding")) &&
-					   !strncasecmp(v, "chunked", 7)) {
-					mode = 2;
-				} else if ((v = header(raw->body,
-					    "Content-Length"))) {
-					mode = 1;
-					want = strtoul(v, NULL, 10);
-				} else {
-					mode = 0;
+		if (!have && raw->len && (v = strstr(raw->body, "\r\n\r\n"))) {
+			head = (size_t)(v - raw->body) + 4;
+			if (sscanf(raw->body, "HTTP/%*s %d", &status) == 1 &&
+			    status >= 100 && status < 200) {
+				/* 100 Continue and friends: skip */
+				memmove(raw->body, raw->body + head,
+					raw->len - head + 1);
+				raw->len -= head;
+				continue;
+			}
+			have = 1;
+			hb = strndup(raw->body, head);
+			if (!hb)
+				abort();
+			*reuse = !strncmp(hb, "HTTP/1.1", 8);
+			if ((v = header(hb, "Connection"))) {
+				n = header_len(v);
+				if (has_token(v, n, "close"))
 					*reuse = 0;
+				else if (has_token(v, n, "keep-alive"))
+					*reuse = 1;
+			}
+			if (!strcmp(method, "HEAD") || status == 204 ||
+			    status == 304) {
+				mode = 1;
+				want = 0;
+			} else if ((v = header(hb, "Transfer-Encoding"))) {
+				/* chunked last, or the body ends with the
+				 * connection; with a Content-Length too, the
+				 * connection is not kept (RFC 9112 6.1) */
+				mode = last_token(v, header_len(v), "chunked") ?
+					2 : 0;
+				if (!mode || header(hb, "Content-Length"))
+					*reuse = 0;
+			} else if ((v = header(hb, "Content-Length"))) {
+				const char *l, *w;
+
+				n = header_len(v);
+				mode = n && n < 10 &&
+					strspn(v, "0123456789") == n;
+				want = mode ? strtoul(v, NULL, 10) : 0;
+				if (want > MAX_BODY)
+					mode = 0;
+				/* every Content-Length must say the same */
+				for (l = strchr(hb, '\n'); l && mode;
+				     l = strchr(l + 1, '\n')) {
+					if (strncasecmp(l + 1, "Content-Length:",
+					    15))
+						continue;
+					for (w = l + 16; *w == ' ' || *w == '\t';
+					     w++)
+						;
+					if (header_len(w) != n ||
+					    strncmp(w, v, n))
+						mode = 0;
 				}
+				if (!mode)
+					*reuse = 0;
+			} else {
+				mode = 0;
+				*reuse = 0;
 			}
 		}
-		if (hend && mode == 1 && raw->len - head >= want) {
-			raw->len = head + want;	/* nothing more is ours */
+		if (have && mode == 1 && raw->len - head >= want) {
+			if (raw->len - head > want)
+				*reuse = 0;	/* more than ours: drop it */
+			raw->len = head + want;
 			raw->body[raw->len] = '\0';
+			free(hb);
 			return 0;
 		}
-		if (hend && mode == 2) {
+		if (have && mode == 2) {
 			end = chunked_end(raw->body + head, raw->len - head,
 				&pos);
 			if (end == (size_t)-1) {
 				*reuse = 0;
+				free(hb);
 				return 0;
 			}
 			if (end) {
+				if (head + end < raw->len)
+					*reuse = 0;
 				raw->len = head + end;
 				raw->body[raw->len] = '\0';
+				free(hb);
 				return 0;
 			}
 		}
@@ -384,11 +478,13 @@ static int read_response(struct conn *c, struct response *raw,
 		if (k <= 0) {
 			/* the peer closed: fine when that frames the body */
 			*reuse = 0;
-			return raw->len && hend ? 0 : -1;
+			free(hb);
+			return raw->len && have ? 0 : -1;
 		}
 		add(raw, buf, (size_t)k);
-		if (raw->len > (256u << 20)) {
+		if (raw->len > MAX_BODY) {
 			*reuse = 0;
+			free(hb);
 			return -1;
 		}
 	}
@@ -518,6 +614,12 @@ static int inflate_body(struct response *r)
 		if (ret != Z_OK && ret != Z_STREAM_END)
 			break;
 		add(&out, buf, sizeof(buf) - z.avail_out);
+		if (out.len > MAX_INFLATED) {
+			/* a compression bomb */
+			inflateEnd(&z);
+			free(out.body);
+			return -1;
+		}
 	} while (ret != Z_STREAM_END && z.avail_in);
 	inflateEnd(&z);
 	free(r->body);
@@ -530,6 +632,7 @@ static int inflate_body(struct response *r)
 static int fetch_file(const char *url, struct response *r)
 {
 	FILE *f = fopen(url + 7, "rb");
+	struct stat st;
 	char buf[16384];
 	size_t k;
 
@@ -537,7 +640,14 @@ static int fetch_file(const char *url, struct response *r)
 		set_error(r, strerror(errno));
 		return -1;
 	}
-	while ((k = fread(buf, 1, sizeof(buf), f)) > 0)
+	/* regular files only: not /dev/zero, not a FIFO */
+	if (fstat(fileno(f), &st) || !S_ISREG(st.st_mode) ||
+	    (unsigned long long)st.st_size > MAX_BODY) {
+		fclose(f);
+		set_error(r, "not a readable file");
+		return -1;
+	}
+	while ((k = fread(buf, 1, sizeof(buf), f)) > 0 && r->len < MAX_BODY)
 		add(r, buf, k);
 	fclose(f);
 	r->status = 200;
@@ -556,6 +666,64 @@ static int fetch_file(const char *url, struct response *r)
 	return 0;
 }
 
+/* RFC 9110 token characters: methods and header names */
+static int is_token(const char *s, size_t n)
+{
+	static const char extra[] = "!#$%&'*+-.^_`|~";
+	size_t i;
+
+	if (!n)
+		return 0;
+	for (i = 0; i < n; i++)
+		if (!(isalnum((unsigned char)s[i]) || (s[i] && strchr(extra,
+		    s[i]))))
+			return 0;
+	return 1;
+}
+
+/*
+ * The caller's headers (a page's, through scripts), kept only when
+ * they cannot change how the request is framed or routed: names are
+ * tokens, values have no control bytes, and the engine's own headers
+ * (Host, lengths, encodings, cookies, connection) are not theirs.
+ */
+static void add_headers(struct response *req, const char *h)
+{
+	static const char *const forbidden[] = { "host", "content-length",
+		"transfer-encoding", "te", "trailer", "upgrade", "connection",
+		"keep-alive", "cookie", "cookie2", "accept-encoding", "expect",
+		"proxy-authorization", "proxy-connection", NULL };
+	const char *e, *colon, *v;
+	size_t n;
+	int i, ok;
+
+	for (; h && *h; h = *e ? e + 1 : e) {
+		e = strchr(h, '\n');
+		if (!e)
+			e = h + strlen(h);
+		colon = memchr(h, ':', (size_t)(e - h));
+		if (!colon || !is_token(h, (size_t)(colon - h)))
+			continue;
+		n = (size_t)(colon - h);
+		for (ok = 1, i = 0; forbidden[i]; i++)
+			if (strlen(forbidden[i]) == n &&
+			    !strncasecmp(h, forbidden[i], n))
+				ok = 0;
+		if (n > 6 && !strncasecmp(h, "proxy-", 6))
+			ok = 0;
+		for (v = colon + 1; ok && v < e; v++)
+			if (((unsigned char)*v < 0x20 && *v != '\t' &&
+			     !(*v == '\r' && v + 1 == e)) || *v == 0x7f)
+				ok = 0;
+		if (!ok)
+			continue;
+		add(req, h, (size_t)(e - h));
+		if (e[-1] != '\r')
+			adds(req, "\r");
+		adds(req, "\n");
+	}
+}
+
 /* Whether a "Name: value\r\n" list has the header. */
 static int has_header(const char *h, const char *name)
 {
@@ -570,7 +738,7 @@ static int has_header(const char *h, const char *name)
 /* Keep the response headers, names in lower case, and hand each
  * Set-Cookie to the jar. */
 static void keep_headers(const char *raw, const char *end, const char *url,
-	const char *first_party, struct response *r)
+	const char *first_party, int jar, struct response *r)
 {
 	struct response h;
 	const char *p = strchr(raw, '\n'), *e, *colon;
@@ -593,7 +761,7 @@ static void keep_headers(const char *raw, const char *end, const char *url,
 		if (h.body[h.len - 1] == '\r')
 			h.len--;
 		add(&h, "\r\n", 2);
-		if (cookie) {
+		if (cookie && jar) {
 			line = strndup(colon + 1, header_len(colon + 1));
 			if (line) {
 				char *v = line + strspn(line, " \t");
@@ -610,17 +778,21 @@ static void keep_headers(const char *raw, const char *end, const char *url,
 
 /* One request; redirects are followed by net_fetch(). */
 static int request(const char *url, const soie_request *rq,
-	const char *method, const char *body_in, size_t body_len,
-	struct response *r, char **location)
+	const char *method, const char *headers, const char *body_in,
+	size_t body_len, struct response *r, char **location)
 {
 	struct url u;
 	struct conn c = { -1, NULL };
 	struct response raw, req;
 	const char *body, *v, *fp = rq->first_party ? rq->first_party : url;
-	char *cookie, *hend, key[300];
+	char *cookie, *hend, *hb = NULL, key[300];
 	int ret = -1, reused, reuse = 0, tries;
 
 	*location = NULL;
+	if (!is_token(method, strlen(method))) {
+		set_error(r, "bad method");
+		return -1;
+	}
 	if (parse_url(url, &u)) {
 		set_error(r, "bad URL");
 		return -1;
@@ -639,21 +811,21 @@ static int request(const char *url, const soie_request *rq,
 			"Accept-Encoding: gzip, deflate\r\n", u.host);
 		adds(&req, line);
 	}
-	if (!has_header(rq->headers, "Accept"))
+	if (!has_header(headers, "Accept"))
 		adds(&req, "Accept: text/html,application/xhtml+xml,*/*;"
 			"q=0.8\r\n");
-	if ((cookie = soie_cookies_get(url, fp, 0))) {
+	if (!(rq->flags & SOIE_REQ_NO_COOKIES) &&
+	    (cookie = soie_cookies_get(url, fp, 0))) {
 		adds(&req, "Cookie: ");
 		adds(&req, cookie);
 		adds(&req, "\r\n");
 		free(cookie);
 	}
-	if (rq->headers)
-		adds(&req, rq->headers);
+	add_headers(&req, headers);
 	if (body_in) {
 		char line[128];
 
-		if (!has_header(rq->headers, "Content-Type"))
+		if (!has_header(headers, "Content-Type"))
 			adds(&req, "Content-Type: application/"
 				"x-www-form-urlencoded\r\n");
 		snprintf(line, sizeof(line), "Content-Length: %zu\r\n",
@@ -697,15 +869,19 @@ static int request(const char *url, const soie_request *rq,
 	}
 	hend = strstr(raw.body, "\r\n\r\n");
 	body = hend ? hend + 4 : raw.body + raw.len;
+	/* the header block alone: no header is read from the body */
+	hb = strndup(raw.body, (size_t)(body - raw.body));
+	if (!hb)
+		abort();
 	keep_headers(raw.body, hend ? hend + 2 : raw.body + raw.len, url,
-		rq->first_party, r);
-	if ((v = header(raw.body, "Location")) && r->status >= 300 &&
+		rq->first_party, !(rq->flags & SOIE_REQ_NO_COOKIES), r);
+	if ((v = header(hb, "Location")) && r->status >= 300 &&
 	    r->status < 400) {
 		*location = strndup(v, header_len(v));
 		ret = 0;
 		goto out;
 	}
-	if ((v = header(raw.body, "Content-Type"))) {
+	if ((v = header(hb, "Content-Type"))) {
 		size_t n = header_len(v), k;
 		const char *cs;
 
@@ -726,14 +902,17 @@ static int request(const char *url, const soie_request *rq,
 			}
 		}
 	}
-	v = header(raw.body, "Transfer-Encoding");
-	if (v && !strncasecmp(v, "chunked", 7))
+	v = header(hb, "Transfer-Encoding");
+	if (v && last_token(v, header_len(v), "chunked"))
 		dechunk(r, body, (size_t)(raw.body + raw.len - body));
 	else
 		add(r, body, (size_t)(raw.body + raw.len - body));
-	v = header(raw.body, "Content-Encoding");
-	if (v && (!strncasecmp(v, "gzip", 4) || !strncasecmp(v, "deflate", 7)))
-		inflate_body(r);
+	v = header(hb, "Content-Encoding");
+	if (v && (!strncasecmp(v, "gzip", 4) || !strncasecmp(v, "deflate", 7)) &&
+	    inflate_body(r)) {
+		set_error(r, "body too large");
+		goto out;
+	}
 	ret = 0;
 out:
 	if (ret == 0 && reuse && c.fd >= 0) {
@@ -745,12 +924,33 @@ out:
 	free(raw.body);
 	free(req.body);
 	free(u.path);
+	free(hb);
 	return ret;
+}
+
+/* scheme://host:port of two URLs */
+static int same_origin(const char *a, const char *b)
+{
+	struct url x, y;
+	int same;
+
+	if (parse_url(a, &x))
+		return 0;
+	if (parse_url(b, &y)) {
+		free(x.path);
+		return 0;
+	}
+	same = !strcasecmp(x.scheme, y.scheme) && !strcasecmp(x.host, y.host) &&
+		!strcmp(x.port, y.port);
+	free(x.path);
+	free(y.path);
+	return same;
 }
 
 int net_fetch(const soie_request *rq, struct response *r)
 {
 	const char *url = rq->url, *method, *body = rq->body;
+	const char *headers = rq->headers;
 	char *cur, *loc;
 	soie_response er;
 	int i;
@@ -777,6 +977,12 @@ int net_fetch(const soie_request *rq, struct response *r)
 		return 0;
 	}
 	if (!strncmp(url, "file://", 7)) {
+		/* local files: for what the user opens, and what local
+		 * pages load; never for a web page */
+		if (rq->first_party && strncmp(rq->first_party, "file://", 7)) {
+			set_error(r, "file:// from a web page");
+			return -1;
+		}
 		snprintf(r->url, sizeof(r->url), "%s", url);
 		return fetch_file(url, r);
 	}
@@ -789,7 +995,8 @@ int net_fetch(const soie_request *rq, struct response *r)
 	if (!cur)
 		abort();
 	for (i = 0; i < 10; i++) {
-		if (request(cur, rq, method, body, rq->body_len, r, &loc)) {
+		if (request(cur, rq, method, headers, body, rq->body_len, r,
+			    &loc)) {
 			free(cur);
 			return -1;
 		}
@@ -799,6 +1006,18 @@ int net_fetch(const soie_request *rq, struct response *r)
 			char *next = soie_url_resolve(cur, loc);
 
 			free(loc);
+			if (!next || (strncmp(next, "http://", 7) &&
+			    strncmp(next, "https://", 8))) {
+				/* only to the web: no file://, no others */
+				free(next);
+				free(cur);
+				set_error(r, "bad redirection");
+				return -1;
+			}
+			/* another origin gets none of the caller's headers
+			 * (Authorization...) */
+			if (!same_origin(cur, next))
+				headers = NULL;
 			free(cur);
 			cur = next;
 		}
