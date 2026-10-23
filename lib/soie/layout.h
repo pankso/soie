@@ -52,6 +52,15 @@ int soie_element_rect(const soie_node *el, float *x, float *y, float *w,
 	float *h);
 
 /*
+ * Find text in the laid out page (ASCII case folded; a match does not
+ * span two elements or lines). Returns the number of matches and puts
+ * the rect of match n (from 0), in page coordinates, in x, y, w, h.
+ * Since 1.1.
+ */
+int soie_find(soie_node *doc, const char *text, int n, float *x, float *y,
+	float *w, float *h);
+
+/*
  * The focused form control (or NULL) and the caret, a byte offset in
  * its value: soie_paint() draws the caret there.
  */

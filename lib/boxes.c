@@ -1005,6 +1005,95 @@ int soie_element_rect(const soie_node *el, float *x, float *y, float *w,
 	return 0;
 }
 
+/* Find: matches counted in layout order, the wanted one's rect kept */
+struct find {
+	const char *text;
+	size_t len;
+	int want, n;
+	float r[4];
+};
+
+/* ASCII letters folded */
+static int same(const char *a, const char *b, size_t n)
+{
+	size_t i;
+
+	for (i = 0; i < n; i++) {
+		unsigned char x = (unsigned char)a[i], y = (unsigned char)b[i];
+
+		if (x >= 'A' && x <= 'Z')
+			x += 32;
+		if (y >= 'A' && y <= 'Z')
+			y += 32;
+		if (x != y)
+			return 0;
+	}
+	return 1;
+}
+
+static void find_in(struct box *b, struct find *f)
+{
+	struct box *c;
+	int i;
+
+	if (!(b->flags & BF_INLINE_KIDS)) {
+		for (c = b->first; c; c = c->next)
+			find_in(c, f);
+		return;
+	}
+	for (i = 0; i < b->nfrags; i++) {
+		struct frag *g = &b->frags[i];
+		const char *s;
+		size_t k = 0;
+
+		if (g->kind == F_ATOMIC)
+			find_in(g->box, f);
+		if (g->kind != F_TEXT || !g->box->text)
+			continue;
+		s = g->box->text + g->start;
+		while (k + f->len <= g->len) {
+			if (!same(s + k, f->text, f->len)) {
+				k++;
+				continue;
+			}
+			if (f->n++ == f->want) {
+				const struct style *st = g->box->style;
+
+				f->r[0] = g->x + text_width(st, s, k);
+				f->r[1] = g->y;
+				f->r[2] = text_width(st, s + k, f->len);
+				f->r[3] = g->h;
+			}
+			k += f->len;
+		}
+	}
+	for (c = b->first; c; c = c->next)
+		if (c->flags & (BF_FLOAT | BF_ABS))
+			find_in(c, f);
+}
+
+int soie_find(soie_node *doc, const char *text, int n, float *x, float *y,
+	float *w, float *h)
+{
+	struct find f;
+
+	if (doc->type != SOIE_DOCUMENT || !doc->u.doc.layout ||
+	    !doc->u.doc.layout->root || !text || !*text)
+		return 0;
+	memset(&f, 0, sizeof(f));
+	f.text = text;
+	f.len = strlen(text);
+	f.want = n;
+	find_in(doc->u.doc.layout->root, &f);
+	if (n >= 0 && n < f.n) {
+		*x = f.r[0];
+		*y = f.r[1];
+		*w = f.r[2];
+		*h = f.r[3];
+	}
+	return f.n;
+}
+
 void soie_set_focus(soie_node *doc, soie_node *el, int caret)
 {
 	if (doc->type != SOIE_DOCUMENT)
