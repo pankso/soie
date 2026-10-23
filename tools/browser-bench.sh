@@ -6,12 +6,18 @@
 #
 #   settle  seconds until the page is done: the tree's CPU stayed under
 #           5% for 2 s (the time of its last activity is reported)
+#
+# By default each run starts the browser on the page (start-up
+# included). -W measures a browser already open: started on an empty
+# page, left to calm down, then sent to the page (Firefox through its
+# remote command, the others by typing the address), and only what
+# follows is counted (settle from then, cpu above the idle browser).
 #   cpu     CPU seconds the tree used
 #   peak    largest memory, MB, PSS (shared pages counted once)
 #   end     memory once settled, MB, PSS
 #
 # Usage: tools/browser-bench.sh [-n runs] [-b "soie dillo firefox"]
-#        [-s DIR] URL...
+#        [-s DIR] [-W] URL...
 # -s serves DIR on http://127.0.0.1:8077/ while measuring: copies made
 # by tools/bench-mirror.py, for Dillo (no HTTPS) and without network
 # noise. FIREFOX=/path/to/firefox picks a Firefox not in the PATH.
@@ -32,7 +38,8 @@ while [ $# -gt 0 ]; do
 	-n) RUNS=$2; shift 2 ;;
 	-b) BROWSERS=$2; shift 2 ;;
 	-s) SERVE=$2; shift 2 ;;
-	-h|--help) sed -n '2,22p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+	-W) WARM=1; shift ;;
+	-h|--help) sed -n '2,29p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
 	*) break ;;
 	esac
 done
@@ -81,6 +88,11 @@ firefox_profile() {
 	user_pref("extensions.update.enabled", false);
 	user_pref("browser.newtabpage.enabled", false);
 	user_pref("media.autoplay.default", 5);
+	user_pref("datareporting.policy.dataSubmissionPolicyBypassNotification", true);
+	user_pref("termsofuse.acceptedVersion", 999);
+	user_pref("termsofuse.acceptedDate", "1735689600000");
+	user_pref("browser.termsofuse.prefMigrationCheck", true);
+	user_pref("trailhead.firstrun.didSeeAboutWelcome", true);
 	EOF
 }
 
@@ -89,23 +101,52 @@ now_ms() {
 	awk '{ printf "%d", $1 * 1000 }' /proc/uptime
 }
 
-# Start a browser on url in the background, with a fresh profile;
-# prints its PID.
+# Start a browser on url (none: its empty page) in the background,
+# with a fresh profile in $DIR; prints its PID.
 start() {
-	b=$1 url=$2 dir=$TMP/$b.$(now_ms)
+	b=$1 url=$2 dir=$DIR
 	mkdir -p "$dir"
 	case $b in
 	soie)
 		SOIE_EXT_DIR=$REPO/ext SOIE_COOKIES= SOIE_AUDIO=none \
-			"$REPO/browser/soie" -w $W -H $H "$url" ;;
+			"$REPO/browser/soie" -w $W -H $H $url ;;
 	dillo)
-		HOME=$dir dillo -g ${W}x$H "$url" ;;
+		HOME=$dir dillo -g ${W}x$H $url ;;
 	firefox)
 		firefox_profile "$dir/profile"
-		"$FIREFOX" --no-remote --profile "$dir/profile" \
-			--width $W --height $H "$url" ;;
+		# -W sends it pages later: remotely reachable
+		if [ -n "$WARM" ]; then
+			set -- --new-instance
+		else
+			set -- --no-remote
+		fi
+		"$FIREFOX" "$@" --profile "$dir/profile" --width $W \
+			--height $H ${url:-about:blank} ;;
 	esac >/dev/null 2>&1 &
 	echo $!
+}
+
+# -W: type url in the running browser's address bar (Firefox: nothing,
+# its remote command carries the URL)...
+type_url() {
+	[ "$1" = firefox ] && return
+	xdotool mousemove $((W / 2)) $((H / 2))
+	xdotool key ctrl+l
+	xdotool type --delay 2 "$2"
+	usleep 500000		# let the typing's redraws pass
+}
+
+# ... and go: from here on it is measured
+go() {
+	case $1 in
+	firefox) "$FIREFOX" --profile "$DIR/profile" "$2" >/dev/null 2>&1 ;;
+	*) xdotool key Return ;;
+	esac
+}
+
+# Dillo's dpid and its plugins outlive it: their PIDs, to end them
+dpis() {
+	ps | awk '$4 ~ /(^|\/)dpid$|\.dpi$/ { print $1 }'
 }
 
 # One sample of the tree under pid: "ticks pss_kb pids..."
@@ -152,11 +193,12 @@ sample() {
 }
 
 # Measure one load: prints "settle cpu peak end"
-measure() {
-	b=$1 url=$2
-	pid=$(start "$b" "$url")
-	t0=$(now_ms)
-	last_busy=0 prev=0 peak=0 pss=0 pids=$pid
+# Sample the tree under pid until it calms down; prints
+# "last_busy_ms ticks peak_kb pss_kb pids..." (times from t0, CPU
+# above base ticks).
+watch() {
+	pid=$1 t0=$2 base=$3
+	last_busy=0 prev=$base peak=0 pss=0 pids=$pid
 	calm_ticks=$((HZ * CALM / 100 / 4))	# per 0.25 s sample
 	while :; do
 		usleep 250000
@@ -173,10 +215,35 @@ measure() {
 			[ "$now" -gt 1500 ] && break
 		[ "$now" -gt $((MAXWAIT * 1000)) ] && break
 	done
-	kill $pids 2>/dev/null
+	echo "$last_busy $((prev - base)) $peak $pss $pids"
+}
+
+# Measure one load: prints "settle cpu peak end"
+measure() {
+	b=$1 url=$2
+	DIR=$TMP/$b.$(now_ms)
+	before=$(dpis)
+	if [ -n "$WARM" ]; then
+		pid=$(start "$b" "")
+		set -- $(watch "$pid" "$(now_ms)" 0)
+		type_url "$b" "$url"
+		base=$(sample "$pid" | cut -d' ' -f1)
+		t0=$(now_ms)
+		go "$b" "$url"
+		set -- $(watch "$pid" "$t0" "${base:-0}")
+	else
+		pid=$(start "$b" "$url")
+		set -- $(watch "$pid" "$(now_ms)" 0)
+	fi
+	r="$1 $2 $3 $4"
+	shift 4
+	kill "$@" 2>/dev/null
 	usleep 500000
-	kill -9 $pids 2>/dev/null
-	echo "$last_busy $prev $peak $pss" | awk -v hz="$HZ" \
+	kill -9 "$@" 2>/dev/null
+	for p in $(dpis); do
+		case " $before " in *" $p "*) ;; *) kill "$p" 2>/dev/null ;; esac
+	done
+	echo "$r" | awk -v hz="$HZ" \
 		'{ printf "%.2f %.2f %.1f %.1f\n", $1 / 1000, $2 / hz,
 		   $3 / 1024, $4 / 1024 }'
 }
