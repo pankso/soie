@@ -52,15 +52,16 @@ MEDIA_PKGS = libavformat libavcodec libswscale libswresample libavutil alsa
 ifeq ($(shell pkg-config --exists $(MEDIA_PKGS) && echo y),y)
 EXTS += ext/media.so
 endif
-# JavaScript: QuickJS sources (an unpacked release) built in, else the
-# installed library (SliTaz's quickjs-dev, built with -fPIC).
+# JavaScript: QuickJS 2025-04-26 or later (2026-06-04 tested), its
+# sources (an unpacked release) built in, else the installed library
+# (SliTaz's quickjs-dev, built with -fPIC).
 QUICKJS_SRC ?=
 QUICKJS ?= /usr
 ifneq ($(QUICKJS_SRC),)
 EXTS += ext/script.so
 QJS_INC = $(QUICKJS_SRC)
 QJS_OBJS = ext/script/qjs-quickjs.o ext/script/qjs-libregexp.o \
-	ext/script/qjs-libunicode.o ext/script/qjs-cutils.o ext/script/qjs-libbf.o
+	ext/script/qjs-libunicode.o ext/script/qjs-cutils.o ext/script/qjs-dtoa.o
 else ifneq ($(wildcard $(QUICKJS)/lib/quickjs/libquickjs.a),)
 EXTS += ext/script.so
 QJS_INC = $(QUICKJS)/include/quickjs
@@ -109,7 +110,7 @@ ext/webp.so: EXT_LIBS = $(shell pkg-config --libs libwebp)
 QJS_ATOMIC = $(shell echo 'int main(void){return 0;}' | \
 	$(CC) -x c - -latomic -o /dev/null 2>/dev/null && echo -latomic)
 ext/script/qjs-%.o: $(QUICKJS_SRC)/%.c
-	$(CC) $(CFLAGS:-pedantic=) -w -fPIC -DNDEBUG -D_GNU_SOURCE \
+	$(CC) $(CFLAGS:-pedantic=) -std=gnu99 -w -fPIC -DNDEBUG -D_GNU_SOURCE \
 		-DCONFIG_VERSION=\"$$(cat $(QUICKJS_SRC)/VERSION)\" \
 		-c -o $@ $<
 
@@ -119,6 +120,7 @@ ext/script/dom-js.c: ext/script/dom.js
 	  echo ';'; } > $@
 
 ext/script/script.o: CPPFLAGS += -isystem $(QJS_INC)
+ext/script/script.o: $(wildcard $(QJS_INC)/quickjs.h)
 ext/script/dom-js.o: CFLAGS += -Wno-overlength-strings
 ext/script/script.o ext/script/dom-js.o: $(HEADERS)
 ext/script.so: ext/script/script.o ext/script/dom-js.o $(QJS_OBJS) \
@@ -176,7 +178,8 @@ check: tests/unit tests/html5lib tests/painttest tests/exttest $(EXTS)
 	./tests/painttest tests/paint/*.html
 	./tests/html5lib tests/tree/*.dat tests/style/*.dat tests/layout/*.dat
 
-# Scripts: each tests/js page's console output against its .out file.
+# Scripts: each tests/js page's console output against its .out file,
+# without the stack traces (they name lines of dom.js).
 # media-* pages need the media extension, played silently.
 check-js: tools/soie-render ext/script.so
 	@fail=0; for f in tests/js/*.html; do \
@@ -184,7 +187,8 @@ check-js: tools/soie-render ext/script.so
 		case $$f in */media-*) [ -f ext/media.so ] || continue; \
 			x="$$x -x ext/media.so";; esac; \
 		SOIE_AUDIO=none tools/soie-render -S $$x -j $$f 2>&1 >/dev/null | \
-			cmp -s - $${f%.html}.out || { echo "FAIL $$f"; fail=1; }; \
+			grep -v '^    at ' | cmp -s - $${f%.html}.out || \
+			{ echo "FAIL $$f"; fail=1; }; \
 	done; [ $$fail = 0 ] && echo "js: all passed"
 
 # The html5lib tree construction corpus, fetched on demand.

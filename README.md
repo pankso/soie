@@ -29,7 +29,7 @@ Extensions are modules in `ext/`, installed in `$(PREFIX)/lib/soie/ext`:
 pkg-config finds libwebp, `media.so` when it finds FFmpeg and ALSA,
 `script.so` (JavaScript) when quickjs-dev is installed (built with
 -fPIC), or from the QuickJS sources:
-`make QUICKJS_SRC=/path/to/quickjs-2024-01-13`.
+`make QUICKJS_SRC=/path/to/quickjs-2026-06-04` (QuickJS 2025-04-26 or later).
 `make EXTS="ext/cookies.so"` picks them. `make check-js` tests the
 script extension.
 

@@ -549,6 +549,19 @@ Still to do there: the consent dialog's content is not stamped yet;
 the time QuickJS spends in YouTube's scripts (profile it: DOM natives
 or the interpreter?).
 
+## QuickJS 2026-06-04
+
+- QuickJS 2025-04-26 or later only (2026-06-04 tested): no build path
+  for older releases. YouTube's first scripts ran in 5.5 s with
+  2024-01-13, 3.45 s with 2026-06-04 (its small block allocator and
+  micro optimizations); it also brings WeakRef, FinalizationRegistry,
+  iterator helpers, set methods, RegExp v, Promise.try, Float16Array.
+- Its sources are GNU C (inline asm for Atomics.pause, `pause`: a nop
+  before the Pentium 4, fine on i486): compiled with -std=gnu99, ours
+  stay C99.
+- check-js leaves out the stack trace lines: they name lines of dom.js
+  and now columns, so every change of dom.js broke a reference.
+
 ## Resizing
 
 - The viewport's size is not part of what the style rules are built
