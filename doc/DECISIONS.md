@@ -578,6 +578,63 @@ reversed, edit the entry and say why; do not leave stale rules here.
 - `SOIE_AUDIO=none` plays without sound (tests, no sound card),
   `SOIE_AUDIO=hw:0` picks an ALSA device.
 
+## Security
+
+An outside audit (Grok, GROK-AUDIT.md, October 2026) found holes,
+checked one by one in the code and fixed; what came out of it:
+
+- A web page reads no local file: file:// is for what the user opens
+  and what local pages load (first party file://, or none), and a
+  redirection only goes to http(s). Files must be regular files
+  (not /dev/zero), 256 MB at most.
+- Scripts' requests follow the web's rules: an Origin header off the
+  page's origin, a preflight (OPTIONS) for what a form could not send,
+  and a response from another origin is readable only when it allows
+  it (Access-Control-Allow-Origin, -Credentials). credentials and
+  withCredentials are honoured: soie_request gained flags
+  (SOIE_REQ_NO_COOKIES). That is a change to the 1.0 ABI, made
+  because 1.0 was never published.
+- A page cannot shape the request: methods and header names are
+  tokens (RFC 9110), forbidden headers (Host, lengths, encodings,
+  Connection, Cookie, Origin, Proxy-*, Sec-*...) are dropped twice
+  (in the script engine and in net.c), header values lose control
+  bytes, and the request target is percent-encoded (no CR LF from a
+  pasted address either). A redirection to another origin drops the
+  caller's headers (Authorization).
+- Responses are framed strictly before a connection is pooled again:
+  headers come from the header block only, one Content-Length (all
+  digits, all the same), Transfer-Encoding with chunked last (and the
+  connection closed when both are present), chunk sizes bounded and
+  their CRLF checked, Connection read as a token list; any byte past
+  the frame, or any doubt, and the connection is not reused. Gzip
+  grows to 64 MB at most.
+- The cookie jar refuses control bytes and tabs in every field (a
+  Path could write a second line in cookies.txt), checks the file's
+  lines again when loading it, and knows the shared hosting suffixes
+  (github.io, blogspot.com, netlify.app...) as sites of their own.
+- Audio and video requests carry the page as first party (they went
+  out with the target's cookies, past the block list): player.c wraps
+  the host's request function.
+- GIF frames are bounded (16384) and indexed in size_t; LZW tables
+  are on the stack. WebP gets the same 16384 limit, checked before
+  decoding. A video's size is compared in 64 bits. A media range
+  must start where it was asked.
+- Hardening: buffers abort rather than overflow, SVG edges with NaN,
+  infinities or absurd coordinates are dropped, soie_node_free() only
+  detaches a subtree a script still holds (the document frees it),
+  the block list ignores a host's trailing dot.
+- Checked: a hostile local server (a forged response after a 302 on a
+  kept connection, Transfer-Encoding in the body, an overflowing chunk
+  size, a gzip bomb, CR LF in a URL) and a hostile page (file://,
+  header and method injection, cross-origin reads, credentials: omit).
+- Not done, known: no HSTS, and an https page may go to http on a
+  redirection; no SameSite (third-party cookies are refused instead);
+  requests to the local network from public pages are not blocked
+  (their answers are unreadable without CORS).
+- The audit's frame race in the media player is not one: the frame on
+  screen is never in the decoder's queue, only the interface's thread
+  swaps them.
+
 ## Character encoding
 
 - The tokenizer only ever sees valid UTF-8 with normalized newlines.

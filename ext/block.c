@@ -108,6 +108,8 @@ static int filter(void *data, const soie_request *req)
 	e = h + strcspn(h, "/?#:");
 	if ((p = memchr(h, '@', (size_t)(e - h))))
 		h = p + 1;
+	if (e > h && e[-1] == '.')
+		e--;		/* "ads.example.com." is ads.example.com */
 	/* the host, then each parent domain */
 	for (p = h; p < e; ) {
 		char low[256];

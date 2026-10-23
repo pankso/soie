@@ -54,6 +54,10 @@ void buf_grow(struct buf *b, size_t extra)
 {
 	if (b->len + extra + 1 <= b->cap)
 		return;
+	if (extra > (size_t)-1 / 2 - b->len) {
+		fputs("soie: buffer too large\n", stderr);
+		abort();
+	}
 	if (!b->cap)
 		b->cap = 32;
 	while (b->len + extra + 1 > b->cap)
@@ -654,10 +658,29 @@ static void node_free_one(soie_node *n)
 	free(n);
 }
 
-/* Iterative, so that deeply nested trees do not blow the stack. */
+/* Iterative, so that deeply nested trees do not blow the stack. A
+ * subtree where a node has a user pointer (a script's wrapper) is only
+ * taken out: the document frees it, after its host let go. */
 void soie_node_free(soie_node *n)
 {
 	soie_node *c = n, *p;
+
+	if (n->type != SOIE_DOCUMENT) {
+		for (c = n; c; ) {
+			if (c->user) {
+				node_detach(n);
+				return;
+			}
+			if (c->first) {
+				c = c->first;
+				continue;
+			}
+			while (c != n && !c->next)
+				c = c->parent;
+			c = c == n ? NULL : c->next;
+		}
+		c = n;
+	}
 
 	node_detach(n);
 	while (c) {
