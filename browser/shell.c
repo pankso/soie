@@ -268,7 +268,7 @@ static void js_message(void *data, int kind, const char *text)
 		ui_alert(text);
 		fprintf(stderr, "alert: %s\n", text);
 	} else {
-		debug(kind == SOIE_MSG_ERROR ? 1 : 2, "js %s: %.150s",
+		debug(kind == SOIE_MSG_ERROR ? 1 : 2, "js %s: %s",
 			kind == SOIE_MSG_ERROR ? "error" : kind == SOIE_MSG_WARN ?
 			"warn" : "log", text);
 	}
@@ -1564,9 +1564,12 @@ int shell_dump(char *path, size_t size)
 		view_h, dir, t);
 	fflush(f);
 	debug_trail(fileno(f));
-	dom = soie_node_dump(page.doc, &dl);
+	/* with what most rendering bugs come down to */
+	dom = soie_node_dump_style(page.doc, "display,position,z-index,"
+		"opacity,transform,visibility,overflow,width,height,"
+		"background-color,color", &dl);
 	boxes = soie_layout_dump(page.doc, &bl);
-	fprintf(f, "\nDOM:\n");
+	fprintf(f, "\nDOM, computed styles:\n");
 	fwrite(dom ? dom : "", 1, dl, f);
 	fprintf(f, "\nboxes:\n");
 	fwrite(boxes ? boxes : "", 1, bl, f);

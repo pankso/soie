@@ -43,16 +43,18 @@ static double now(void)
 
 void debug(int level, const char *fmt, ...)
 {
-	char *line = trail[ntrail++ % TRAIL];
+	char full[8192];
 	int n;
 	va_list ap;
 
-	n = snprintf(line, sizeof(trail[0]), "%8.3f ", now() - t0);
+	n = snprintf(full, sizeof(full), "%8.3f ", now() - t0);
 	va_start(ap, fmt);
-	vsnprintf(line + n, sizeof(trail[0]) - (size_t)n, fmt, ap);
+	vsnprintf(full + n, sizeof(full) - (size_t)n, fmt, ap);
 	va_end(ap);
+	/* the trail keeps the start, stderr gets it all */
+	snprintf(trail[ntrail++ % TRAIL], sizeof(trail[0]), "%s", full);
 	if (level <= debug_level)
-		fprintf(stderr, "soie: %s\n", line);
+		fprintf(stderr, "soie: %s\n", full);
 }
 
 void debug_page(const char *url)
