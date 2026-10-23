@@ -392,6 +392,18 @@ static void pb_arc(struct pb *b, float rx, float ry, float rot, int large,
 	}
 }
 
+/* An arc's flag: one character, 0 or 1, separators optional
+ * ("a1 1 0 000 2" is flags 0 and 0, then 0 2) */
+static float flag(const char **d)
+{
+	while (**d == ' ' || **d == ',' || **d == '\n' || **d == '\t' ||
+	       **d == '\r')
+		(*d)++;
+	if (**d != '0' && **d != '1')
+		return NAN;
+	return (float)(*(*d)++ - '0');
+}
+
 static void parse_path(struct pb *b, const char *d)
 {
 	char cmd = 0, prev = 0;
@@ -427,7 +439,8 @@ static void parse_path(struct pb *b, const char *d)
 		default: return;
 		}
 		for (k = 0; k < need; k++)
-			if (isnan(v[k] = num(&d)))
+			if (isnan(v[k] = (cmd | 32) == 'a' && (k == 3 || k == 4) ?
+			    flag(&d) : num(&d)))
 				return;
 		switch (cmd | 32) {
 		case 'm':
