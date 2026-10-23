@@ -392,7 +392,7 @@ reversed, edit the entry and say why; do not leave stale rules here.
 
 ## The browser (phase 7)
 
-- `browser/soie` uses Xlib directly: no toolkit, a window, an XImage
+- `browser/soie` (now xsoie, below) uses Xlib directly: no toolkit, a window, an XImage
   the page is painted into, cursors, keyboard and mouse. Its toolbar
   (back, forward, reload, address) is itself a small HTML page laid
   out and painted by Soie, hit-tested like any page.
@@ -437,7 +437,7 @@ reversed, edit the entry and say why; do not leave stale rules here.
   fragments scroll without reloading.
 - `<meta http-equiv=refresh>` is followed after its delay, replacing
   the page in the history (www.slitaz.org's home page is one).
-- `soie -o page.png URL` loads and renders without a display: the
+- `xsoie -o page.png URL` loads and renders without a display: the
   network and the engine can be tested headless.
 - The engine gained soie_hit_test(), soie_element_rect() and
   soie_set_focus() for this. Cookies and JavaScript are extensions
@@ -446,6 +446,47 @@ reversed, edit the entry and say why; do not leave stale rules here.
   cancel it, net fetch hooks may answer it (other URL schemes), the
   cookie jar gives the Cookie header and gets each Set-Cookie,
   redirect hops included.
+
+## Shell and fronts: xsoie
+
+- The browser is split in two: browser/shell.c keeps the page, its
+  resources, history, forms, scripts, meta refresh, find and the
+  offscreen PNG render, with no toolkit; a front shows it and feeds
+  the input in (shell.h). The first front is `xsoie` (browser/xsoie.c,
+  Xlib), so that a GTK 3 one (`gsoie`, GtkEntry address bar, real
+  scroll bar) can come without copying a line of the shell. The
+  engine and its files keep the Soie name (`~/.config/soie`, the
+  extensions): both fronts share them.
+- The shell talks to the front through three calls the front defines
+  (ui_title, ui_address, ui_alert); the rest goes the other way:
+  shell_tick() returns the poll timeout and says when to repaint,
+  keys come in as DOM key values ("Enter", "ArrowLeft") and UTF-8
+  text, not toolkit key codes.
+- Keyboard input goes through the X input method (XIM,
+  Xutf8LookupString): dead keys, compose and every character, not
+  just Latin-1 (`€`, `œ` could not be typed before). No input method:
+  XLookupString as before.
+- Clipboard: Ctrl+C copies the address or the focused field's value
+  (there is no text selection in the page yet), Ctrl+V pastes the
+  CLIPBOARD, Shift+Insert and the middle button the PRIMARY selection.
+  A focused address is PRIMARY, as a selected one would be. UTF-8 and
+  Latin-1 targets, no INCR (pastes up to 256 KB).
+- The address bar takes a URL, a path, a host (a dot, a port or
+  localhost) or words: those are searched for in DuckDuckGo Lite, a
+  page Soie renders well without scripts; `$SOIE_SEARCH`, a URL with
+  `%s`, picks another engine.
+- Find (Ctrl+F, F3, Enter, Shift+Enter, Escape): a find bar over the
+  page's bottom left, the match highlighted and scrolled to. The engine
+  gained soie_find() (libsoie 1.1.0, soname unchanged): the n-th match
+  in the laid out text and its rect; ASCII case folded, a match does
+  not span two elements or two lines.
+- A thin scroll bar on the right when the page is taller than the
+  window: the thumb drags, the track pages up and down.
+- The middle button on a link, and Ctrl+N, open a new window: another
+  xsoie process, not a tab. Each page has its own memory and a crash
+  takes one window; tabs can come later in the shell.
+- The window has a class (`xsoie`, `Xsoie`) for window managers and
+  an icon painted by Soie.
 
 ## Flexbox and grid (phase 8)
 

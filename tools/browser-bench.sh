@@ -109,7 +109,7 @@ start() {
 	case $b in
 	soie)
 		SOIE_EXT_DIR=$REPO/ext SOIE_COOKIES= SOIE_AUDIO=none \
-			"$REPO/browser/soie" -w $W -H $H $url ;;
+			"$REPO/browser/xsoie" -w $W -H $H $url ;;
 	dillo)
 		HOME=$dir dillo -g ${W}x$H $url ;;
 	firefox)

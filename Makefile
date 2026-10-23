@@ -67,7 +67,7 @@ QJS_INC = $(QUICKJS)/include/quickjs
 QJS_OBJS = $(QUICKJS)/lib/quickjs/libquickjs.a
 endif
 
-all: lib/libsoie.a lib/libsoie.so.$(SOVERSION) tools/soie-render browser/soie \
+all: lib/libsoie.a lib/libsoie.so.$(SOVERSION) tools/soie-render browser/xsoie \
 	$(EXTS)
 
 lib/libsoie.a: $(LIB_OBJS)
@@ -133,18 +133,20 @@ tests/html5lib: tests/html5lib.o lib/libsoie.a
 tests/unit: tests/unit.o lib/libsoie.a
 	$(CC) $(LDFLAGS) -o $@ tests/unit.o lib/libsoie.a $(LIBS)
 
-# The browser: Xlib, GnuTLS, zlib.
-BROWSER_PKGS = x11 gnutls zlib libpng
-browser/soie: browser/soie.o browser/net.o browser/fetch.o \
-	lib/libsoie.so.$(SOVERSION)
-	$(CC) $(LDFLAGS) $(RPATH) -o $@ browser/soie.o browser/net.o browser/fetch.o \
+# The browser: the shell (pages, network: GnuTLS, zlib) and its fronts,
+# xsoie on Xlib.
+SHELL_PKGS = gnutls zlib libpng
+SHELL_OBJS = browser/shell.o browser/net.o browser/fetch.o
+browser/xsoie: browser/xsoie.o $(SHELL_OBJS) lib/libsoie.so.$(SOVERSION)
+	$(CC) $(LDFLAGS) $(RPATH) -o $@ browser/xsoie.o $(SHELL_OBJS) \
 		lib/libsoie.so.$(SOVERSION) $(LIBS) \
-		$(shell pkg-config --libs $(BROWSER_PKGS)) -lpthread
+		$(shell pkg-config --libs $(SHELL_PKGS) x11) -lpthread
 
-browser/soie.o browser/net.o browser/fetch.o: browser/net.h browser/fetch.h \
-	$(HEADERS)
-browser/soie.o browser/net.o browser/fetch.o: CPPFLAGS += \
-	$(shell pkg-config --cflags $(BROWSER_PKGS)) -DSOIE_EXT_DIR='"$(EXTDIR)"'
+browser/xsoie.o $(SHELL_OBJS): browser/net.h browser/fetch.h \
+	browser/shell.h $(HEADERS)
+$(SHELL_OBJS): CPPFLAGS += $(shell pkg-config --cflags $(SHELL_PKGS)) \
+	-DSOIE_EXT_DIR='"$(EXTDIR)"'
+browser/xsoie.o: CPPFLAGS += $(shell pkg-config --cflags x11)
 tools/soie-render.o: CPPFLAGS += -DSOIE_EXT_DIR='"$(EXTDIR)"'
 
 tests/exttest: tests/exttest.o lib/libsoie.so.$(SOVERSION)
@@ -209,13 +211,13 @@ install: all
 	cp lib/libsoie.so.$(SOVERSION) $(DESTDIR)$(PREFIX)/lib/
 	ln -sf libsoie.so.$(SOVERSION) $(DESTDIR)$(PREFIX)/lib/libsoie.so
 	cp $(HEADERS) $(DESTDIR)$(PREFIX)/include/soie/
-	cp tools/soie-render browser/soie $(DESTDIR)$(PREFIX)/bin/
+	cp tools/soie-render browser/xsoie $(DESTDIR)$(PREFIX)/bin/
 	mkdir -p $(DESTDIR)$(EXTDIR)
 	cp $(EXTS) $(DESTDIR)$(EXTDIR)/
 
 clean:
 	rm -f lib/*.o lib/libsoie.a lib/libsoie.so.* tools/*.o \
-		tools/soie-render browser/*.o browser/soie tests/*.o tests/html5lib tests/unit \
+		tools/soie-render browser/*.o browser/xsoie tests/*.o tests/html5lib tests/unit \
 		tests/csstest tests/cssvalue tests/painttest tests/exttest lib/ua-css.c \
 		tests/paint/*.out.png ext/*.so \
 		ext/script/*.o ext/script/dom-js.c

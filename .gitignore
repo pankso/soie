@@ -11,7 +11,7 @@ tests/css-parsing-tests/
 lib/ua-css.c
 tests/painttest
 tests/paint/*.out.png
-browser/soie
+browser/xsoie
 tests/exttest
 ext/*.so
 ext/script/dom-js.c
