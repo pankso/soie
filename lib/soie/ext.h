@@ -72,7 +72,10 @@ typedef struct {
 	const char *body;	/* request body, or NULL */
 	size_t body_len;
 	const char *first_party; /* the page's URL, NULL for the page */
+	int flags;		/* SOIE_REQ_* */
 } soie_request;
+
+#define SOIE_REQ_NO_COOKIES 1	/* credentials omitted: no jar either way */
 
 typedef struct {
 	int status;		/* HTTP status, 200 for files */

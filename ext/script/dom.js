@@ -3036,9 +3036,9 @@ class Headers {
 	_raw() {
 		let s = '';
 		for (const [k, v] of this._m)
-			if (!/^(host|cookie|content-length|connection|accept-encoding)$/
-			    .test(k))
-				s += k + ': ' + v.replace(/[\r\n]/g, ' ') + '\r\n';
+			if (TOKEN.test(k) && !FORBIDDEN_HEADER.test(k))
+				s += k + ': ' + v.replace(/[\0-\x1f\x7f]/g, ' ') +
+					'\r\n';
 		return s;
 	}
 }
@@ -3142,13 +3142,13 @@ class Request {
 	constructor(input, init = {}) {
 		const r = input instanceof Request ? input : null;
 		this.url = r ? r.url : new URL(String(input), document.baseURI).href;
-		this.method = String(init.method || (r && r.method) || 'GET')
-			.toUpperCase();
+		this.method = method(init.method || (r && r.method) || 'GET');
 		this.headers = new Headers(init.headers || (r && r.headers));
 		this._body = bodyString(init.body !== undefined ? init.body :
 			r && r._body);
-		this.credentials = init.credentials || 'same-origin';
-		this.mode = init.mode || 'cors';
+		this.credentials = init.credentials || (r && r.credentials) ||
+			'same-origin';
+		this.mode = init.mode || (r && r.mode) || 'cors';
 		this.signal = init.signal || null;
 	}
 	clone() { return new Request(this); }
@@ -3156,8 +3156,91 @@ class Request {
 
 /* The page's latin1 response body as UTF-8 text happens in text();
  * request() gives the bytes as a latin1 string. */
-function doRequest(method, url, headers, body) {
-	return api.request(method, url, headers, body);
+/*
+ * Requests from scripts, as browsers make them: an Origin header off
+ * the page's origin, a preflight for what a form could not send, and
+ * the answer readable only when the other origin allows it (CORS).
+ * credentials: 'omit', 'same-origin' (the default) or 'include'.
+ * Returns the response, null for a network error.
+ */
+const TOKEN = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/;
+const FORBIDDEN_HEADER = /^(accept-charset|accept-encoding|access-control-request-headers|access-control-request-method|connection|content-length|cookie|cookie2|date|dnt|expect|host|keep-alive|origin|referer|set-cookie|te|trailer|transfer-encoding|upgrade|via|proxy-.*|sec-.*)$/i;
+const SIMPLE_HEADER = /^(accept|accept-language|content-language|content-type)$/i;
+
+function method(m) {
+	m = String(m);
+	if (!TOKEN.test(m))
+		throw new TypeError("'" + m + "' is not a valid method");
+	const u = m.toUpperCase();
+	if (/^(CONNECT|TRACE|TRACK)$/.test(u))
+		throw new TypeError("'" + m + "' is a forbidden method");
+	return /^(DELETE|GET|HEAD|OPTIONS|POST|PUT|PATCH)$/.test(u) ? u : m;
+}
+
+function sameOrigin(url) {
+	try {
+		return new URL(url).origin === location.origin;
+	} catch (e) {
+		return false;
+	}
+}
+
+function corsAllows(r, credentials) {
+	const h = parseHeaders(r.headers);
+	const o = h.get('access-control-allow-origin');
+	if (credentials)
+		return o === location.origin &&
+			h.get('access-control-allow-credentials') === 'true';
+	return o === '*' || o === location.origin;
+}
+
+function simpleRequest(m, headers) {
+	if (!/^(GET|HEAD|POST)$/.test(m))
+		return false;
+	for (const [k, v] of headers) {
+		if (!SIMPLE_HEADER.test(k))
+			return false;
+		if (/^content-type$/i.test(k) && !/^(application\/x-www-form-urlencoded|multipart\/form-data|text\/plain)\s*(;|$)/i.test(v))
+			return false;
+	}
+	return true;
+}
+
+function doRequest(m, url, headers, body, credentials = 'same-origin',
+	mode = 'cors') {
+	const same = sameOrigin(url);
+	const send = credentials === 'include' ||
+		(credentials === 'same-origin' && same);
+	const NO_COOKIES = 1;
+	let raw = headers._raw();
+	if (!same || !/^(GET|HEAD)$/.test(m))
+		raw += 'origin: ' + location.origin + '\r\n';
+	if (!same && mode !== 'no-cors' && !simpleRequest(m, headers)) {
+		const names = [...headers.keys()].filter((k) =>
+			!SIMPLE_HEADER.test(k)).join(',');
+		const p = api.request('OPTIONS', url, 'origin: ' +
+			location.origin + '\r\naccess-control-request-method: ' + m +
+			'\r\n' + (names ? 'access-control-request-headers: ' +
+			names + '\r\n' : ''), null, NO_COOKIES);
+		if (!p || p.status < 200 || p.status > 299 ||
+		    !corsAllows(p, send))
+			return null;
+		const ph = parseHeaders(p.headers);
+		const allowed = (ph.get('access-control-allow-methods') || '')
+			.toUpperCase().split(/\s*,\s*/);
+		if (!/^(GET|HEAD|POST)$/.test(m) && !allowed.includes(m) &&
+		    !allowed.includes('*'))
+			return null;
+	}
+	const r = api.request(m, url, raw, body, send ? 0 : NO_COOKIES);
+	if (!r)
+		return null;
+	if (!same && mode === 'no-cors')
+		return { status: 0, url: '', headers: '', body: '', opaque: true };
+	/* a redirection to another origin needs its consent too */
+	if ((!same || !sameOrigin(r.url)) && !corsAllows(r, send))
+		return null;
+	return r;
 }
 
 function fetch(input, init = {}) {
@@ -3180,9 +3263,17 @@ function fetch(input, init = {}) {
 			const h = req.headers;
 			if (req._body !== null && !h.has('content-type'))
 				h.set('content-type', 'text/plain;charset=UTF-8');
-			const r = doRequest(req.method, req.url, h._raw(), req._body);
+			const r = doRequest(req.method, req.url, h, req._body,
+				req.credentials, req.mode);
 			if (!r) {
 				reject(new TypeError('Failed to fetch'));
+				return;
+			}
+			if (r.opaque) {
+				const o = new Response(null, { status: 200 });
+				o.status = 0;
+				o.type = 'opaque';
+				resolve(o);
 				return;
 			}
 			const res = new Response(r.body, { status: r.status,
@@ -3233,8 +3324,8 @@ class XMLHttpRequest extends EventTarget {
 			return new Blob([this.responseText]);
 		return this.responseText;
 	}
-	open(method, url, async = true) {
-		this._method = String(method).toUpperCase();
+	open(m, url, async = true) {
+		this._method = method(m);
 		this._url = new URL(String(url), document.baseURI).href;
 		this._async = async !== false;
 		this._headers = new Headers();
@@ -3288,7 +3379,8 @@ class XMLHttpRequest extends EventTarget {
 				this._headers.set('content-type',
 					'text/plain;charset=UTF-8');
 			const r = doRequest(this._method, this._url,
-				this._headers._raw(), b);
+				this._headers, b, this.withCredentials ? 'include' :
+				'same-origin');
 			if (this._aborted)
 				return;
 			if (!r) {

@@ -827,6 +827,8 @@ static JSValue n_request(JSContext *js, JSValueConst this, int argc,
 	rq.body = body;
 	rq.body_len = blen;
 	rq.first_party = c->url;
+	if (argc > 4)
+		JS_ToInt32(js, &rq.flags, argv[4]);
 	if (c->host->request && !c->host->request(c->host->data, &rq, &res)) {
 		o = JS_NewObject(js);
 		JS_SetPropertyStr(js, o, "status", JS_NewInt32(js, res.status));
@@ -1051,7 +1053,7 @@ static const JSCFunctionListEntry natives[] = {
 	JS_CFUNC_DEF("scroll", 2, n_scroll),
 	JS_CFUNC_DEF("media", 1, n_media),
 	JS_CFUNC_DEF("resolve", 2, n_resolve),
-	JS_CFUNC_DEF("request", 4, n_request),
+	JS_CFUNC_DEF("request", 5, n_request),
 	JS_CFUNC_DEF("cookie", 1, n_cookie),
 	JS_CFUNC_DEF("navigate", 2, n_navigate),
 	JS_CFUNC_DEF("message", 2, n_message),
