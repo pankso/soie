@@ -551,8 +551,8 @@ or the interpreter?).
 
 ## QuickJS 2026-06-04
 
-- QuickJS 2025-04-26 or later only (2026-06-04 tested): no build path
-  for older releases. YouTube's first scripts ran in 5.5 s with
+- QuickJS 2026-06-04, the one release built and tested: no build path
+  nor promise for others. YouTube's first scripts ran in 5.5 s with
   2024-01-13, 3.45 s with 2026-06-04 (its small block allocator and
   micro optimizations); it also brings WeakRef, FinalizationRegistry,
   iterator helpers, set methods, RegExp v, Promise.try, Float16Array.

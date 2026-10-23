@@ -52,9 +52,9 @@ MEDIA_PKGS = libavformat libavcodec libswscale libswresample libavutil alsa
 ifeq ($(shell pkg-config --exists $(MEDIA_PKGS) && echo y),y)
 EXTS += ext/media.so
 endif
-# JavaScript: QuickJS 2025-04-26 or later (2026-06-04 tested), its
-# sources (an unpacked release) built in, else the installed library
-# (SliTaz's quickjs-dev, built with -fPIC).
+# JavaScript: QuickJS 2026-06-04, its sources (an unpacked release)
+# built in, else the installed library (SliTaz's quickjs-dev, built
+# with -fPIC).
 QUICKJS_SRC ?=
 QUICKJS ?= /usr
 ifneq ($(QUICKJS_SRC),)
