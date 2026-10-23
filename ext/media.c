@@ -115,8 +115,17 @@ static int fetch_range(struct source *s, int64_t pos)
 	if (s->request(s->rdata, &rq, &res))
 		return -1;
 	if (res.status == 206) {
+		long long from = -1;
+
+		/* the range must start where we asked */
 		cr = soie_response_header(&res, "content-range");
-		if (cr && strchr(cr, '/') && strchr(cr, '/')[1] != '*')
+		if (!cr || sscanf(cr, "bytes %lld-", &from) != 1 ||
+		    from != pos) {
+			free(cr);
+			soie_response_free(&res);
+			return -1;
+		}
+		if (strchr(cr, '/') && strchr(cr, '/')[1] != '*')
 			s->size = atoll(strchr(cr, '/') + 1);
 		free(cr);
 		free(s->buf);
@@ -396,7 +405,7 @@ static int open_media(struct player *p)
 	if (p->vs >= 0) {
 		w = p->vdec->width;
 		h = p->vdec->height;
-		if (w > 0 && h > 0 && w * h > MAX_PIXELS) {
+		if (w > 0 && h > 0 && (long long)w * h > MAX_PIXELS) {
 			scale = sqrt((double)MAX_PIXELS / ((double)w * h));
 			w = (int)(w * scale) & ~1;
 			h = (int)(h * scale) & ~1;

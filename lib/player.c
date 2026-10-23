@@ -17,7 +17,26 @@
 
 #define BAR_H 32		/* the controls' height */
 
+/* The host's request function, with the page as first party: what
+ * the player fetches is the page's subresource (cookies, blocking). */
+struct preq {
+	soie_request_fn fn;
+	void *data;
+	char *first_party;
+};
+
+static int page_request(void *data, const soie_request *req,
+	soie_response *res)
+{
+	const struct preq *q = data;
+	soie_request r = *req;
+
+	r.first_party = q->first_party;
+	return q->fn(q->data, &r, res);
+}
+
 struct player {
+	struct preq *req;
 	soie_node *el;
 	const struct soie_ext_media *ext;
 	void *p;
@@ -86,6 +105,7 @@ static struct player *open_player(soie_node *el)
 	struct media *m;
 	struct player *p;
 	const char *src = source_of(el);
+	struct preq *q;
 	char *base, *url;
 	void *h = NULL;
 	int i;
@@ -95,14 +115,21 @@ static struct player *open_player(soie_node *el)
 	base = document_base(doc, o->base_url);
 	url = soie_url_resolve(base, src);
 	free(base);
+	q = xmalloc(sizeof(*q));
+	q->fn = o->request;
+	q->data = o->request_data;
+	q->first_party = xstrndup(o->base_url ? o->base_url : "about:blank",
+		strlen(o->base_url ? o->base_url : "about:blank"));
 	for (i = 0; !h && (e = (const void *)soie_ext_get(SOIE_EXT_MEDIA,
 	     i)); i++)
 		if (e->open)
-			h = e->open(e->base.data, url, o->request,
-				o->request_data);
+			h = e->open(e->base.data, url, page_request, q);
 	free(url);
-	if (!h)
+	if (!h) {
+		free(q->first_party);
+		free(q);
 		return NULL;
+	}
 	m = doc->u.doc.media;
 	if (!m) {
 		m = xmalloc(sizeof(*m));
@@ -115,6 +142,7 @@ static struct player *open_player(soie_node *el)
 	}
 	p = &m->v[m->n++];
 	memset(p, 0, sizeof(*p));
+	p->req = q;
 	p->el = el;
 	p->ext = (const struct soie_ext_media *)soie_ext_get(SOIE_EXT_MEDIA,
 		i - 1);
@@ -131,8 +159,12 @@ void media_free(soie_node *doc)
 
 	if (!m)
 		return;
-	for (i = 0; i < m->n; i++)
+	for (i = 0; i < m->n; i++) {
+		/* close joins the player's threads: then its requests end */
 		m->v[i].ext->close(m->v[i].p);
+		free(m->v[i].req->first_party);
+		free(m->v[i].req);
+	}
 	free(m->v);
 	free(m);
 	doc->u.doc.media = NULL;
