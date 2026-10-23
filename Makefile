@@ -136,14 +136,14 @@ tests/unit: tests/unit.o lib/libsoie.a
 # The browser: the shell (pages, network: GnuTLS, zlib) and its fronts,
 # xsoie on Xlib.
 SHELL_PKGS = gnutls zlib libpng
-SHELL_OBJS = browser/shell.o browser/net.o browser/fetch.o
+SHELL_OBJS = browser/shell.o browser/net.o browser/fetch.o browser/debug.o
 browser/xsoie: browser/xsoie.o $(SHELL_OBJS) lib/libsoie.so.$(SOVERSION)
 	$(CC) $(LDFLAGS) $(RPATH) -o $@ browser/xsoie.o $(SHELL_OBJS) \
 		lib/libsoie.so.$(SOVERSION) $(LIBS) \
 		$(shell pkg-config --libs $(SHELL_PKGS) x11) -lpthread
 
 browser/xsoie.o $(SHELL_OBJS): browser/net.h browser/fetch.h \
-	browser/shell.h $(HEADERS)
+	browser/shell.h browser/debug.h $(HEADERS)
 $(SHELL_OBJS): CPPFLAGS += $(shell pkg-config --cflags $(SHELL_PKGS)) \
 	-DSOIE_EXT_DIR='"$(EXTDIR)"'
 browser/xsoie.o: CPPFLAGS += $(shell pkg-config --cflags x11)

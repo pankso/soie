@@ -488,6 +488,24 @@ reversed, edit the entry and say why; do not leave stale rules here.
 - The window has a class (`xsoie`, `Xsoie`) for window managers and
   an icon painted by Soie.
 
+## Debugging the browser
+
+- A fatal signal (SEGV, BUS, FPE, ILL, ABRT) writes a crash report,
+  `~/.cache/soie/crash-PID.txt`: the page, the last 64 events, the
+  backtrace, then gdb's backtrace of every thread with file and line,
+  gdb attached to the dying process (`SOIE_NO_GDB=1` skips it). The
+  handler runs on its own stack, so a stack overflow is reported too.
+  Always on: a crash met while browsing should never be lost.
+- `SOIE_DEBUG=1` prints loads, HTTP status, failed resources, the
+  times of the first paint, layout, scripts and of the last resource,
+  and script errors; 2 adds the input and console.log; 3 scrolling.
+- F12 saves the page: its DOM after the scripts as HTML, and a .txt
+  with the address, the trail, the DOM and box trees and the
+  soie-render line that replays it.
+- A browser not installed (no $(PREFIX)/lib/soie/ext) loads the
+  extensions of the source tree next to it: `./xsoie` in browser/
+  runs with scripts and cookies.
+
 ## Flexbox and grid (phase 8)
 
 - Flexbox follows the algorithm of CSS Flexbox 1 section 9: order,

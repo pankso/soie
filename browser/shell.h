@@ -69,6 +69,10 @@ int shell_find(const char *text, int dir, int *cur);
 /* Offscreen: load url, wait for it and its scripts, render to a PNG. */
 int shell_render_png(const char *url, const char *path);
 
+/* Save the page for a bug report in ~/.cache/soie (page-TIME.html and
+ * .txt); path gets the .txt file's. */
+int shell_dump(char *path, size_t size);
+
 /* Front calls, defined by the front */
 void ui_title(const char *title);
 /* A load started or a page arrived: show its address. */

@@ -648,6 +648,16 @@ static void key(XKeyEvent *e)
 		find_go(shift ? -1 : 1);
 		return;
 	}
+	if (ks == XK_F12) {
+		char path[700], *e;
+
+		if (shell_dump(path, sizeof(path)))
+			snprintf(path, sizeof(path), "cannot save the page");
+		e = escape_html(path);
+		ui_alert(e);
+		free(e);
+		return;
+	}
 	if (ks == XK_F5 || (ctrl && ks == XK_r)) {
 		shell_reload();
 		return;

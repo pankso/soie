@@ -55,7 +55,7 @@ block list in `~/.config/soie/block.txt` turns content blocking on.
 `soie-render -x ext/webp.so page.html` loads an extension;
 `soie-render -x ext/script.so -j page.html` runs the page's scripts
 (console output on stderr). `browser/xsoie -s` turns scripts off,
-`SOIE_DEBUG=1` prints their errors. A click plays a video;
+`SOIE_DEBUG=1` prints loads, timings and script errors (2: the input too), F12 saves the page for a bug report, a crash writes `~/.cache/soie/crash-PID.txt`. A click plays a video;
 `SOIE_AUDIO=none` keeps players silent.
 
 ## Layout

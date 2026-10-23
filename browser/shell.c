@@ -15,6 +15,7 @@
 #include "net.h"
 #include "fetch.h"
 #include "shell.h"
+#include "debug.h"
 
 #define HOME SHELL_HOME
 
@@ -62,6 +63,8 @@ static struct {
 	double laid_out;	/* when, for throttling */
 	soie_node *old;		/* on screen until the new one is laid out */
 	int old_scroll;
+	double t_load;		/* when the load started, for debugging */
+	int done;		/* everything in: told once */
 } page;
 
 static int fetch_fd = -1;	/* readable when jobs finish */
@@ -264,9 +267,10 @@ static void js_message(void *data, int kind, const char *text)
 	if (kind == SOIE_MSG_ALERT) {
 		ui_alert(text);
 		fprintf(stderr, "alert: %s\n", text);
-	} else if (getenv("SOIE_DEBUG")) {
-		fprintf(stderr, "%s: %s\n", kind == SOIE_MSG_ERROR ? "error" :
-			kind == SOIE_MSG_WARN ? "warn" : "log", text);
+	} else {
+		debug(kind == SOIE_MSG_ERROR ? 1 : 2, "js %s: %.150s",
+			kind == SOIE_MSG_ERROR ? "error" : kind == SOIE_MSG_WARN ?
+			"warn" : "log", text);
 	}
 }
 
@@ -386,10 +390,15 @@ static void relayout(void)
 	so.fetch = page_fetch;
 	so.user_css = page.user_css;
 	so.request = net_request;	/* audio and video */
+	double t0 = now_s(), t1;
+
 	in_style = 1;
 	soie_style_document(page.doc, &so);
 	in_style = 0;
+	t1 = now_s();
 	soie_layout_document(page.doc, view_w, view_h);
+	debug(2, "relayout %dx%d: style %.3f s, layout %.3f s", view_w, view_h,
+		t1 - t0, now_s() - t1);
 	layout_done();
 }
 
@@ -606,6 +615,12 @@ static void doc_arrived(struct job *j)
 	size_t len;
 	int push = page.push;
 
+	if (j->ok)
+		debug(1, "page %d %s, %zu bytes, %.2f s: %s", r->status, r->type,
+			r->len, now_s() - page.t_load, r->url);
+	else
+		debug(1, "page failed, %s: %s", r->error, j->url);
+	debug_page(j->ok ? r->url : j->url);
 	drop_resources();
 	set_page_focus_none();
 	if (page.old)
@@ -699,8 +714,12 @@ static void doc_arrived(struct job *j)
 /* The style sheets are here: lay out and show the page. */
 static void first_render(void)
 {
+	double t = now_s();
+
 	page.restyle = page.relayout = 0;
 	relayout();
+	debug(1, "first paint %.2f s (layout %.3f s), %d resources asked",
+		now_s() - page.t_load, now_s() - t, page.nres);
 	if (page.old) {
 		soie_node_free(page.old);
 		page.old = NULL;
@@ -720,9 +739,13 @@ static void first_render(void)
 
 static void start_scripts(void)
 {
+	double t = now_s();
+
 	page.loading = L_NONE;
+	debug(1, "scripts start");
 	if (!soie_script_start(page.doc, page.url, &js_host))
 		after_scripts();
+	debug(1, "scripts ran %.2f s", now_s() - t);
 }
 
 /* push: 1 adds a history entry, 2 replaces the current one. The page
@@ -731,6 +754,9 @@ static void load(const char *url, const char *post, int push)
 {
 	if (page.doc && push && hist.cur >= 0)
 		hist.scroll[hist.cur] = page.scroll;
+	debug(1, "load%s %s", post ? " (POST)" : "", url);
+	page.t_load = now_s();
+	page.done = 0;
 	page.gen++;
 	page.push = push;
 	free(page.want);
@@ -794,6 +820,12 @@ static void collect_jobs(int nested)
 				r->state = R_DONE;
 			} else {
 				r->state = R_FAILED;
+				if (j->ok)
+					debug(1, "failed, HTTP %d: %s", j->r.status,
+						j->url);
+				else
+					debug(1, "failed, %s: %s", j->r.error,
+						j->url);
 			}
 			if (r->kind == K_STYLE || !strcmp(j->r.type, "text/css") ||
 			    strstr(j->r.type, "font"))
@@ -1160,6 +1192,7 @@ static void click(int x, int y, int mods)
 
 void shell_click(int x, int y, int mods)
 {
+	debug(2, "click %d,%d (scroll %d)", x, y, page.scroll);
 	click(x, y, mods);
 	after_scripts();
 	clamp_scroll();
@@ -1223,6 +1256,9 @@ int shell_key(const char *key, const char *text, int mods)
 {
 	int r = 1;
 
+	debug(2, "key %s%s%s%s", mods & SOIE_MOD_CTRL ? "Ctrl+" : "",
+		mods & SOIE_MOD_ALT ? "Alt+" : "", mods & SOIE_MOD_SHIFT ?
+		"Shift+" : "", key);
 	if (page.doc && (fire(focus ? focus : find_tag(page.doc, "body"),
 	    "keydown", 0, 0, key, mods) || pending_nav)) {
 		after_scripts();
@@ -1289,6 +1325,7 @@ int shell_hover(int x, int y, char *link, size_t size)
 
 void shell_scroll(int dy)
 {
+	debug(3, "scroll %+d", dy);
 	page.scroll += dy;
 	clamp_scroll();
 }
@@ -1444,6 +1481,16 @@ int shell_tick(int *repaint)
 		*repaint = 1;
 	if (pending_nav)
 		t = 0;
+	if (page.doc && !page.done && page.loading == L_NONE &&
+	    !res_pending(-1)) {
+		int i, failed = 0;
+
+		for (i = 0; i < page.nres; i++)
+			failed += page.res[i].state == R_FAILED;
+		page.done = 1;
+		debug(1, "all in %.2f s: %d resources, %d failed, page %.0f px",
+			now_s() - page.t_load, page.nres, failed, page.height);
+	}
 	return t;
 }
 
@@ -1480,12 +1527,71 @@ void shell_paint(unsigned char *rgba, int stride)
 			(size_t)view_w * 4);
 }
 
+/*
+ * Save the page for a bug report: its DOM as HTML (after the scripts)
+ * and, beside it, the address, the trail, the DOM and box trees.
+ */
+int shell_dump(char *path, size_t size)
+{
+	const char *dir = debug_dir();
+	char *html, *dom, *boxes;
+	size_t hl = 0, dl = 0, bl = 0;
+	FILE *f;
+	long t = (long)time(NULL);
+
+	if (!dir || !page.doc)
+		return -1;
+	snprintf(path, size, "%s/page-%ld.html", dir, t);
+	html = soie_node_serialize(page.doc, 1, &hl);
+	if (!(f = fopen(path, "w")))
+		return -1;
+	fwrite(html ? html : "", 1, hl, f);
+	fclose(f);
+	free(html);
+	snprintf(path, size, "%s/page-%ld.txt", dir, t);
+	if (!(f = fopen(path, "w")))
+		return -1;
+	fprintf(f, "soie %s\nurl: %s\nview: %dx%d, scroll %d, page height "
+		"%.0f\nreplay: soie-render -X -b '%s' -w %d -H %d -o out.png "
+		"%s/page-%ld.html\n\nlast events:\n", soie_version(), page.url,
+		view_w, view_h, page.scroll, page.height, page.url, view_w,
+		view_h, dir, t);
+	fflush(f);
+	debug_trail(fileno(f));
+	dom = soie_node_dump(page.doc, &dl);
+	boxes = soie_layout_dump(page.doc, &bl);
+	fprintf(f, "\nDOM:\n");
+	fwrite(dom ? dom : "", 1, dl, f);
+	fprintf(f, "\nboxes:\n");
+	fwrite(boxes ? boxes : "", 1, bl, f);
+	fclose(f);
+	free(dom);
+	free(boxes);
+	debug(1, "page saved: %s", path);
+	return 0;
+}
+
 int shell_init(int js)
 {
 	const char *dir = getenv("SOIE_EXT_DIR");
+	char tree[4200];
+	ssize_t n;
+	int k;
 
+	debug_init();
 	scripts = js;
-	soie_ext_load_dir(dir ? dir : SOIE_EXT_DIR);
+	/* not installed: run from the source tree, its extensions */
+	if (!dir && access(SOIE_EXT_DIR, F_OK) &&
+	    (n = readlink("/proc/self/exe", tree, 4096)) > 0) {
+		tree[n] = '\0';
+		if (strrchr(tree, '/'))
+			strcpy(strrchr(tree, '/'), "/../ext");
+		if (!access(tree, F_OK))
+			dir = tree;
+	}
+	k = soie_ext_load_dir(dir ? dir : SOIE_EXT_DIR);
+	debug(1, "soie %s, %d extensions from %s", soie_version(), k,
+		dir ? dir : SOIE_EXT_DIR);
 	hist.cur = -1;
 	fetch_fd = fetch_start(6);
 	return fetch_fd;
@@ -1493,6 +1599,7 @@ int shell_init(int js)
 
 void shell_resize(int w, int h)
 {
+	debug(2, "resize %dx%d", w, h);
 	view_w = w;
 	view_h = h;
 	if (page.doc) {
