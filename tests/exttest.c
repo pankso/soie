@@ -228,6 +228,20 @@ static void test_cookies(void)
 	SET(u, "new=1; Path=/; expires=Fri, 31-Dec-2100 23:59:59 GMT");
 	STR(GET("https://www.example.com/", NULL), "b=3; __Host-z=1; new=1");
 
+	/* control bytes: no cookies.txt line smuggled through a Path */
+	SET(u, "inj=b; Path=/\n.bank.example\tTRUE\t/\tFALSE\t2000000000"
+		"\tsid\tpwn; Max-Age=86400");
+	SET(u, "tab=a\tb; Path=/");
+	CHECK(!strstr(GET("https://www.example.com/", NULL), "inj="));
+	CHECK(!strstr(GET("https://www.example.com/", NULL), "tab="));
+	/* shared hosting: each customer is its own site */
+	SET("https://evil.github.io/", "gh=1; Domain=github.io; Path=/");
+	CHECK(GET("https://victim.github.io/", NULL) == NULL);
+	SET("https://evil.github.io/", "own=1; Path=/");
+	STR(GET("https://evil.github.io/", NULL), "own=1");
+	CHECK(soie_cookies_get("https://evil.github.io/",
+		"https://victim.github.io/", 0) == NULL);
+
 	/* third parties get nothing and set nothing */
 	CHECK(soie_cookies_get("https://www.example.com/",
 		"https://tracker.net/", 0) == NULL);

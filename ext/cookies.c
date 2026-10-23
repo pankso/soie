@@ -62,6 +62,15 @@ static void lower(char *s)
 		*s = (char)tolower((unsigned char)*s);
 }
 
+/* Control bytes (tab included), DEL: never in a stored cookie */
+static int has_ctl(const char *s)
+{
+	for (; *s; s++)
+		if ((unsigned char)*s < 0x20 || *s == 0x7f)
+			return 1;
+	return 0;
+}
+
 static int parse_url(const char *u, struct url *out)
 {
 	const char *p = strstr(u, "://"), *h, *e;
@@ -109,15 +118,41 @@ static int is_ip(const char *host)
  * usual registry name ("co.uk", "com.au", "ne.jp"). Wrong now and
  * then (all of blogspot.com is one site), right for the common cases.
  */
+static int labels(const char *host)
+{
+	int n = 1;
+
+	for (; *host; host++)
+		n += *host == '.';
+	return n;
+}
+
 static int suffix_labels(const char *host)
 {
 	static const char *const sld[] = { "co", "com", "net", "org", "gov",
 		"edu", "ac", "ne", "or", "go", "gob", "mil", "ltd", "plc",
 		"sch", "nhs", "gv", "ed", "lg", "nom", "gouv", NULL };
+	/* hosting where each customer has a subdomain: each one is a
+	 * site, as the public suffix list says */
+	static const char *const shared[] = { "github.io", "gitlab.io",
+		"blogspot.com", "herokuapp.com", "appspot.com", "netlify.app",
+		"vercel.app", "pages.dev", "workers.dev", "web.app",
+		"firebaseapp.com", "azurewebsites.net", "cloudfront.net",
+		"s3.amazonaws.com", "wordpress.com", "tumblr.com",
+		"neocities.org", "glitch.me", "fly.dev", "onrender.com",
+		"ngrok.io", "ngrok-free.app", "duckdns.org", "no-ip.org",
+		"dyndns.org", "myshopify.com", "wixsite.com", "weebly.com",
+		"codeberg.page", "sourceforge.io", "readthedocs.io", NULL };
 	const char *tld = strrchr(host, '.'), *p;
-	size_t len;
+	size_t len, hl = strlen(host), sl;
 	int i;
 
+	for (i = 0; shared[i]; i++) {
+		sl = strlen(shared[i]);
+		if (hl >= sl && !strcmp(host + hl - sl, shared[i]) &&
+		    (hl == sl || host[hl - sl - 1] == '.'))
+			return labels(shared[i]);
+	}
 	if (!tld || strlen(tld + 1) != 2)
 		return 1;
 	for (p = tld; p > host && p[-1] != '.'; p--)
@@ -129,14 +164,6 @@ static int suffix_labels(const char *host)
 	return 1;
 }
 
-static int labels(const char *host)
-{
-	int n = 1;
-
-	for (; *host; host++)
-		n += *host == '.';
-	return n;
-}
 
 /* The registrable domain: one label more than the suffix. */
 static const char *site_of(const char *host)
@@ -169,6 +196,8 @@ static int path_match(const char *path, const char *cpath)
 {
 	size_t n = strlen(cpath);
 
+	if (!n)
+		return 0;
 	return !strncmp(path, cpath, n) &&
 		(cpath[n - 1] == '/' || path[n] == '/' || !path[n]);
 }
@@ -306,6 +335,9 @@ static void save(void)
 	for (i = 0; i < njar; i++) {
 		if (!jar[i].expires)
 			continue;	/* session cookies die with us */
+		if (has_ctl(jar[i].name) || has_ctl(jar[i].value) ||
+		    has_ctl(jar[i].domain) || has_ctl(jar[i].path))
+			continue;	/* would break the file's lines */
 		fprintf(f, "%s%s%s\t%s\t%s\t%s\t%lld\t%s\t%s\n",
 			jar[i].httponly ? "#HttpOnly_" : "",
 			jar[i].hostonly ? "" : ".", jar[i].domain,
@@ -399,7 +431,7 @@ static void set_locked(const char *url, const char *first_party,
 		return;	/* nameless cookies are rare and odd: refuse */
 	c.name = trim(p, (size_t)(eq - p));
 	c.value = trim(eq + 1, (size_t)(e - eq - 1));
-	if (!*c.name || strpbrk(c.name, "\r\n") || strpbrk(c.value, "\r\n"))
+	if (!*c.name || has_ctl(c.name) || has_ctl(c.value))
 		goto reject;
 	for (p = e; *p == ';'; p = e) {
 		p++;
@@ -448,6 +480,8 @@ static void set_locked(const char *url, const char *first_party,
 		c.path = slash == u.path ? sdup("/", 1) :
 			sdup(u.path, (size_t)(slash - u.path));
 	}
+	if (has_ctl(c.domain) || has_ctl(c.path))
+		goto reject;	/* a Path or Domain smuggling a line */
 	if ((c.secure && !secure_scheme(&u)) || (script && c.httponly))
 		goto reject;
 	if ((!strncmp(c.name, "__Secure-", 9) || !strncmp(c.name, "__Host-",
@@ -574,7 +608,10 @@ static void load(void)
 			if (p)
 				*p++ = 0;
 		}
-		if (n < 7)
+		/* what set() would refuse, the file does not get either */
+		if (n < 7 || !*f[0] || f[2][0] != '/' || !*f[5] ||
+		    atoll(f[4]) <= 0 || has_ctl(f[6]) ||
+		    (f[0][0] == '.' && public_suffix(f[0] + 1)))
 			continue;
 		memset(&c, 0, sizeof(c));
 		c.hostonly = *f[0] != '.';
