@@ -214,15 +214,21 @@ static int decode_gif(const unsigned char *d, size_t len, struct image *im)
 	p += 10;
 	if (!pal || p >= len)
 		return 0;
+	/* a frame no larger than the screen's limit, nor than what the
+	 * index arithmetic below (size_t) can hold */
+	if (!fw || !fh || fw > 16384 || fh > 16384)
+		return 0;
 	idx = calloc((size_t)fw * (size_t)fh + 1, 1);
 	if (!idx)
 		abort();
 	{
 		/* LZW over the data sub-blocks */
 		int minc = d[p++], clear = 1 << minc, eoi = clear + 1, next,
-			csize, prev = -1, out = 0, total = fw * fh;
-		static unsigned short pre[4096];
-		static unsigned char suf[4096], stack[4097];
+			csize, prev = -1;
+		size_t out = 0, total = (size_t)fw * (size_t)fh;
+		/* on the stack: decoders may run in several threads */
+		unsigned short pre[4096];
+		unsigned char suf[4096], stack[4097];
 		unsigned bits = 0, nbits = 0;
 		size_t blk = 0;
 
@@ -300,7 +306,8 @@ done:
 					row = start[++pass];
 			}
 			for (x = 0; x < fw; x++) {
-				int ci = idx[k * fw + x], X = x0 + x, Y = y0 + y;
+				int ci = idx[(size_t)k * (size_t)fw + (size_t)x];
+				int X = x0 + x, Y = y0 + y;
 				unsigned char *o;
 
 				if (X >= im->w || Y >= im->h || ci == trans ||

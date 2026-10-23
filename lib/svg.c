@@ -34,6 +34,11 @@ static void poly_edge(struct poly *p, float x0, float y0, float x1, float y1)
 
 	if (y0 == y1)
 		return;
+	/* NaN, infinities, absurd sizes: nothing an int pixel can hold */
+	if (!isfinite(x0) || !isfinite(y0) || !isfinite(x1) || !isfinite(y1) ||
+	    fabsf(x0) > 1e7f || fabsf(y0) > 1e7f || fabsf(x1) > 1e7f ||
+	    fabsf(y1) > 1e7f)
+		return;
 	if (p->n == p->cap) {
 		p->cap = p->cap ? p->cap * 2 : 64;
 		p->e = xrealloc(p->e, (size_t)p->cap * sizeof(*p->e));

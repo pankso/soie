@@ -18,6 +18,10 @@ static unsigned char *decode(void *data, const unsigned char *bytes,
 	if (len < 16 || memcmp(bytes, "RIFF", 4) ||
 	    memcmp(bytes + 8, "WEBP", 4))
 		return NULL;
+	/* the engine's limit for any image, before decoding */
+	if (!WebPGetInfo(bytes, len, w, h) || *w <= 0 || *h <= 0 ||
+	    *w > 16384 || *h > 16384)
+		return NULL;
 	px = WebPDecodeRGBA(bytes, len, w, h);
 	if (!px)
 		return NULL;
