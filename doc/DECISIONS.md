@@ -488,6 +488,51 @@ reversed, edit the entry and say why; do not leave stale rules here.
 - The window has a class (`xsoie`, `Xsoie`) for window managers and
   an icon painted by Soie.
 
+## YouTube, the first round
+
+YouTube showed its static skeleton only: its application never
+started. In the order they stood in the way:
+
+- `MessageChannel` and `MessagePort` were missing (its scheduler posts
+  itself messages): one task per message, delivered once the port is
+  started (onmessage, addEventListener or start()).
+- YouTube forces the ShadyDOM polyfill, which wants an inert document
+  (`createHTMLDocument`) and moves nodes from it to the page. Scripts
+  can now make documents of their own (createHTMLDocument,
+  createDocument, DOMParser): parsed by the engine, never rendered,
+  their scripts never run, freed with the script context. The engine
+  gained soie_node_adopt(): a subtree moves to another document (its
+  list of nodes, its styles dropped, a media player stopped); an
+  insertion from another document adopts first, as the DOM does.
+  ownerDocument, importNode and adoptNode follow. A script element
+  runs only once in the page's own tree, not in any document.
+- `ProcessingInstruction` was missing (ShadyDOM patches it).
+- QuickJS keeps scripts within 256 KB of C stack: 40 calls of Polymer's
+  big compiled functions. Now 4 MB, at most half the thread's stack.
+- Custom elements are constructed when they are made, as the spec's
+  reactions do: by innerHTML, a clone or an import (not in a template's
+  content nor another document), with attributeChangedCallback for
+  their observed attributes, at construction and on every change, and
+  disconnectedCallback when they leave the page. Before, an element a
+  template stamped after define() had the class's prototype but its
+  constructor never ran. The reactions wrap the natives that change
+  the tree, so every path of dom.js goes through them. innerHTML and
+  outerHTML insertions now call connectedCallback.
+- The script time limit (5 s) counted the time spent waiting for the
+  network in a request: it no longer does.
+- The engine skipped floats and positioned boxes inside inline boxes
+  when painting, hit testing and finding text: YouTube's consent dialog
+  (position: fixed in an inline element) was never drawn, its backdrop
+  greyed the page.
+- SVG arc flags are one character each and may be written without
+  separators (`a1 1 0 000 2`): YouTube's icons were black blobs.
+- F12's page dump lists the computed values that most rendering bugs
+  come down to (display, position, z-index, opacity, transform...).
+
+Still to do there: requests from scripts block the browser while they
+wait (the freeze felt on YouTube), the consent dialog's content is not
+stamped yet.
+
 ## Resizing
 
 - The viewport's size is not part of what the style rules are built

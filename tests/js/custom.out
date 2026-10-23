@@ -1,0 +1,32 @@
+log: construct 1
+log: attr 1 data-v null 1
+log: connected 1
+log: construct 2
+log: attr 2 data-v null 2
+log: connected 2
+log: innerHTML built 2
+log: construct 3
+log: attr 3 data-v null 2
+log: clone built 3 false
+log: connected 3
+log: attr 3 data-v 2 3
+log: attr 3 data-v 3 null
+log: disconnected 3
+log: template content waits true
+log: construct 4
+log: attr 4 data-v null t
+log: imported built 4
+log: construct 5
+log: new 5 true X-A
+log: disconnected 2
+error: Error: bad
+    at XBad (file:///home/tux/slitaz/repos/soie/tests/js/custom.html)
+    at construct (native)
+    at upgrade (soie:dom.js:2302)
+    at upgradeTree (soie:dom.js:2333)
+    at <anonymous> (soie:dom.js:2385)
+    at set innerHTML (soie:dom.js:1324)
+    at <eval> (file:///home/tux/slitaz/repos/soie/tests/js/custom.html:29)
+
+log: construct 6
+log: after a throwing constructor 6 true

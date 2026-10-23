@@ -134,6 +134,7 @@ void style_forget(soie_node *n);
 const soie_style_options *style_saved_options(const soie_node *doc);
 /* Players (player.c) */
 void media_free(soie_node *doc);
+void media_forget(soie_node *el);
 void media_size(const soie_node *el, float *w, float *h);
 
 /* The URL <base href> gives, else base; malloc()ed. */

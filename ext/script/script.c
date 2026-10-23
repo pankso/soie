@@ -13,6 +13,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <sys/resource.h>
 #include <quickjs.h>
 
 #include <soie/soie.h>
@@ -20,6 +21,10 @@
 
 #define RUN_MS 5000		/* longest a script may run at once */
 #define MEMORY_LIMIT (256 << 20)
+/* C stack for scripts: a call of a big compiled function takes a few
+ * KB of it, QuickJS's 256 KB is 40 calls deep (YouTube went over).
+ * At most half the thread's stack. */
+#define STACK_SIZE (4 << 20)
 
 extern const char dom_js[];
 
@@ -37,6 +42,10 @@ struct sctx {
 	soie_node *written;	/* document.write: the last inserted node */
 	char **map_from, **map_to;	/* the import map */
 	int nmap;
+	/* documents scripts made (createHTMLDocument, DOMParser): inert,
+	 * freed with the context */
+	soie_node **docs;
+	size_t ndocs;
 };
 
 static JSClassID node_class;
@@ -218,6 +227,7 @@ static JSValue n_rel(JSContext *js, JSValueConst this, int argc,
 	case 4: r = soie_node_prev_sibling(n); break;
 	case 5: r = soie_template_content(n); break;
 	case 6: r = soie_document_element(n); break;
+	case 7: r = soie_node_document(n); break;
 	}
 	return wrap(ctx_of(js), r);
 }
@@ -377,11 +387,12 @@ static JSValue n_remove_attr(JSContext *js, JSValueConst this, int argc,
 	return JS_UNDEFINED;
 }
 
-static int connected(soie_node *n)
+/* In the page: not in a fragment, nor in a document a script made */
+static int connected(struct sctx *c, soie_node *n)
 {
 	while (soie_node_parent(n))
 		n = soie_node_parent(n);
-	return soie_node_get_type(n) == SOIE_DOCUMENT;
+	return n == c->doc;
 }
 
 /* Scripts inside nodes just inserted run, in tree order: inline ones
@@ -395,7 +406,7 @@ static void run_inserted(struct sctx *c, soie_node **v, size_t n, int sync)
 	size_t i;
 
 	for (i = 0; i < n; i++) {
-		if (!connected(v[i]))
+		if (!connected(c, v[i]))
 			continue;
 		for (k = top = v[i]; k; ) {
 			if (soie_node_get_type(k) == SOIE_ELEMENT &&
@@ -461,6 +472,9 @@ static JSValue n_insert(JSContext *js, JSValueConst this, int argc,
 	} else {
 		v[0] = child;
 	}
+	/* from another document: adopted first, as the DOM does */
+	if (soie_node_document(child) != soie_node_document(parent))
+		soie_node_adopt(soie_node_document(parent), child);
 	r = soie_node_insert_before(parent, child, ref);
 	if (!r)
 		run_inserted(ctx_of(js), v, nv, 0);
@@ -478,11 +492,23 @@ static JSValue n_remove(JSContext *js, JSValueConst this, int argc,
 	return JS_UNDEFINED;
 }
 
+/* The document node d belongs to: a node argument's, else the page */
+static soie_node *doc_arg(struct sctx *c, int argc, JSValueConst *argv,
+	int i)
+{
+	soie_node *d = argc > i ? unwrap(argv[i]) : NULL;
+
+	return d ? soie_node_document(d) : c->doc;
+}
+
+/* createElement(ns, name[, doc]), createText(s[, doc]),
+ * createComment(s[, doc]), createFragment([doc]) */
 static JSValue n_create(JSContext *js, JSValueConst this, int argc,
 	JSValueConst *argv, int magic)
 {
 	struct sctx *c = ctx_of(js);
-	soie_node *n = NULL;
+	soie_node *n = NULL, *doc = doc_arg(c, argc, argv,
+		magic == 0 ? 2 : magic == 3 ? 0 : 1);
 	size_t len = 0;
 	const char *s = NULL;
 	int32_t ns = 0;
@@ -494,15 +520,15 @@ static JSValue n_create(JSContext *js, JSValueConst this, int argc,
 		s = JS_ToCString(js, argv[1]);
 		if (!s)
 			return JS_EXCEPTION;
-		n = soie_element_new(c->doc, (soie_ns)ns, s);
+		n = soie_element_new(doc, (soie_ns)ns, s);
 	} else if (magic == 1 || magic == 2) {
 		s = argc > 0 ? JS_ToCStringLen(js, &len, argv[0]) : NULL;
 		if (!s)
 			return JS_EXCEPTION;
-		n = magic == 1 ? soie_text_new(c->doc, s, len) :
-			soie_comment_new(c->doc, s, len);
+		n = magic == 1 ? soie_text_new(doc, s, len) :
+			soie_comment_new(doc, s, len);
 	} else {
-		n = soie_document_fragment_new(c->doc);
+		n = soie_document_fragment_new(doc);
 	}
 	if (s)
 		JS_FreeCString(js, s);
@@ -566,7 +592,48 @@ static soie_node *parse_fragment(struct sctx *c, soie_node *context,
 		ns = soie_element_ns(context);
 		name = soie_element_name(context);
 	}
-	return soie_html_parse_fragment(c->doc, ns, name, html, len, &o);
+	return soie_html_parse_fragment(context ? soie_node_document(context) :
+		c->doc, ns, name, html, len, &o);
+}
+
+/* A document of its own (createHTMLDocument, DOMParser): inert, its
+ * scripts never run, freed with the context. */
+static JSValue n_new_document(JSContext *js, JSValueConst this, int argc,
+	JSValueConst *argv)
+{
+	struct sctx *c = ctx_of(js);
+	soie_html_options o = { "UTF-8", 0 };
+	soie_node *d, **v;
+	size_t len;
+	const char *s = argc > 0 ? JS_ToCStringLen(js, &len, argv[0]) : NULL;
+
+	(void)this;
+	if (!s)
+		return JS_EXCEPTION;
+	d = soie_html_parse(s, len, &o);
+	JS_FreeCString(js, s);
+	if (!d)
+		return JS_ThrowOutOfMemory(js);
+	skip_scripts(d);
+	v = realloc(c->docs, (c->ndocs + 1) * sizeof(*v));
+	if (!v)
+		abort();
+	c->docs = v;
+	c->docs[c->ndocs++] = d;
+	return wrap(c, d);
+}
+
+/* adopt(doc, node): node and its subtree move to doc's document */
+static JSValue n_adopt(JSContext *js, JSValueConst this, int argc,
+	JSValueConst *argv)
+{
+	NODE(0, d);
+	NODE(1, n);
+
+	(void)this;
+	if (soie_node_adopt(soie_node_document(d), n))
+		return JS_ThrowTypeError(js, "cannot adopt a document");
+	return JS_UNDEFINED;
 }
 
 /* innerHTML and friends: scripts in the markup never run. */
@@ -812,6 +879,7 @@ static JSValue n_request(JSContext *js, JSValueConst this, int argc,
 	const char *body = NULL, *headers = NULL;
 	size_t blen = 0;
 	JSValue o = JS_NULL;
+	int r;
 	STR(0, method);
 	STR(1, url);
 
@@ -829,7 +897,18 @@ static JSValue n_request(JSContext *js, JSValueConst this, int argc,
 	rq.first_party = c->url;
 	if (argc > 4)
 		JS_ToInt32(js, &rq.flags, argv[4]);
-	if (c->host->request && !c->host->request(c->host->data, &rq, &res)) {
+	{
+		/* waiting for the network is not running: the script's
+		 * time limit stops while the request is out */
+		double saved = c->deadline, left = saved - now_ms();
+
+		c->deadline = 0;
+		r = c->host->request ? c->host->request(c->host->data, &rq,
+			&res) : -1;
+		if (saved)
+			c->deadline = now_ms() + left;
+	}
+	if (!r) {
 		o = JS_NewObject(js);
 		JS_SetPropertyStr(js, o, "status", JS_NewInt32(js, res.status));
 		JS_SetPropertyStr(js, o, "url",
@@ -1025,6 +1104,9 @@ static const JSCFunctionListEntry natives[] = {
 	JS_CFUNC_MAGIC_DEF("prev", 1, n_rel, 4),
 	JS_CFUNC_MAGIC_DEF("content", 1, n_rel, 5),
 	JS_CFUNC_MAGIC_DEF("root", 1, n_rel, 6),
+	JS_CFUNC_MAGIC_DEF("ownerDoc", 1, n_rel, 7),
+	JS_CFUNC_DEF("newDocument", 1, n_new_document),
+	JS_CFUNC_DEF("adopt", 2, n_adopt),
 	JS_CFUNC_DEF("children", 2, n_children),
 	JS_CFUNC_DEF("data", 1, n_data),
 	JS_CFUNC_DEF("text", 1, n_text),
@@ -1157,6 +1239,15 @@ static void *start(void *data, soie_node *doc, const char *url,
 		return NULL;
 	}
 	JS_SetMemoryLimit(c->rt, MEMORY_LIMIT);
+	{
+		struct rlimit rl;
+		size_t st = STACK_SIZE;
+
+		if (!getrlimit(RLIMIT_STACK, &rl) && rl.rlim_cur !=
+		    RLIM_INFINITY && rl.rlim_cur / 2 < st)
+			st = rl.rlim_cur / 2;
+		JS_SetMaxStackSize(c->rt, st);
+	}
 	JS_SetInterruptHandler(c->rt, interrupt, c);
 	JS_SetModuleLoaderFunc(c->rt, mod_normalize, mod_load, c);
 	if (!node_class)
@@ -1233,6 +1324,10 @@ static void stop(void *ctx)
 	JS_FreeValue(c->js, c->api);
 	JS_FreeContext(c->js);
 	JS_FreeRuntime(c->rt);
+	/* no wrapper points to them any more */
+	while (c->ndocs)
+		soie_node_free(c->docs[--c->ndocs]);
+	free(c->docs);
 	free(c->url);
 	free(c);
 }

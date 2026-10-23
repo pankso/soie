@@ -170,6 +170,24 @@ void media_free(soie_node *doc)
 	doc->u.doc.media = NULL;
 }
 
+/* el leaves its document: its player, if any, stops. */
+void media_forget(soie_node *el)
+{
+	struct media *m = el->doc->u.doc.media;
+	int i;
+
+	for (i = 0; m && i < m->n; i++)
+		if (m->v[i].el == el) {
+			m->v[i].ext->close(m->v[i].p);
+			free(m->v[i].req->first_party);
+			free(m->v[i].req);
+			memmove(&m->v[i], &m->v[i + 1], (size_t)(m->n - i - 1) *
+				sizeof(*m->v));
+			m->n--;
+			return;
+		}
+}
+
 int soie_media_control(soie_node *el, int op, double value)
 {
 	struct player *p;

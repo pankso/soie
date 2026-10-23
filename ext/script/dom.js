@@ -259,6 +259,8 @@ class MessageEvent extends Event {
 
 class EventTarget {
 	addEventListener(type, fn, opts) {
+		if (type === 'message' && this instanceof MessagePort)
+			this.start();
 		if (!fn)
 			return;
 		const capture = typeof opts === 'boolean' ? opts :
@@ -293,6 +295,63 @@ class EventTarget {
 		if (!(ev instanceof Event))
 			throw new TypeError('dispatchEvent: not an Event');
 		return dispatch(this, ev);
+	}
+}
+
+/* MessageChannel: a message is a task of its own on the other port,
+ * once that one is started (onmessage, addEventListener or start()) */
+class MessagePort extends EventTarget {
+	constructor() {
+		super();
+		this._other = null;
+		this._started = false;
+		this._queue = [];
+		this._sched = false;
+	}
+	postMessage(data) {
+		const to = this._other;
+		if (!to)
+			return;
+		to._queue.push(data);
+		to._flush();
+	}
+	_flush() {
+		if (this._sched || !this._started || !this._queue.length)
+			return;
+		this._sched = true;
+		addTimer(() => {
+			this._sched = false;
+			const data = this._queue.shift();
+			this._flush();
+			dispatch(this, new MessageEvent('message', { data }));
+		}, 0, [], false);
+	}
+	start() {
+		this._started = true;
+		this._flush();
+	}
+	close() {
+		if (this._other)
+			this._other._other = null;
+		this._other = null;
+		this._queue = [];
+	}
+	get onmessage() {
+		return (this[HANDLERS] && this[HANDLERS].message) || null;
+	}
+	set onmessage(fn) {
+		(this[HANDLERS] || (this[HANDLERS] = Object.create(null)))
+			.message = typeof fn === 'function' ? fn : null;
+		this.start();
+	}
+}
+
+class MessageChannel {
+	constructor() {
+		this.port1 = new MessagePort();
+		this.port2 = new MessagePort();
+		this.port1._other = this.port2;
+		this.port2._other = this.port1;
 	}
 }
 
@@ -558,19 +617,21 @@ function insert(parent, node, ref) {
 	return node;
 }
 
-/* connectedCallback of custom elements just inserted */
+/* Custom elements just inserted in the page: constructed if they were
+ * not yet, connectedCallback */
 function connected(nodes) {
 	for (const n of nodes) {
 		if (api.type(n) !== S_EL || !n.isConnected)
 			continue;
-		for (const el of [n, ...query(n, '*', 0)])
-			if (customs.has(api.name(el)) &&
-			    typeof el.connectedCallback === 'function')
-				try {
-					el.connectedCallback();
-				} catch (e) {
-					report(e);
-				}
+		for (const el of [n, ...query(n, '*', 0)]) {
+			const c = customs.get(api.name(el));
+			if (!c)
+				continue;
+			if (!built.has(el))
+				upgrade(el, c);
+			else
+				callback(el, 'connectedCallback');
+		}
 	}
 }
 
@@ -624,7 +685,7 @@ class Node extends EventTarget {
 			api.insert(this, api.createText(v), null);
 	}
 	get ownerDocument() {
-		return api.type(this) === S_DOC ? null : document;
+		return api.type(this) === S_DOC ? null : api.ownerDoc(this);
 	}
 	get parentNode() { return api.parent(this); }
 	get parentElement() {
@@ -890,6 +951,10 @@ class Text extends CharacterData {
 	}
 }
 class CDATASection extends Text {}
+/* never made by the HTML parser: there for scripts that patch it */
+class ProcessingInstruction extends CharacterData {
+	get target() { return ''; }
+}
 class Comment extends CharacterData {
 	constructor(data = '') {
 		return api.createComment(str(data));
@@ -1256,7 +1321,7 @@ class Element extends Node {
 			api.remove(k);
 		v = v === null ? '' : String(v);
 		if (v !== '')
-			api.insert(target, api.parse(this, v), null);
+			insert(target, api.parse(this, v), null);
 	}
 	get outerHTML() { return api.serialize(this, true); }
 	set outerHTML(v) {
@@ -1267,7 +1332,7 @@ class Element extends Node {
 			throw new DOMException('outerHTML of the root',
 				'NoModificationAllowedError');
 		const f = api.parse(api.type(p) === S_EL ? p : null, str(v));
-		api.insert(p, f, this);
+		insert(p, f, this);
 		api.remove(this);
 	}
 	insertAdjacentHTML(pos, html) {
@@ -2177,12 +2242,22 @@ g.HTMLElement = HTMLElement;
 /* Custom elements: a registry; defined classes upgrade new elements
  * made by createElement() and the parser's ones at define(). */
 const customs = new Map();
+const observed = new Map();	/* name: the attributes it observes */
+const built = new WeakSet();	/* custom elements constructed */
+const NONE = new Set();
 const customElements = {
 	define(name, cls) {
 		if (customs.has(name))
 			throw new DOMException(name + ' already defined',
 				'NotSupportedError');
 		customs.set(name, cls);
+		let o = [];
+		try {
+			o = cls.observedAttributes || [];
+		} catch (e) {
+			report(e);
+		}
+		observed.set(name, new Set(Array.from(o, String)));
 		for (const el of document.querySelectorAll(name))
 			upgrade(el, cls);
 		const w = whenDefined.get(name);
@@ -2199,24 +2274,117 @@ const customElements = {
 			whenDefined.get(name).push(r);
 		});
 	},
-	upgrade() {},
+	upgrade(root) { upgradeTree(root); },
 };
 const whenDefined = new Map();
+
+function callback(el, name, ...args) {
+	if (typeof el[name] === 'function')
+		try {
+			el[name](...args);
+		} catch (e) {
+			report(e);
+		}
+}
+
+/* Construct a custom element in place: its constructor, its observed
+ * attributes, connectedCallback when in the page */
 function upgrade(el, cls) {
-	if (Object.getPrototypeOf(el) === cls.prototype)
+	if (built.has(el))
 		return;
-	Object.setPrototypeOf(el, cls.prototype);
+	built.add(el);
+	if (Object.getPrototypeOf(el) !== cls.prototype)
+		Object.setPrototypeOf(el, cls.prototype);
+	const saved = constructing;
+	constructing = el;
 	try {
-		/* run the class's constructor body on the existing element */
-		const saved = constructing;
-		constructing = el;
+		/* the class's constructor body, on the existing element */
 		Reflect.construct(cls, [], cls);
-		constructing = saved;
-		if (el.isConnected && el.connectedCallback)
-			el.connectedCallback();
 	} catch (e) {
 		report(e);
+		return;
+	} finally {
+		constructing = saved;
 	}
+	for (const a of observed.get(api.name(el)) || NONE) {
+		const v = api.getAttr(el, a);
+		if (v !== null && v !== undefined)
+			callback(el, 'attributeChangedCallback', a, null, v, null);
+	}
+	if (el.isConnected)
+		callback(el, 'connectedCallback');
+}
+
+/* The defined custom elements of a new subtree (innerHTML, a clone, an
+ * import), unless it is a template's content or another document's:
+ * those wait */
+function upgradeTree(root) {
+	if (!customs.size || !root)
+		return;
+	const t = api.type(root);
+	if ((t !== S_EL && t !== S_FRAG && t !== S_DOC) ||
+	    (t !== S_DOC && api.ownerDoc(root) !== document) ||
+	    (t === S_DOC && root !== document))
+		return;
+	for (const el of t === S_EL ? [root, ...query(root, '*', 0)] :
+	    query(root, '*', 0)) {
+		const c = customs.get(api.name(el));
+		if (c && !built.has(el))
+			upgrade(el, c);
+	}
+}
+
+function disconnected(n) {
+	for (const el of [n, ...query(n, '*', 0)])
+		if (built.has(el))
+			callback(el, 'disconnectedCallback');
+}
+
+/* Custom element reactions around the natives that change the tree:
+ * every path of dom.js goes through them */
+{
+	const setAttr = api.setAttr, removeAttr = api.removeAttr;
+	const remove = api.remove, clone = api.clone, parse = api.parse;
+	const watched = (el, name) => customs.size && built.has(el) &&
+		(observed.get(api.name(el)) || NONE).has(name);
+
+	api.setAttr = function (el, name, v) {
+		if (!watched(el, name))
+			return setAttr(el, name, v);
+		const old = api.getAttr(el, name);
+		const r = setAttr(el, name, v);
+		callback(el, 'attributeChangedCallback', name,
+			old === undefined ? null : old, api.getAttr(el, name), null);
+		return r;
+	};
+	api.removeAttr = function (el, name) {
+		if (!watched(el, name))
+			return removeAttr(el, name);
+		const old = api.getAttr(el, name);
+		const r = removeAttr(el, name);
+		if (old !== null && old !== undefined)
+			callback(el, 'attributeChangedCallback', name, old, null,
+				null);
+		return r;
+	};
+	api.remove = function (n) {
+		const out = customs.size && api.type(n) === S_EL && n.isConnected;
+		const r = remove(n);
+		if (out)
+			disconnected(n);
+		return r;
+	};
+	api.clone = function (n, deep) {
+		const c = clone(n, deep);
+		upgradeTree(c);
+		return c;
+	};
+	api.parse = function (ctx, html) {
+		const f = parse(ctx, html);
+		if (!ctx || api.name(ctx) !== 'template')
+			upgradeTree(f);
+		return f;
+	};
 }
 let constructing = null;
 /* HTMLElement's "constructor" for custom element classes */
@@ -2229,6 +2397,7 @@ const HTMLElementCtor = function () {
 	const name = [...customs].find(([, c]) => c === new.target);
 	const el = api.createElement(NS_HTML, name ? name[0] : 'div');
 	Object.setPrototypeOf(el, new.target.prototype);
+	built.add(el);
 	return el;
 };
 HTMLElementCtor.prototype = HTMLElement.prototype;
@@ -2282,6 +2451,16 @@ class DOMRect extends DOMRectReadOnly {}
 
 /* Document */
 
+class DOMParser {
+	parseFromString(s, type) {
+		return api.newDocument(str(s));
+	}
+}
+
+class XMLSerializer {
+	serializeToString(n) { return api.serialize(check(n), true); }
+}
+
 let readyState = 'loading';
 let activeElement = null;
 
@@ -2310,7 +2489,7 @@ class Document extends Node {
 			const h = this.head;
 			if (!h)
 				return;
-			t = api.createElement(NS_HTML, 'title');
+			t = api.createElement(NS_HTML, 'title', this);
 			api.insert(h, t, null);
 		}
 		t.textContent = v;
@@ -2343,7 +2522,7 @@ class Document extends Node {
 				return k;
 		return null;
 	}
-	get defaultView() { return g; }
+	get defaultView() { return this === document ? g : null; }
 	get activeElement() { return activeElement || this.body; }
 	get currentScript() { return api.currentScript(); }
 	get hidden() { return false; }
@@ -2358,9 +2537,18 @@ class Document extends Node {
 	get implementation() {
 		return {
 			hasFeature: () => true,
-			createHTMLDocument() {
-				throw new DOMException('one document per page',
-					'NotSupportedError');
+			/* a document of its own, inert: no scripts, no
+			 * rendering, nodes move to the page when inserted */
+			createHTMLDocument(title) {
+				const d = api.newDocument('<!DOCTYPE html><html>' +
+					'<head></head><body></body></html>');
+				if (title !== undefined)
+					d.title = str(title);
+				return d;
+			},
+			createDocument() {
+				return api.newDocument('<html><head></head>' +
+					'<body></body></html>');
 			},
 		};
 	}
@@ -2377,22 +2565,22 @@ class Document extends Node {
 		if (!/^[a-zA-Z][^\s\/>\0]*$/.test(name))
 			throw new DOMException('bad element name',
 				'InvalidCharacterError');
-		const el = api.createElement(NS_HTML, name.toLowerCase());
+		const el = api.createElement(NS_HTML, name.toLowerCase(), this);
 		const is = opts && (typeof opts === 'string' ? opts : opts.is);
 		const c = customs.get(name.toLowerCase()) || (is && customs.get(is));
-		if (c)
+		if (c && this === document)
 			upgrade(el, c);
 		return el;
 	}
 	createElementNS(ns, qname) {
 		const i = NS_URI.indexOf(ns);
 		const local = String(qname).replace(/^[^:]*:/, '');
-		return api.createElement(i > 0 ? i : 0, local);
+		return api.createElement(i > 0 ? i : 0, local, this);
 	}
-	createTextNode(s) { return api.createText(str(s)); }
-	createComment(s) { return api.createComment(str(s)); }
-	createCDATASection(s) { return api.createText(str(s)); }
-	createDocumentFragment() { return api.createFragment(); }
+	createTextNode(s) { return api.createText(str(s), this); }
+	createComment(s) { return api.createComment(str(s), this); }
+	createCDATASection(s) { return api.createText(str(s), this); }
+	createDocumentFragment() { return api.createFragment(this); }
 	createAttribute(n) { return new Attr(null, String(n).toLowerCase(), '', 0); }
 	createEvent(type) {
 		const C = { mouseevent: MouseEvent, mouseevents: MouseEvent,
@@ -2410,10 +2598,14 @@ class Document extends Node {
 	createNodeIterator(root, what = 0xffffffff, filter = null) {
 		return new TreeWalker(root, what, filter);
 	}
-	importNode(n, deep) { return api.clone(check(n), !!deep); }
+	importNode(n, deep) {
+		const c = api.clone(check(n), !!deep);
+		api.adopt(this, c);
+		upgradeTree(c);
+		return c;
+	}
 	adoptNode(n) {
-		if (api.parent(n))
-			api.remove(n);
+		api.adopt(this, check(n));
 		return n;
 	}
 	write(...s) { api.write(s.join('')); }
@@ -3724,10 +3916,12 @@ const globals = {
 	WheelEvent, KeyboardEvent, FocusEvent, InputEvent, SubmitEvent,
 	ProgressEvent, ErrorEvent, PopStateEvent, HashChangeEvent,
 	MessageEvent, Node, CharacterData, Text, CDATASection, Comment,
+	ProcessingInstruction,
 	DocumentType, DocumentFragment, Document, HTMLDocument: Document,
 	Element, SVGElement, SVGSVGElement, MathMLElement, Attr,
 	DOMTokenList, CSSStyleDeclaration, DOMRect, DOMRectReadOnly,
-	DOMException, TreeWalker, NodeIterator: TreeWalker, Range,
+	DOMException, MessageChannel, MessagePort, DOMParser, XMLSerializer,
+	TreeWalker, NodeIterator: TreeWalker, Range,
 	NodeList: Array, HTMLCollection: Array, URL, URLSearchParams,
 	TextEncoder, TextDecoder, Blob, File, FormData, Headers, Request,
 	Response, fetch, XMLHttpRequest, AbortController, AbortSignal,

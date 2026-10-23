@@ -512,6 +512,67 @@ soie_node *soie_node_clone(const soie_node *n, int deep)
 	return root;
 }
 
+/* One node from document from to document to: the list of all nodes,
+ * the styles of from, a player. */
+static void move_one(soie_node *n, soie_node *from, soie_node *to)
+{
+	if (n->dirty)
+		style_forget(n);
+	if (n->type == SOIE_ELEMENT) {
+		if (from->u.doc.media)
+			media_forget(n);
+		n->u.el.style = n->u.el.before = n->u.el.after = NULL;
+		if (from->u.doc.focus == n)
+			from->u.doc.focus = NULL;
+	}
+	if (n->aprev)
+		n->aprev->anext = n->anext;
+	else
+		from->u.doc.all = n->anext;
+	if (n->anext)
+		n->anext->aprev = n->aprev;
+	n->aprev = NULL;
+	n->anext = to->u.doc.all;
+	if (n->anext)
+		n->anext->aprev = n;
+	to->u.doc.all = n;
+	n->doc = to;
+}
+
+/* n's subtree, template contents included */
+static void move_tree(soie_node *n, soie_node *from, soie_node *to)
+{
+	soie_node *s = n;
+
+	while (s) {
+		move_one(s, from, to);
+		if (s->type == SOIE_ELEMENT && s->u.el.content)
+			move_tree(s->u.el.content, from, to);
+		if (s->first) {
+			s = s->first;
+			continue;
+		}
+		while (s != n && !s->next)
+			s = s->parent;
+		s = s == n ? NULL : s->next;
+	}
+}
+
+int soie_node_adopt(soie_node *doc, soie_node *n)
+{
+	soie_node *from = n->doc;
+
+	if (doc->type != SOIE_DOCUMENT || n->type == SOIE_DOCUMENT)
+		return -1;
+	node_detach(n);
+	if (from == doc)
+		return 0;
+	move_tree(n, from, doc);
+	from->u.doc.gen++;
+	doc->u.doc.gen++;
+	return 0;
+}
+
 void soie_node_set_user(soie_node *n, void *p) { n->user = p; }
 void *soie_node_user(const soie_node *n) { return n->user; }
 

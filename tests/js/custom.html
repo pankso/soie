@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<body><x-a id=early data-v=1></x-a><div id=host></div>
+<template id=tpl><x-a data-v=t></x-a></template>
+<script>
+var log = (...a) => console.log(a.map(String).join(' '));
+var n = 0;
+class XA extends HTMLElement {
+	static get observedAttributes() { return ['data-v']; }
+	constructor() { super(); this.props = { id: ++n }; log('construct', n); }
+	connectedCallback() { log('connected', this.props.id); }
+	disconnectedCallback() { log('disconnected', this.props.id); }
+	attributeChangedCallback(a, o, v) { log('attr', this.props.id, a, o, v); }
+}
+customElements.define('x-a', XA);
+var host = document.getElementById('host');
+host.innerHTML = '<x-a data-v=2></x-a>';
+log('innerHTML built', host.firstChild.props.id);
+var c = host.firstChild.cloneNode(true);
+log('clone built', c.props.id, c.isConnected);
+host.appendChild(c);
+c.setAttribute('data-v', '3');
+c.setAttribute('other', 'x');
+c.removeAttribute('data-v');
+host.removeChild(c);
+var tpl = document.getElementById('tpl');
+log('template content waits', tpl.content.firstElementChild.props === undefined);
+var imp = document.importNode(tpl.content, true);
+log('imported built', imp.firstElementChild.props.id);
+var d = new XA();
+log('new', d.props.id, d instanceof XA, d.tagName);
+class XBad extends HTMLElement { constructor() { super(); throw new Error('bad'); } }
+customElements.define('x-bad', XBad);
+host.innerHTML = '<x-bad></x-bad>';
+var e = new XA();
+log('after a throwing constructor', e.props.id, e !== host.firstChild);
+</script>

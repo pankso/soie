@@ -1,0 +1,20 @@
+<!DOCTYPE html>
+<script>
+var log = (...a) => console.log(a.map(String).join(' '));
+var c = new MessageChannel();
+c.port1.onmessage = e => log('port1 got', e.data, e instanceof MessageEvent);
+c.port2.postMessage('a');
+c.port2.postMessage('b');
+log('sync after post');
+Promise.resolve().then(() => log('microtask before messages'));
+var d = new MessageChannel();
+d.port2.postMessage('queued before start');
+setTimeout(() => {
+	d.port1.addEventListener('message', e => log('listener got', e.data));
+}, 20);
+var e = new MessageChannel();
+e.port1.onmessage = () => log('closed port got it!');
+e.port1.close();
+e.port2.postMessage('lost');
+log(typeof MessagePort, c.port1 instanceof EventTarget);
+</script>

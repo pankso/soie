@@ -96,6 +96,14 @@ void soie_node_free(soie_node *n);
  * a document. */
 soie_node *soie_node_clone(const soie_node *n, int deep);
 
+/*
+ * Move n, out of its tree, with its subtree to document doc (DOM
+ * adoptNode): from then on doc owns it and frees it. Its computed
+ * styles are dropped, a player of a media element in it stops.
+ * Returns -1 for a document. Since 1.1.
+ */
+int soie_node_adopt(soie_node *doc, soie_node *n);
+
 /* One pointer per node for the host (a script engine's wrapper). */
 void soie_node_set_user(soie_node *n, void *p);
 void *soie_node_user(const soie_node *n);

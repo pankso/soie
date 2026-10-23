@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<body><div id=host></div>
+<script>
+var log = (...a) => console.log(a.map(String).join(' '));
+var d = document.implementation.createHTMLDocument('inert');
+log('title', d.title, d.body.tagName, d.defaultView, document.defaultView === window);
+var div = d.createElement('div');
+log('owner', div.ownerDocument === d, div.ownerDocument === document);
+div.innerHTML = '<p class=a>one</p><p>two</p><script>log("inert script ran!")<\/script>';
+d.body.appendChild(div);
+log('inert', d.body.children.length, div.children.length, d.querySelectorAll('p').length);
+var s = d.createElement('script');
+s.textContent = 'log("created inert script ran!")';
+d.body.appendChild(s);
+var host = document.getElementById('host');
+host.appendChild(div);
+log('moved', div.ownerDocument === document, div.firstChild.ownerDocument === document,
+	d.body.children.length, host.children.length, div.isConnected);
+var t = d.createTextNode('text');
+host.appendChild(t);
+log('text', t.ownerDocument === document, host.textContent);
+var copy = document.importNode(d.body, true);
+log('import', copy.ownerDocument === document, copy.tagName, d.body.ownerDocument === d);
+var p = host.querySelector('p');
+d.adoptNode(p);
+log('adopt', p.ownerDocument === d, p.parentNode, host.querySelectorAll('p').length);
+var x = new DOMParser().parseFromString('<title>T</title><ul><li>a<li>b</ul>', 'text/html');
+log('parser', x.title, x.querySelectorAll('li').length, x.documentElement.tagName);
+log('serialize', new XMLSerializer().serializeToString(x.querySelector('ul')));
+var f = d.createDocumentFragment();
+f.appendChild(d.createElement('span'));
+f.appendChild(d.createElement('b'));
+host.appendChild(f);
+log('fragment', host.lastChild.tagName, host.lastChild.ownerDocument === document);
+var tpl = d.createElement('template');
+tpl.innerHTML = '<i>t</i>';
+host.appendChild(document.importNode(tpl.content, true));
+log('template', host.lastChild.tagName, getComputedStyle(host.lastChild).display);
+</script>

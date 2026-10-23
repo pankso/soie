@@ -1,0 +1,6 @@
+log: sync after post
+log: function true
+log: microtask before messages
+log: port1 got a true
+log: port1 got b true
+log: listener got queued before start

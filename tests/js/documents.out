@@ -1,0 +1,11 @@
+log: title inert BODY null true
+log: owner true false
+log: inert 1 3 2
+log: moved true true 1 1 true
+log: text true onetwolog("inert script ran!")text
+log: import true BODY true
+log: adopt true null 1
+log: parser T 2 HTML
+log: serialize <ul><li>a</li><li>b</li></ul>
+log: fragment B true
+log: template I inline
