@@ -859,7 +859,14 @@ MSE, not through an HLS/DASH loader of our own.
   from the video and the audio tracks. The clock waits (`waiting`)
   where nothing is buffered and goes on with half a second ahead or
   at the end of the stream; gaps under 0.5 s are jumped. `seeked`
-  fires when the frames at the new time are there.
+  fires when the frames at the new time are there. With sound the
+  clock is the card's, and it only goes on while sound is decoded: a
+  track that cannot go (the frames wait to be shown, the sound to be
+  played) lets the other one decode, else B-frames, late out of the
+  decoder, filled the frames, stopped the decoding, the sound ran out
+  and the clock with it (YouTube froze after 3 s, silent tests never
+  showed it). The card's clock is read at each write (every 80 ms),
+  the system's goes on in between: frames were dropped by threes.
 - What a small machine plays well: H.264, VP8, AAC, Opus, Vorbis,
   FLAC, MP3, AC-3. VP9, AV1 and HEVC are refused (too heavy without
   hardware, and the sites that matter offer H.264), so are widths or
