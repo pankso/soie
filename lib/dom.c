@@ -382,30 +382,37 @@ int soie_element_set_attr(soie_node *n, const char *name, const char *value)
 		return -1;
 	a = element_find_attr(n, name);
 	if (a) {
-		free(a->value);
+		char *old = a->value;
+
 		a->value = xstrndup(value, strlen(value));
-	} else {
-		element_add_attr(n, SOIE_NS_NONE, name, value, strlen(value));
+		n->doc->u.doc.gen++;
+		style_changed_attr(n, CH_ATTR, name, old);
+		free(old);
+		return 0;
 	}
+	element_add_attr(n, SOIE_NS_NONE, name, value, strlen(value));
 	n->doc->u.doc.gen++;
-	style_changed_attr(n, CH_ATTR, name);
+	style_changed_attr(n, CH_ATTR, name, NULL);
 	return 0;
 }
 
 int soie_element_remove_attr(soie_node *n, const char *name)
 {
 	struct attr *a = element_find_attr(n, name);
+	char *aname, *old;
 	size_t i;
 
 	if (!a)
 		return -1;
 	i = (size_t)(a - n->u.el.attrs);
-	free(a->name);
-	free(a->value);
+	aname = a->name;	/* name may be it: freed after */
+	old = a->value;
 	memmove(a, a + 1, (n->u.el.nattrs - i - 1) * sizeof(*a));
 	n->u.el.nattrs--;
 	n->doc->u.doc.gen++;
-	style_changed_attr(n, CH_ATTR, name);
+	style_changed_attr(n, CH_ATTR, aname, old);
+	free(aname);
+	free(old);
 	return 0;
 }
 

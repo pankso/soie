@@ -183,7 +183,8 @@ unsigned sellist_max_spec(const struct sellist *s, const soie_node *el);
 int sellist_flags(const struct sellist *s);
 int sellist_has_anchor(const struct sellist *l, const soie_node *el);
 int sellist_has_may_change(const struct sellist *l, const soie_node *n,
-	const char *name);
+	const char *name, const char *old);
+int sellist_has_sibling(const struct sellist *l);
 
 /* Values (values.c) */
 

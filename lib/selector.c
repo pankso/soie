@@ -1,6 +1,7 @@
 /*
  * Selectors Level 4 subset: parsing, specificity and matching.
  */
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include "css.h"
@@ -1030,10 +1031,16 @@ static int match_compound(const struct compound *c, const soie_node *el,
 
 /*
  * Incremental restyling: could a change at n change what the :has()
- * arguments of l match? A change of attribute attr on n, else n
- * inserted or removed. No only when sure: the argument never looks at
- * that attribute, or no element of n's subtree has what any of its
- * compounds requires (a type, a class, an id, an attribute).
+ * arguments of l match? A change of attribute name on n (from old to
+ * its value now), else n inserted or removed. No only when sure:
+ * - an attribute: no compound of the argument tests it (a class or an
+ *   id: one of the old or new values; a state pseudo-class: the
+ *   attribute it reads);
+ * - a subtree: with descendant and child combinators a new match has
+ *   its subject in that subtree (an element's ancestors do not move),
+ *   so no element of it has what the rightmost compound requires;
+ *   sibling combinators and positions (:nth-child(), :empty) may
+ *   change for others: yes.
  */
 static int subtree_has_key(const struct compound *c, const soie_node *n)
 {
@@ -1084,48 +1091,137 @@ static int subtree_has_key(const struct compound *c, const soie_node *n)
 	return 0;
 }
 
-static int arg_sees(const struct sellist *l, const soie_node *n,
-	const char *name)
+/* Does a pseudo-class read attribute name? 1 when unsure. */
+static int pseudo_reads(int pc, const char *name)
+{
+	static const struct {
+		int pc;
+		const char *names;
+	} reads[] = {
+		{ PC_LINK, " href " }, { PC_VISITED, " href " },
+		{ PC_CHECKED, " checked selected type " },
+		{ PC_DISABLED, " disabled " }, { PC_ENABLED, " disabled " },
+		{ PC_REQUIRED, " required " }, { PC_OPTIONAL, " required " },
+		{ PC_READ_ONLY, " readonly contenteditable disabled type " },
+		{ PC_READ_WRITE, " readonly contenteditable disabled type " },
+		{ PC_PLACEHOLDER_SHOWN, " placeholder value type " },
+		{ PC_OPEN, " open " }, { PC_LANG, " lang xml:lang " },
+		{ PC_DIR, " dir " }, { PC_DEFINED, " is " }
+	};
+	char w[64];
+	size_t i;
+
+	if (pc >= PC_ROOT && pc <= PC_NTH_LAST_OF_TYPE)
+		return 0;	/* positions, not attributes */
+	if (pc == PC_TRUE || pc == PC_FALSE)
+		return 0;
+	if (strlen(name) > sizeof(w) - 3)
+		return 1;
+	snprintf(w, sizeof(w), " %s ", name);
+	for (i = 0; i < sizeof(reads) / sizeof(*reads); i++)
+		if (reads[i].pc == pc)
+			return strstr(reads[i].names, w) != NULL;
+	return 1;
+}
+
+/* Is a value of class (or id) w in list (old or new)? */
+static int value_in(const char *w, const char *list, int words)
+{
+	if (!list || !w)
+		return 0;
+	return words ? word_in(list, w, 0) : !strcmp(list, w);
+}
+
+static int arg_sees_attr(const struct sellist *l, const soie_node *n,
+	const char *name, const char *old)
+{
+	const char *now = attr(n, name);
+	const struct simple *s;
+	int i, j, k;
+
+	for (i = 0; i < l->n; i++)
+		for (j = 0; j < l->c[i].n; j++)
+			for (k = 0; k < l->c[i].c[j].n; k++) {
+				s = &l->c[i].c[j].s[k];
+				if (s->args && arg_sees_attr(s->args, n, name, old))
+					return 1;
+				switch (s->type) {
+				case SEL_ATTR:
+					if (ascii_ieq(s->name, name))
+						return 1;
+					break;
+				case SEL_CLASS:
+					if (!strcmp(name, "class") &&
+					    (value_in(s->value, old, 1) ||
+					     value_in(s->value, now, 1)))
+						return 1;
+					break;
+				case SEL_ID:
+					if (!strcmp(name, "id") &&
+					    (value_in(s->value, old, 0) ||
+					     value_in(s->value, now, 0)))
+						return 1;
+					break;
+				case SEL_PSEUDO:
+					if (s->pseudo != PC_NOT &&
+					    s->pseudo != PC_IS &&
+					    s->pseudo != PC_WHERE &&
+					    s->pseudo != PC_HAS &&
+					    pseudo_reads(s->pseudo, name))
+						return 1;
+					break;
+				case SEL_NEST:
+					return 1;
+				}
+			}
+	return 0;
+}
+
+/* Positions anywhere in l (sibling combinators, :nth-*, :empty...) */
+static int has_positions(const struct sellist *l)
 {
 	const struct compound *c;
-	const struct simple *s;
 	int i, j, k;
 
 	for (i = 0; i < l->n; i++)
 		for (j = 0; j < l->c[i].n; j++) {
 			c = &l->c[i].c[j];
+			if (c->comb == COMB_NEXT || c->comb == COMB_SUBSEQ)
+				return 1;
 			for (k = 0; k < c->n; k++) {
-				s = &c->s[k];
-				if (s->args && arg_sees(s->args, n, name))
+				if (c->s[k].type == SEL_NEST)
 					return 1;
-				if (s->type == SEL_NEST)
+				if (c->s[k].type == SEL_PSEUDO &&
+				    c->s[k].pseudo >= PC_ROOT &&
+				    c->s[k].pseudo <= PC_NTH_LAST_OF_TYPE)
 					return 1;
-				if (s->type == SEL_PSEUDO && s->pseudo != PC_NOT &&
-				    s->pseudo != PC_IS && s->pseudo != PC_WHERE &&
-				    s->pseudo != PC_HAS && s->pseudo != PC_TRUE &&
-				    s->pseudo != PC_FALSE &&
-				    /* structural: attributes do not move them */
-				    (!name || s->pseudo < PC_ROOT ||
-				     s->pseudo > PC_NTH_LAST_OF_TYPE))
-					return 1;
-				if (!name)
-					continue;
-				if ((s->type == SEL_ATTR &&
-				     ascii_ieq(s->name, name)) ||
-				    (s->type == SEL_CLASS &&
-				     !strcmp(name, "class")) ||
-				    (s->type == SEL_ID && !strcmp(name, "id")))
+				if (c->s[k].args && has_positions(c->s[k].args))
 					return 1;
 			}
-			if (!name && n->type == SOIE_ELEMENT &&
-			    subtree_has_key(c, n))
-				return 1;
 		}
 	return 0;
 }
 
+static int arg_sees(const struct sellist *l, const soie_node *n,
+	const char *name, const char *old)
+{
+	int i;
+
+	if (name)
+		return n->type == SOIE_ELEMENT &&
+			arg_sees_attr(l, n, name, old);
+	if (has_positions(l))
+		return 1;
+	if (n->type != SOIE_ELEMENT)
+		return 0;	/* text: only :empty, a position */
+	for (i = 0; i < l->n; i++)
+		if (!l->c[i].n || subtree_has_key(&l->c[i].c[l->c[i].n - 1], n))
+			return 1;
+	return 0;
+}
+
 int sellist_has_may_change(const struct sellist *l, const soie_node *n,
-	const char *name)
+	const char *name, const char *old)
 {
 	const struct simple *s;
 	int i, j, k;
@@ -1137,8 +1233,35 @@ int sellist_has_may_change(const struct sellist *l, const soie_node *n,
 				if (!s->args)
 					continue;
 				if (s->type == SEL_PSEUDO && s->pseudo == PC_HAS ?
-				    arg_sees(s->args, n, name) :
-				    sellist_has_may_change(s->args, n, name))
+				    arg_sees(s->args, n, name, old) :
+				    sellist_has_may_change(s->args, n, name, old))
+					return 1;
+			}
+	return 0;
+}
+
+/* Has l a :has() whose argument starts with + or ~? Its anchor is
+ * then a previous sibling of what changes, not an ancestor. */
+int sellist_has_sibling(const struct sellist *l)
+{
+	const struct simple *s;
+	int i, j, k, m;
+
+	for (i = 0; l && i < l->n; i++)
+		for (j = 0; j < l->c[i].n; j++)
+			for (k = 0; k < l->c[i].c[j].n; k++) {
+				s = &l->c[i].c[j].s[k];
+				if (!s->args)
+					continue;
+				if (s->type == SEL_PSEUDO && s->pseudo == PC_HAS)
+					for (m = 0; m < s->args->n; m++)
+						if (s->args->c[m].n &&
+						    (s->args->c[m].c[0].comb ==
+						     COMB_NEXT ||
+						     s->args->c[m].c[0].comb ==
+						     COMB_SUBSEQ))
+							return 1;
+				if (sellist_has_sibling(s->args))
 					return 1;
 			}
 	return 0;

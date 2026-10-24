@@ -2355,8 +2355,10 @@ static void mark_siblings(soie_node *n, int f, int bit, int next)
 		mark(k, how);
 }
 
-/* n changed: an attribute (name), else n came or goes */
-void style_changed_attr(soie_node *n, int kind, const char *name)
+/* n changed: an attribute (name, its value was old), else n came or
+ * goes */
+void style_changed_attr(soie_node *n, int kind, const char *name,
+	const char *old)
 {
 	soie_node *doc = n->doc, *a, *k;
 	const struct styledb *db = doc->u.doc.styles;
@@ -2366,19 +2368,36 @@ void style_changed_attr(soie_node *n, int kind, const char *name)
 		return;
 	f = db->sel_flags;
 	if (f & (SF_HAS << SF_DEEP))
-		for (a = n->parent; a && a->type == SOIE_ELEMENT; a = a->parent)
-			for (i = 0; i < db->nanchors; i++)
-				/* a :has() that cannot see the change (a
-				 * :has(dialog) and a div's class) needs
-				 * nothing: YouTube has one at the root */
-				if (sellist_has_anchor(db->anchors[i], a) &&
-				    sellist_has_may_change(db->anchors[i], n,
-				    kind == CH_ATTR ? name : NULL)) {
+		for (i = 0; i < db->nanchors; i++) {
+			const struct sellist *l = db->anchors[i];
+			int sib;
+
+			/* a :has() that cannot see the change (a :has(dialog)
+			 * and a div's class) needs nothing: YouTube has one
+			 * at the root */
+			if (!sellist_has_may_change(l, n, kind == CH_ATTR ?
+			    name : NULL, old))
+				continue;
+			sib = sellist_has_sibling(l);
+			for (a = n; a && a->type == SOIE_ELEMENT; a = a->parent) {
+				soie_node *p;
+
+				if (a != n && sellist_has_anchor(l, a)) {
 					mark(a, SUBTREE);
 					for (k = a->next; k; k = k->next)
 						mark(k, SUBTREE);
-					break;
 				}
+				/* :has(+ .x), :has(~ .x): the anchor is
+				 * before */
+				for (p = sib ? a->prev : NULL; p; p = p->prev)
+					if (p->type == SOIE_ELEMENT &&
+					    sellist_has_anchor(l, p)) {
+						mark(p, SUBTREE);
+						for (k = p->next; k; k = k->next)
+							mark(k, SUBTREE);
+					}
+			}
+		}
 	if (f & SF_HAS)
 		for (a = n->parent; a && a->type == SOIE_ELEMENT; a = a->parent) {
 			mark(a, SELF);
@@ -2399,7 +2418,7 @@ void style_changed_attr(soie_node *n, int kind, const char *name)
 
 void style_changed(soie_node *n, int kind)
 {
-	style_changed_attr(n, kind, NULL);
+	style_changed_attr(n, kind, NULL, NULL);
 }
 
 /* A node freed while marked */
