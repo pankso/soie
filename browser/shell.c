@@ -1488,15 +1488,19 @@ int shell_find(const char *text, int dir, int *cur)
 
 int shell_tick(int *repaint)
 {
+	/* media events first: timers their listeners set count below */
+	int r = 0, mt = page.doc ? soie_media_tick(page.doc, &r) : -1;
 	double t0 = now_s(), t1;
-	int t = page.doc ? soie_script_tick(page.doc) : -1, m, r = 0;
+	int t = page.doc ? soie_script_tick(page.doc) : -1, m;
 	soie_node *d = page.doc;
 	int l = page.loading, n = res_pending(-1);
 
 	/* what keeps the window from answering */
 	if ((t1 = now_s()) - t0 > 0.1)
 		debug(1, "busy %.2f s: timers and answers of scripts", t1 - t0);
-	*repaint = 0;
+	*repaint = r;
+	if (mt >= 0 && (t < 0 || mt < t))
+		t = mt;
 	/* a new page, a new stage, a resource: show it */
 	collect_jobs(0);
 	if (d != page.doc || l != page.loading || n != res_pending(-1))
@@ -1504,13 +1508,6 @@ int shell_tick(int *repaint)
 	m = apply_late(repaint);
 	if (m >= 0 && (t < 0 || m < t))
 		t = m;
-	if (page.doc) {
-		m = soie_media_tick(page.doc, &r);
-		if (m >= 0 && (t < 0 || m < t))
-			t = m;
-		if (r)
-			*repaint = 1;
-	}
 	m = refresh_wait();
 	if (m >= 0 && (t < 0 || m < t))
 		t = m;

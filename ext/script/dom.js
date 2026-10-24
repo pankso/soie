@@ -1507,7 +1507,10 @@ for (const ev of ['click', 'dblclick', 'mousedown', 'mouseup', 'mousemove',
 	'touchmove', 'animationend', 'transitionend', 'beforeunload',
 	'unload', 'popstate', 'hashchange', 'message', 'readystatechange',
 	'DOMContentLoaded', 'focusin', 'focusout', 'invalid',
-	'loadedmetadata', 'canplay', 'volumechange']) {
+	'loadedmetadata', 'canplay', 'volumechange', 'playing', 'waiting',
+	'seeking', 'seeked', 'progress', 'durationchange', 'loadeddata',
+	'loadstart', 'canplaythrough', 'emptied', 'ratechange', 'stalled',
+	'suspend']) {
 	const d = {
 		get() {
 			const h = this[HANDLERS] && this[HANDLERS][ev];
@@ -2133,9 +2136,32 @@ html('HTMLDialogElement', ['dialog'], (B) => class extends B {
 });
 reflect(HTMLDialogElement, ['open'], 'bool');
 /* Media: the engine's players (SOIE_MEDIA_* operations) */
-const M_PLAY = 0, M_PAUSE = 1, M_SEEK = 3, M_VOLUME = 4, M_MUTE = 5;
+const M_PLAY = 0, M_PAUSE = 1, M_SEEK = 3, M_VOLUME = 4, M_MUTE = 5,
+	M_CLOSE = 6;
+class TimeRanges {
+	constructor(a = []) { this._a = a; }
+	get length() { return this._a.length >> 1; }
+	start(i) { return this._at(i, 0); }
+	end(i) { return this._at(i, 1); }
+	_at(i, k) {
+		i = i >>> 0;
+		if (i >= this.length)
+			throw new DOMException('no range ' + i, 'IndexSizeError');
+		return this._a[2 * i + k];
+	}
+}
 html('HTMLMediaElement', [], (B) => class extends B {
 	get _st() { return api.playerState(this); }
+	get srcObject() { return this._srcObject || null; }
+	set srcObject(v) {
+		this._srcObject = v || null;
+		mediaLoad(this);
+	}
+	get seeking() {
+		const s = this._st;
+		return this._seekMark !== undefined && !!s &&
+			s.seeks === this._seekMark;
+	}
 	get paused() {
 		const s = this._st;
 		return !s || s.paused;
@@ -2150,19 +2176,38 @@ html('HTMLMediaElement', [], (B) => class extends B {
 	}
 	set currentTime(v) {
 		this._seekTo = +v || 0;
-		if (api.playerState(this))
+		const s = api.playerState(this);
+		if (s) {
+			/* the player says when it is done: seeked */
+			this._seekMark = s.seeks;
 			api.player(this, M_SEEK, this._seekTo);
+			this._seekTo = 0;
+		}
 		addTimer(() => {
 			dispatch(this, new Event('seeking'));
-			dispatch(this, new Event('seeked'));
+			if (!s)
+				dispatch(this, new Event('seeked'));
 		}, 0, [], false);
 	}
 	get duration() {
+		if (this._ms)
+			return this._ms.duration;
 		const s = this._st;
 		return s && s.duration > 0 ? s.duration : NaN;
 	}
 	get readyState() {
 		const s = this._st;
+		if (this._ms) {
+			/* what is buffered at the position */
+			if (!s || !(s.duration > 0))
+				return 0;
+			const r = api.mseBuffered(this, -1), t = s.time;
+			for (let i = 0; i < r.length; i += 2)
+				if (t >= r[i] && t < r[i + 1])
+					return r[i + 1] - t > 0.5 ||
+						this._ms.readyState === 'ended' ? 4 : 2;
+			return 1;
+		}
 		return s && (s.duration > 0 || s.width) ? 4 : 0;
 	}
 	get networkState() { return this._st ? 1 : 0; }
@@ -2188,19 +2233,34 @@ html('HTMLMediaElement', [], (B) => class extends B {
 	}
 	get playbackRate() { return 1; }
 	set playbackRate(v) {}
+	get defaultPlaybackRate() { return 1; }
+	set defaultPlaybackRate(v) {}
 	get error() {
+		if (this._mseError)
+			return { code: this._mseError, message: 'cannot play' };
 		const s = this._st;
 		return s && s.error ? { code: 4, message: 'cannot play' } : null;
 	}
 	get buffered() {
+		if (this._ms)
+			return new TimeRanges(api.mseBuffered(this, -1));
 		const d = this.duration;
-		return { length: isNaN(d) ? 0 : 1, start: () => 0,
-			end: () => isNaN(d) ? 0 : d };
+		return new TimeRanges(isNaN(d) ? [] : [0, d]);
 	}
-	get seekable() { return this.buffered; }
-	get currentSrc() { return this.src; }
+	get seekable() {
+		const ms = this._ms;
+		if (ms && ms._live)
+			return new TimeRanges(ms._live.slice());
+		if (ms && ms.duration === Infinity) {
+			const b = this.buffered;
+			return new TimeRanges(b.length ? [0, b.end(b.length - 1)] : []);
+		}
+		return this._ms ? new TimeRanges(isNaN(this.duration) ? [] :
+			[0, this.duration]) : this.buffered;
+	}
+	get currentSrc() { return this._ms ? this.src : this.src; }
 	canPlayType(t) { return api.canPlay(String(t)) ? 'maybe' : ''; }
-	load() {}
+	load() { mediaLoad(this, true); }
 	play() {
 		if (!api.player(this, M_PLAY, 0))
 			return Promise.reject(new DOMException('cannot play',
@@ -2217,14 +2277,358 @@ html('HTMLMediaElement', [], (B) => class extends B {
 	fastSeek(t) { this.currentTime = t; }
 });
 reflect(HTMLMediaElement, ['src'], 'url');
+{
+	const d = Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype,
+		'src');
+	Object.defineProperty(HTMLMediaElement.prototype, 'src', {
+		get: d.get,
+		set(v) {
+			d.set.call(this, v);
+			mediaLoad(this);
+		},
+		configurable: true,
+	});
+}
 reflect(HTMLMediaElement, ['preload', 'crossOrigin']);
 reflect(HTMLMediaElement, ['autoplay', 'loop', 'controls',
 	['defaultMuted', 'muted']], 'bool');
-html('HTMLVideoElement', ['video'], null, HTMLMediaElement);
+html('HTMLVideoElement', ['video'], (B) => class extends B {
+	getVideoPlaybackQuality() {
+		const s = this._st;
+		return { creationTime: performance.now(),
+			totalVideoFrames: s ? s.decoded : 0,
+			droppedVideoFrames: s ? s.dropped : 0,
+			corruptedVideoFrames: 0 };
+	}
+}, HTMLMediaElement);
 reflect(HTMLVideoElement, ['poster'], 'url');
 reflect(HTMLVideoElement, ['width', 'height'], 'int');
 reflect(HTMLVideoElement, ['playsInline'], 'bool');
 html('HTMLAudioElement', ['audio'], null, HTMLMediaElement);
+
+/*
+ * Media Source Extensions: a MediaSource attached to an element feeds
+ * the element's player (api.mse*), each SourceBuffer appends to one of
+ * its buffers. Appends are parsed at once: the events follow in a task.
+ */
+const S_REMOVE = 0, S_ABORT = 1, S_DROP = 2, S_DURATION = 3, S_END = 4;
+function handlers(proto, events) {
+	for (const ev of events)
+		Object.defineProperty(proto, 'on' + ev, {
+			get() { return (this[HANDLERS] && this[HANDLERS][ev]) || null; },
+			set(v) {
+				(this[HANDLERS] || (this[HANDLERS] = Object.create(null)))[ev] =
+					typeof v === 'function' ? v : null;
+			},
+			configurable: true,
+		});
+}
+function invalid(what) { return new DOMException(what, 'InvalidStateError'); }
+
+/* The element's source: srcObject, else a src from createObjectURL();
+ * a new one closes the player of the old one */
+function mediaLoad(el, reload) {
+	const src = el.getAttribute('src');
+	const ms = el._srcObject instanceof MediaSource ? el._srcObject :
+		!el._srcObject && src ? objectURLs.get(src) : null;
+	if (el._ms && (el._ms !== ms || reload))
+		el._ms._detach();
+	else if (!el._ms && (src !== el._loaded || reload) &&
+		 api.playerState(el)) {
+		api.player(el, M_CLOSE, 0);
+		addTimer(() => dispatch(el, new Event('emptied')), 0, [], false);
+	}
+	el._loaded = src;
+	el._seekMark = undefined;
+	if (ms instanceof MediaSource && !el._ms)
+		ms._attach(el);
+}
+
+class SourceBufferList extends EventTarget {
+	constructor() {
+		super();
+		this._l = [];
+	}
+	get length() { return this._l.length; }
+	_set(l) {
+		for (let i = 0; i < Math.max(l.length, this._l.length); i++)
+			if (i < l.length)
+				this[i] = l[i];
+			else
+				delete this[i];
+		this._l = l;
+	}
+	[Symbol.iterator]() { return this._l[Symbol.iterator](); }
+}
+handlers(SourceBufferList.prototype, ['addsourcebuffer',
+	'removesourcebuffer']);
+
+class SourceBuffer extends EventTarget {
+	constructor(ms, id, type) {
+		super();
+		this._ms = ms;
+		this._id = id;
+		this._type = type;
+		this._offset = 0;
+		this._ws = 0;
+		this._we = Infinity;
+		this._timer = 0;
+		this.updating = false;
+		this.mode = 'segments';
+		this.audioTracks = list([]);
+		this.videoTracks = list([]);
+		this.textTracks = list([]);
+	}
+	_check() {
+		if (!this._ms)
+			throw invalid('removed from its MediaSource');
+		if (this.updating)
+			throw invalid('updating');
+	}
+	get timestampOffset() { return this._offset; }
+	set timestampOffset(v) {
+		this._check();
+		this._offset = +v || 0;
+	}
+	get appendWindowStart() { return this._ws; }
+	set appendWindowStart(v) {
+		this._check();
+		if (!(+v >= 0) || +v >= this._we)
+			throw new TypeError('bad appendWindowStart');
+		this._ws = +v;
+	}
+	get appendWindowEnd() { return this._we; }
+	set appendWindowEnd(v) {
+		this._check();
+		if (isNaN(+v) || +v <= this._ws)
+			throw new TypeError('bad appendWindowEnd');
+		this._we = +v;
+	}
+	get buffered() {
+		if (!this._ms)
+			throw invalid('removed from its MediaSource');
+		return new TimeRanges(this._ms._el ?
+			api.mseBuffered(this._ms._el, this._id) : []);
+	}
+	_done(error) {
+		this._timer = addTimer(() => {
+			this._timer = 0;
+			dispatch(this, new Event('updatestart'));
+			this.updating = false;
+			dispatch(this, new Event(error ? 'error' : 'update'));
+			dispatch(this, new Event('updateend'));
+			if (error && this._ms)
+				this._ms.endOfStream('decode');
+		}, 0, [], false);
+	}
+	appendBuffer(data) {
+		const b = asBytes(data);
+		if (!b)
+			throw new TypeError('appendBuffer: not an ArrayBuffer');
+		this._check();
+		const ms = this._ms;
+		if (ms._state === 'ended') {
+			ms._state = 'open';
+			api.mseControl(ms._el, S_END, -1, 0, 0);
+			addTimer(() => dispatch(ms, new Event('sourceopen')), 0, [],
+				false);
+		}
+		const r = api.mseAppend(ms._el, this._id, b, this._offset,
+			this._ws, this._we);
+		if (r === -2)
+			throw new DOMException('the buffer is full',
+				'QuotaExceededError');
+		this.updating = true;
+		this._done(r === -1);
+		addTimer(() => dispatch(ms._el, new Event('progress')), 0, [],
+			false);
+	}
+	remove(start, end) {
+		this._check();
+		const ms = this._ms;
+		if (isNaN(ms.duration) || !(+start >= 0) || +start > ms.duration ||
+		    !(+end > +start))
+			throw new TypeError('bad range');
+		if (ms._state === 'ended')
+			ms._state = 'open';
+		api.mseControl(ms._el, S_REMOVE, this._id, +start,
+			Math.min(+end, 1e300));
+		this.updating = true;
+		this._done(false);
+	}
+	abort() {
+		if (!this._ms || this._ms._state !== 'open')
+			throw invalid('not open');
+		if (this.updating) {
+			timers.delete(this._timer);
+			this._timer = 0;
+			this.updating = false;
+			dispatch(this, new Event('abort'));
+			dispatch(this, new Event('updateend'));
+		}
+		api.mseControl(this._ms._el, S_ABORT, this._id, 0, 0);
+		this._ws = 0;
+		this._we = Infinity;
+	}
+	changeType(type) {
+		this._check();
+		if (!MediaSource.isTypeSupported(type))
+			throw new DOMException(type, 'NotSupportedError');
+		this._type = String(type);
+	}
+}
+handlers(SourceBuffer.prototype, ['updatestart', 'update', 'updateend',
+	'error', 'abort']);
+
+class MediaSource extends EventTarget {
+	constructor() {
+		super();
+		this._state = 'closed';
+		this._duration = NaN;
+		this._el = null;
+		this._live = null;
+		this.sourceBuffers = new SourceBufferList();
+		this.activeSourceBuffers = new SourceBufferList();
+	}
+	static isTypeSupported(type) { return api.mseSupported(String(type)); }
+	get readyState() { return this._state; }
+	get handle() { return this; }
+	get duration() { return this._state === 'closed' ? NaN : this._duration; }
+	set duration(v) {
+		v = +v;
+		if (isNaN(v) || v < 0)
+			throw new TypeError('bad duration');
+		if (this._state !== 'open' ||
+		    this.sourceBuffers._l.some((b) => b.updating))
+			throw invalid('cannot set the duration now');
+		this._setDuration(v);
+	}
+	_setDuration(v) {
+		if (v === this._duration)
+			return;
+		this._duration = v;
+		api.mseControl(this._el, S_DURATION, -1, isFinite(v) ? v : 0, 0);
+	}
+	addSourceBuffer(type) {
+		type = String(type);
+		if (!type)
+			throw new TypeError('no type');
+		if (!MediaSource.isTypeSupported(type))
+			throw new DOMException(type, 'NotSupportedError');
+		if (this._state !== 'open')
+			throw invalid('not open');
+		const id = api.mseAdd(this._el, type);
+		if (id < 0)
+			throw new DOMException('too many SourceBuffers',
+				'QuotaExceededError');
+		const sb = new SourceBuffer(this, id, type);
+		this.sourceBuffers._set([...this.sourceBuffers._l, sb]);
+		this.activeSourceBuffers._set([...this.activeSourceBuffers._l, sb]);
+		addTimer(() => {
+			dispatch(this.sourceBuffers, new Event('addsourcebuffer'));
+			dispatch(this.activeSourceBuffers, new Event('addsourcebuffer'));
+		}, 0, [], false);
+		return sb;
+	}
+	removeSourceBuffer(sb) {
+		if (!this.sourceBuffers._l.includes(sb))
+			throw new DOMException('not a SourceBuffer of this source',
+				'NotFoundError');
+		if (sb.updating) {
+			timers.delete(sb._timer);
+			sb.updating = false;
+			dispatch(sb, new Event('abort'));
+			dispatch(sb, new Event('updateend'));
+		}
+		if (this._el)
+			api.mseControl(this._el, S_DROP, sb._id, 0, 0);
+		sb._ms = null;
+		this.sourceBuffers._set(this.sourceBuffers._l.filter((b) => b !== sb));
+		this.activeSourceBuffers._set(this.activeSourceBuffers._l.filter(
+			(b) => b !== sb));
+		addTimer(() => {
+			dispatch(this.sourceBuffers, new Event('removesourcebuffer'));
+		}, 0, [], false);
+	}
+	endOfStream(error) {
+		if (this._state !== 'open' ||
+		    this.sourceBuffers._l.some((b) => b.updating))
+			throw invalid('cannot end now');
+		this._state = 'ended';
+		addTimer(() => dispatch(this, new Event('sourceended')), 0, [],
+			false);
+		if (error) {
+			const el = this._el;
+			if (el) {
+				el._mseError = error === 'network' ? 2 : 3;
+				addTimer(() => dispatch(el, new Event('error')), 0, [],
+					false);
+			}
+			return;
+		}
+		/* the duration: the end of what is buffered */
+		let end = 0;
+		for (const b of this.sourceBuffers._l) {
+			const r = b.buffered;
+			if (r.length)
+				end = Math.max(end, r.end(r.length - 1));
+		}
+		if (end && (isNaN(this._duration) || end !== this._duration))
+			this._setDuration(end);
+		api.mseControl(this._el, S_END, -1, 1, 0);
+	}
+	setLiveSeekableRange(start, end) {
+		if (this._state !== 'open')
+			throw invalid('not open');
+		if (!(+start >= 0) || +start > +end)
+			throw new TypeError('bad range');
+		this._live = [+start, +end];
+	}
+	clearLiveSeekableRange() {
+		if (this._state !== 'open')
+			throw invalid('not open');
+		this._live = null;
+	}
+	_attach(el) {
+		if (this._state !== 'closed' || !api.mseOpen(el)) {
+			el._mseError = 4;
+			addTimer(() => dispatch(el, new Event('error')), 0, [], false);
+			return;
+		}
+		this._el = el;
+		el._ms = this;
+		el._mseError = 0;
+		this._state = 'open';
+		addTimer(() => {
+			dispatch(el, new Event('loadstart'));
+			dispatch(this, new Event('sourceopen'));
+		}, 0, [], false);
+	}
+	_detach() {
+		const el = this._el;
+		for (const b of this.sourceBuffers._l) {
+			timers.delete(b._timer);
+			b.updating = false;
+			b._ms = null;
+		}
+		this.sourceBuffers._set([]);
+		this.activeSourceBuffers._set([]);
+		this._state = 'closed';
+		this._duration = NaN;
+		this._el = null;
+		this._live = null;
+		if (el) {
+			el._ms = null;
+			api.player(el, M_CLOSE, 0);
+			addTimer(() => dispatch(el, new Event('emptied')), 0, [],
+				false);
+		}
+		addTimer(() => dispatch(this, new Event('sourceclose')), 0, [],
+			false);
+	}
+}
+handlers(MediaSource.prototype, ['sourceopen', 'sourceended',
+	'sourceclose']);
 html('HTMLSourceElement', ['source']);
 reflect(HTMLSourceElement, ['src'], 'url');
 reflect(HTMLSourceElement, ['type', 'srcset', 'sizes', 'media']);
@@ -2964,6 +3368,8 @@ const URL_RE = /^([a-zA-Z][a-zA-Z0-9+.-]*:)(?:\/\/(?:([^:@\/]*)(?::([^@\/]*))?@)
 const DEFAULT_PORT = { 'http:': '80', 'https:': '443', 'ws:': '80',
 	'wss:': '443', 'ftp:': '21' };
 
+/* What createObjectURL() gave a URL to: Blobs, MediaSources */
+const objectURLs = new Map();
 class URL {
 	constructor(url, base) {
 		url = String(url);
@@ -3063,8 +3469,16 @@ class URL {
 			return null;
 		}
 	}
-	static createObjectURL() { return 'blob:' + location.origin + '/0'; }
-	static revokeObjectURL() {}
+	static createObjectURL(o) {
+		const r = crypto.getRandomValues(new Uint8Array(16));
+		const h = [...r].map((x) => (x + 256).toString(16).slice(1)).join('');
+		const u = 'blob:' + location.origin + '/' + h.slice(0, 8) + '-' +
+			h.slice(8, 12) + '-' + h.slice(12, 16) + '-' + h.slice(16, 20) +
+			'-' + h.slice(20);
+		objectURLs.set(u, o);
+		return u;
+	}
+	static revokeObjectURL(u) { objectURLs.delete(String(u)); }
 }
 
 /* Text encoding */
@@ -3525,6 +3939,14 @@ class Request {
 	clone() { return new Request(this); }
 }
 
+/* A data: or blob: URL's bytes and type, or null */
+function localURL(url) {
+	if (!/^blob:/i.test(url))
+		return dataURL(url);
+	const b = objectURLs.get(url.replace(/#.*/, ''));
+	return b instanceof Blob ? { body: b._b, type: b.type ||
+		'application/octet-stream' } : null;
+}
 /* A data: URL's bytes and type, or null */
 function dataURL(url) {
 	const m = /^data:([^,]*?)(;base64)?,(.*)$/is.exec(url);
@@ -3678,9 +4100,9 @@ function fetch(input, init = {}) {
 				reject(new DOMException('aborted', 'AbortError'));
 				return;
 			}
-			if (/^data:/i.test(req.url)) {
+			if (/^(data|blob):/i.test(req.url)) {
 				/* no network: the URL holds the bytes */
-				const d = dataURL(req.url);
+				const d = localURL(req.url);
 				if (d)
 					answered({ status: 200, url: req.url, body: d.body,
 						headers: 'content-type: ' + d.type + '\r\n' });
@@ -3817,8 +4239,8 @@ class XMLHttpRequest extends EventTarget {
 					'text/plain;charset=UTF-8');
 			const args = [this._method, this._url, this._headers, b,
 				this.withCredentials ? 'include' : 'same-origin'];
-			if (/^data:/i.test(this._url)) {
-				const d = dataURL(this._url);
+			if (/^(data|blob):/i.test(this._url)) {
+				const d = localURL(this._url);
 				done(d && { status: 200, url: this._url, body: d.body,
 					headers: 'content-type: ' + d.type + '\r\n' });
 				return;
@@ -4365,6 +4787,22 @@ const navigator = Object.create(Navigator.prototype, {
 	sendBeacon: { value: () => true },
 	vibrate: { value: () => false },
 	registerProtocolHandler: { value: () => {} },
+	mediaCapabilities: { value: {
+		/* what MediaSource takes plays well: the media extension
+		 * refuses what a small machine does not */
+		decodingInfo(c = {}) {
+			const ok = (m, v) => !m || api.mseSupported(String(m.contentType) +
+				(v && m.width ? '; width=' + m.width + '; height=' +
+				m.height : '') + (v && m.framerate ? '; framerate=' +
+				m.framerate : ''));
+			const yes = (!!c.video || !!c.audio) && ok(c.video, 1) &&
+				ok(c.audio, 0);
+			return Promise.resolve({ supported: yes, smooth: yes,
+				powerEfficient: yes, configuration: c });
+		},
+		encodingInfo: (c) => Promise.resolve({ supported: false,
+			smooth: false, powerEfficient: false, configuration: c }),
+	}, enumerable: true },
 });
 const screen = Object.create(Screen.prototype, {
 	width: { get: () => api.viewport()[0], enumerable: true },
@@ -4557,6 +4995,10 @@ const globals = {
 			api.scroll(v[2] + (+x || 0), v[3] + (+y || 0));
 	},
 };
+/* MediaSource only with a media extension that plays it */
+if (api.mseSupported('video/mp4') || api.mseSupported('video/webm'))
+	Object.assign(globals, { MediaSource, SourceBuffer, SourceBufferList });
+globals.TimeRanges = TimeRanges;
 globals.scroll = globals.scrollTo;
 globals.origin = (() => {
 	try {

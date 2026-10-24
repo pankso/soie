@@ -1411,6 +1411,10 @@ static JSValue n_player_state(JSContext *js, JSValueConst this, int argc,
 	JS_SetPropertyStr(js, o, "width", JS_NewInt32(js, st.width));
 	JS_SetPropertyStr(js, o, "height", JS_NewInt32(js, st.height));
 	JS_SetPropertyStr(js, o, "error", JS_NewBool(js, st.error));
+	JS_SetPropertyStr(js, o, "waiting", JS_NewBool(js, st.waiting));
+	JS_SetPropertyStr(js, o, "seeks", JS_NewInt32(js, st.seeks));
+	JS_SetPropertyStr(js, o, "decoded", JS_NewInt32(js, st.decoded));
+	JS_SetPropertyStr(js, o, "dropped", JS_NewInt32(js, st.dropped));
 	return o;
 }
 
@@ -1424,6 +1428,101 @@ static JSValue n_can_play(JSContext *js, JSValueConst this, int argc,
 	r = soie_media_can_play(type);
 	JS_FreeCString(js, type);
 	return JS_NewBool(js, r);
+}
+
+/* Media Source Extensions: the element's player, fed by dom.js */
+static JSValue n_mse_supported(JSContext *js, JSValueConst this, int argc,
+	JSValueConst *argv)
+{
+	int r;
+	STR(0, type);
+
+	(void)this;
+	r = soie_media_source_supported(type);
+	JS_FreeCString(js, type);
+	return JS_NewBool(js, r);
+}
+
+static JSValue n_mse_open(JSContext *js, JSValueConst this, int argc,
+	JSValueConst *argv)
+{
+	NODE(0, el);
+
+	(void)this;
+	return JS_NewBool(js, soie_media_source_open(el) == 0);
+}
+
+static JSValue n_mse_add(JSContext *js, JSValueConst this, int argc,
+	JSValueConst *argv)
+{
+	int r;
+	NODE(0, el);
+	STR(1, type);
+
+	(void)this;
+	r = soie_media_source_add(el, type);
+	JS_FreeCString(js, type);
+	return JS_NewInt32(js, r);
+}
+
+/* mseAppend(el, id, bytes, offset, window start, window end) */
+static JSValue n_mse_append(JSContext *js, JSValueConst this, int argc,
+	JSValueConst *argv)
+{
+	double t[3] = { 0, -1e300, 1e300 };
+	const uint8_t *b;
+	int32_t id = -1;
+	size_t len;
+	int i;
+	NODE(0, el);
+
+	(void)this;
+	if (argc < 3 || !(b = bytes_of(js, argv[2], &len)))
+		return JS_ThrowTypeError(js, "not bytes");
+	JS_ToInt32(js, &id, argv[1]);
+	for (i = 0; i < 3 && 3 + i < argc; i++)
+		JS_ToFloat64(js, &t[i], argv[3 + i]);
+	return JS_NewInt32(js, soie_media_source_append(el, id, b, len, t[0],
+		t[1], t[2]));
+}
+
+static JSValue n_mse_buffered(JSContext *js, JSValueConst this, int argc,
+	JSValueConst *argv)
+{
+	double r[2 * 64];
+	int32_t id = -1;
+	JSValue a;
+	int i, n;
+	NODE(0, el);
+
+	(void)this;
+	if (argc > 1)
+		JS_ToInt32(js, &id, argv[1]);
+	n = soie_media_source_buffered(el, id, r, 64);
+	a = JS_NewArray(js);
+	for (i = 0; i < 2 * n; i++)
+		JS_SetPropertyUint32(js, a, (uint32_t)i, JS_NewFloat64(js, r[i]));
+	return a;
+}
+
+/* mseControl(el, op, id, a, b) */
+static JSValue n_mse_control(JSContext *js, JSValueConst this, int argc,
+	JSValueConst *argv)
+{
+	int32_t op = 0, id = -1;
+	double a = 0, b = 0;
+	NODE(0, el);
+
+	(void)this;
+	if (argc > 1)
+		JS_ToInt32(js, &op, argv[1]);
+	if (argc > 2)
+		JS_ToInt32(js, &id, argv[2]);
+	if (argc > 3)
+		JS_ToFloat64(js, &a, argv[3]);
+	if (argc > 4)
+		JS_ToFloat64(js, &b, argv[4]);
+	return JS_NewBool(js, soie_media_source_control(el, op, id, a, b) == 0);
 }
 
 /* UTF-8: bytes to a string (bad sequences become U+FFFD, a BOM goes),
@@ -1564,6 +1663,12 @@ static const JSCFunctionListEntry natives[] = {
 	JS_CFUNC_DEF("player", 3, n_player),
 	JS_CFUNC_DEF("playerState", 1, n_player_state),
 	JS_CFUNC_DEF("canPlay", 1, n_can_play),
+	JS_CFUNC_DEF("mseSupported", 1, n_mse_supported),
+	JS_CFUNC_DEF("mseOpen", 1, n_mse_open),
+	JS_CFUNC_DEF("mseAdd", 2, n_mse_add),
+	JS_CFUNC_DEF("mseAppend", 6, n_mse_append),
+	JS_CFUNC_DEF("mseBuffered", 2, n_mse_buffered),
+	JS_CFUNC_DEF("mseControl", 5, n_mse_control),
 	JS_CFUNC_DEF("utf8Decode", 1, n_utf8_decode),
 	JS_CFUNC_DEF("utf8Encode", 1, n_utf8_encode),
 	JS_CFUNC_DEF("mapModule", 2, n_map_module),

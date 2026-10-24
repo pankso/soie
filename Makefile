@@ -189,7 +189,7 @@ check-js: tools/soie-render ext/script.so
 	@fail=0; for f in tests/js/*.html; do \
 		x="-x ext/script.so"; \
 		case $$f in */media-*) [ -f ext/media.so ] || continue; \
-			x="$$x -x ext/media.so";; esac; \
+			x="$$x -x ext/media.so -T 8000";; esac; \
 		$(PERTURB) SOIE_AUDIO=none tools/soie-render -S $$x -j $$f \
 			2>&1 >/dev/null | \
 			grep -v '^    at ' | cmp -s - $${f%.html}.out || \

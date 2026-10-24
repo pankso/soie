@@ -5,6 +5,7 @@
  * A player opens when the element is first played (a click, a script,
  * autoplay when the host allows it), never just because the element
  * is on the page: on old machines a page full of videos stays a page.
+ * A script that attaches a MediaSource opens one at once: it feeds it.
  */
 #include <stdlib.h>
 #include <string.h>
@@ -36,7 +37,7 @@ static int page_request(void *data, const soie_request *req,
 }
 
 struct player {
-	struct preq *req;
+	struct preq *req;	/* NULL: fed by a script */
 	soie_node *el;
 	const struct soie_ext_media *ext;
 	void *p;
@@ -97,13 +98,40 @@ static const char *source_of(const soie_node *el)
 	return NULL;
 }
 
+/* el's player h, from extension e, in its document's list */
+static struct player *add_player(soie_node *el,
+	const struct soie_ext_media *e, void *h, struct preq *q)
+{
+	soie_node *doc = el->doc;
+	struct media *m;
+	struct player *p;
+
+	m = doc->u.doc.media;
+	if (!m) {
+		m = xmalloc(sizeof(*m));
+		memset(m, 0, sizeof(*m));
+		doc->u.doc.media = m;
+	}
+	if (m->n == m->cap) {
+		m->cap = m->cap ? m->cap * 2 : 4;
+		m->v = xrealloc(m->v, (size_t)m->cap * sizeof(*m->v));
+	}
+	p = &m->v[m->n++];
+	memset(p, 0, sizeof(*p));
+	p->req = q;
+	p->el = el;
+	p->ext = e;
+	p->p = h;
+	p->last.paused = 1;
+	p->ext->volume(p->p, 1, soie_element_get_attr(el, "muted") != NULL);
+	return p;
+}
+
 static struct player *open_player(soie_node *el)
 {
 	soie_node *doc = el->doc;
 	const struct soie_ext_media *e;
 	const soie_style_options *o = style_saved_options(doc);
-	struct media *m;
-	struct player *p;
 	const char *src = source_of(el);
 	struct preq *q;
 	char *base, *url;
@@ -130,26 +158,18 @@ static struct player *open_player(soie_node *el)
 		free(q);
 		return NULL;
 	}
-	m = doc->u.doc.media;
-	if (!m) {
-		m = xmalloc(sizeof(*m));
-		memset(m, 0, sizeof(*m));
-		doc->u.doc.media = m;
+	return add_player(el, (const struct soie_ext_media *)
+		soie_ext_get(SOIE_EXT_MEDIA, i - 1), h, q);
+}
+
+static void close_player(struct player *p)
+{
+	/* close joins the player's threads: then its requests end */
+	p->ext->close(p->p);
+	if (p->req) {
+		free(p->req->first_party);
+		free(p->req);
 	}
-	if (m->n == m->cap) {
-		m->cap = m->cap ? m->cap * 2 : 4;
-		m->v = xrealloc(m->v, (size_t)m->cap * sizeof(*m->v));
-	}
-	p = &m->v[m->n++];
-	memset(p, 0, sizeof(*p));
-	p->req = q;
-	p->el = el;
-	p->ext = (const struct soie_ext_media *)soie_ext_get(SOIE_EXT_MEDIA,
-		i - 1);
-	p->p = h;
-	p->last.paused = 1;
-	p->ext->volume(p->p, 1, soie_element_get_attr(el, "muted") != NULL);
-	return p;
 }
 
 void media_free(soie_node *doc)
@@ -159,12 +179,8 @@ void media_free(soie_node *doc)
 
 	if (!m)
 		return;
-	for (i = 0; i < m->n; i++) {
-		/* close joins the player's threads: then its requests end */
-		m->v[i].ext->close(m->v[i].p);
-		free(m->v[i].req->first_party);
-		free(m->v[i].req);
-	}
+	for (i = 0; i < m->n; i++)
+		close_player(&m->v[i]);
 	free(m->v);
 	free(m);
 	doc->u.doc.media = NULL;
@@ -178,9 +194,7 @@ void media_forget(soie_node *el)
 
 	for (i = 0; m && i < m->n; i++)
 		if (m->v[i].el == el) {
-			m->v[i].ext->close(m->v[i].p);
-			free(m->v[i].req->first_party);
-			free(m->v[i].req);
+			close_player(&m->v[i]);
 			memmove(&m->v[i], &m->v[i + 1], (size_t)(m->n - i - 1) *
 				sizeof(*m->v));
 			m->n--;
@@ -195,6 +209,10 @@ int soie_media_control(soie_node *el, int op, double value)
 
 	if (!is_media(el))
 		return -1;
+	if (op == SOIE_MEDIA_CLOSE) {
+		media_forget(el);
+		return 0;
+	}
 	p = find(el);
 	if (!p && (op == SOIE_MEDIA_PLAY || op == SOIE_MEDIA_TOGGLE))
 		p = open_player(el);
@@ -234,7 +252,90 @@ int soie_media_get_state(soie_node *el, soie_media_state *st)
 
 	if (!p)
 		return -1;
+	memset(st, 0, sizeof(*st));
 	p->ext->state(p->p, st);
+	return 0;
+}
+
+/* Media Source Extensions */
+
+#define SOURCE_HOOK(e, hook) SOIE_EXT_HOOK(e, struct soie_ext_media, hook)
+
+int soie_media_source_supported(const char *type)
+{
+	const struct soie_ext_media *e;
+	int (*can)(void *, const char *);
+	int i;
+
+	for (i = 0; (e = (const void *)soie_ext_get(SOIE_EXT_MEDIA, i)); i++)
+		if ((can = SOURCE_HOOK(e, can_source)) &&
+		    SOURCE_HOOK(e, source) && can(e->base.data, type))
+			return 1;
+	return 0;
+}
+
+int soie_media_source_open(soie_node *el)
+{
+	const struct soie_ext_media *e;
+	void *(*open)(void *);
+	void *h = NULL;
+	int i;
+
+	if (!is_media(el))
+		return -1;
+	media_forget(el);
+	for (i = 0; !h && (e = (const void *)soie_ext_get(SOIE_EXT_MEDIA,
+	     i)); i++)
+		if ((open = SOURCE_HOOK(e, open_source)) && SOURCE_HOOK(e, source))
+			h = open(e->base.data);
+	if (!h)
+		return -1;
+	add_player(el, (const struct soie_ext_media *)
+		soie_ext_get(SOIE_EXT_MEDIA, i - 1), h, NULL);
+	return 0;
+}
+
+/* el's player when a script feeds it */
+static struct player *source_of_el(const soie_node *el)
+{
+	struct player *p = is_media(el) ? find(el) : NULL;
+
+	return p && !p->req ? p : NULL;
+}
+
+int soie_media_source_add(soie_node *el, const char *type)
+{
+	struct player *p = source_of_el(el);
+
+	return p ? p->ext->add_buffer(p->p, type) : -1;
+}
+
+int soie_media_source_append(soie_node *el, int id, const void *bytes,
+	size_t len, double offset, double start, double end)
+{
+	struct player *p = source_of_el(el);
+
+	if (!p)
+		return SOIE_SOURCE_ERROR;
+	return p->ext->append(p->p, id, bytes, len, offset, start, end);
+}
+
+int soie_media_source_buffered(soie_node *el, int id, double *ranges,
+	int max)
+{
+	struct player *p = source_of_el(el);
+
+	return p ? p->ext->buffered(p->p, id, ranges, max) : 0;
+}
+
+int soie_media_source_control(soie_node *el, int op, int id, double a,
+	double b)
+{
+	struct player *p = source_of_el(el);
+
+	if (!p)
+		return -1;
+	p->ext->source(p->p, op, id, a, b);
 	return 0;
 }
 
@@ -262,26 +363,37 @@ int soie_media_click(soie_node *el, float x, float y)
 	return soie_media_control(el, SOIE_MEDIA_TOGGLE, 0) == 0;
 }
 
-static void fire(soie_node *el, const char *type)
-{
-	soie_event ev;
+/* Events wait for the end of the tick: their listeners may open or
+ * close players, the list changes under them. */
+struct events {
+	struct { soie_node *el; const char *type; } *v;
+	int n, cap;
+};
 
-	memset(&ev, 0, sizeof(ev));
-	ev.type = type;
-	soie_script_event(el->doc, el, &ev);
+static void fire(struct events *q, soie_node *el, const char *type)
+{
+	if (q->n == q->cap) {
+		q->cap = q->cap ? q->cap * 2 : 16;
+		q->v = xrealloc(q->v, (size_t)q->cap * sizeof(*q->v));
+	}
+	q->v[q->n].el = el;
+	q->v[q->n++].type = type;
 }
 
 /* Events and repaints from state changes. */
 int soie_media_tick(soie_node *doc, int *repaint)
 {
 	struct media *m = doc->u.doc.media;
+	struct events q = { NULL, 0, 0 };
 	soie_media_state st;
+	soie_event ev;
 	struct player *p;
 	int i, next = -1;
 
 	*repaint = 0;
 	for (i = 0; m && i < m->n; i++) {
 		p = &m->v[i];
+		memset(&st, 0, sizeof(st));
 		p->ext->state(p->p, &st);
 		if (st.changes != p->last.changes)
 			*repaint = 1;
@@ -289,31 +401,45 @@ int soie_media_tick(soie_node *doc, int *repaint)
 		    !strcmp(p->el->name, "video"))
 			doc->u.doc.gen++;	/* a new intrinsic size */
 		if (st.duration != p->last.duration && st.duration > 0) {
-			fire(p->el, "durationchange");
+			fire(&q, p->el, "durationchange");
 			if (p->last.duration <= 0) {
-				fire(p->el, "loadedmetadata");
-				fire(p->el, "loadeddata");
-				fire(p->el, "canplay");
+				fire(&q, p->el, "loadedmetadata");
+				fire(&q, p->el, "loadeddata");
+				fire(&q, p->el, "canplay");
+				fire(&q, p->el, "canplaythrough");
 			}
 		}
 		if (st.paused != p->last.paused)
-			fire(p->el, st.paused ? "pause" : "playing");
+			fire(&q, p->el, st.paused ? "pause" : "playing");
+		else if (st.waiting != p->last.waiting && !st.paused)
+			fire(&q, p->el, st.waiting ? "waiting" : "playing");
+		if (st.seeks != p->last.seeks)
+			fire(&q, p->el, "seeked");
 		if (st.time < p->reported || st.time >= p->reported + 0.25) {
 			p->reported = st.time;
-			fire(p->el, "timeupdate");
+			fire(&q, p->el, "timeupdate");
 		}
 		if (st.ended && !p->last.ended) {
 			if (st.time != p->reported)
-				fire(p->el, "timeupdate");
+				fire(&q, p->el, "timeupdate");
 			p->reported = st.time;
-			fire(p->el, "ended");
+			fire(&q, p->el, "ended");
 		}
 		if (st.error && !p->last.error)
-			fire(p->el, "error");
+			fire(&q, p->el, "error");
 		p->last = st;
 		if (!st.paused && !st.ended && !st.error)
 			next = 20;
+		else if (!p->req && !st.error && !st.ended &&
+			 (next < 0 || next > 250))
+			next = 250;	/* a script feeds it: data comes */
 	}
+	for (i = 0; i < q.n; i++) {
+		memset(&ev, 0, sizeof(ev));
+		ev.type = q.v[i].type;
+		soie_script_event(doc, q.v[i].el, &ev);
+	}
+	free(q.v);
 	return next;
 }
 
@@ -380,8 +506,10 @@ void paint_media(struct canvas *c, const struct box *b)
 
 	memset(&st, 0, sizeof(st));
 	st.paused = 1;
-	if (p)
+	if (p) {
+		memset(&st, 0, sizeof(st));
 		p->ext->state(p->p, &st);
+	}
 	if (video) {
 		memset(&frame, 0, sizeof(frame));
 		if (p && p->ext->frame &&

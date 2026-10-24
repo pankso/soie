@@ -28,6 +28,7 @@ static void usage(void)
 	      "  -S          stub font (0.5em per character), as the tests\n"
 	      "  -b URL      base URL (default: the file's file:// URL)\n"
 	      "  -j          run the page's scripts (and timers, 2 s at most)\n"
+	      "  -T MS       the scripts' time, in milliseconds (2000)\n"
 	      "  -x MODULE   load an extension module (.so), may repeat\n"
 	      "  -X          load the installed extensions\n"
 	      "  -V          print the library version\n", stderr);
@@ -169,8 +170,9 @@ static void run_scripts(soie_node *doc, const char *url, int ms)
 	for (;;) {
 		int m, repaint;
 
-		d = soie_script_tick(doc);
+		/* media events first: timers their listeners set count */
 		m = soie_media_tick(doc, &repaint);
+		d = soie_script_tick(doc);
 		if (m >= 0 && (d < 0 || m < d))
 			d = m;
 		if (d < 0)
@@ -218,7 +220,7 @@ int main(int argc, char **argv)
 	soie_html_options opts = { NULL, 0 };
 	soie_style_options so;
 	const char *context = NULL, *props = NULL, *base = NULL;
-	int layout = 0, all = 0, scripts = 0;
+	int layout = 0, all = 0, scripts = 0, script_ms = 2000;
 	const char *png = NULL;
 	char cwd[4096], file_url[8192];
 	soie_node *doc, *root;
@@ -254,6 +256,8 @@ int main(int argc, char **argv)
 			soie_fonts_stub(1);
 		else if (!strcmp(argv[i], "-b") && i + 1 < argc)
 			base = argv[++i];
+		else if (!strcmp(argv[i], "-T") && i + 1 < argc)
+			script_ms = atoi(argv[++i]);
 		else if (!strcmp(argv[i], "-j"))
 			scripts = opts.scripting = so.scripting = 1;
 		else if (!strcmp(argv[i], "-x") && i + 1 < argc) {
@@ -300,7 +304,7 @@ int main(int argc, char **argv)
 		vp_h = so.height > 0 ? so.height : 768;
 		soie_style_document(doc, &so);
 		soie_layout_document(doc, so.width, so.height);
-		run_scripts(doc, base ? base : "about:blank", 2000);
+		run_scripts(doc, base ? base : "about:blank", script_ms);
 	}
 	if (props || layout || png) {
 		if (!user_css)

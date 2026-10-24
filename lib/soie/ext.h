@@ -12,8 +12,9 @@
  * - any hook may be NULL;
  * - strings returned by hooks are malloc()ed and freed by the caller.
  *
- * This is ABI 1.0, frozen with the library's 1.0: later versions only
- * append hooks to the hook sets and add kinds.
+ * This is ABI 1.1 (1.0 was frozen with the library's 1.0, 1.1 came
+ * with its 1.2: Media Source Extensions): later versions only append
+ * hooks to the hook sets and add kinds.
  *
  * A module for soie_ext_load() exports "int soie_ext_init(void)",
  * which registers its hook sets with soie_ext_register() and returns
@@ -26,7 +27,7 @@
 #include "dom.h"
 
 #define SOIE_EXT_ABI_MAJOR 1
-#define SOIE_EXT_ABI_MINOR 0
+#define SOIE_EXT_ABI_MINOR 1
 #define SOIE_EXT_ABI (SOIE_EXT_ABI_MAJOR << 16 | SOIE_EXT_ABI_MINOR)
 
 typedef enum {
@@ -248,6 +249,10 @@ typedef struct {
 	int width, height;	/* video size, 0 for sound only */
 	int error;		/* nonzero: cannot play */
 	int changes;		/* bumped at each new frame or state */
+	/* since ABI 1.1 (the engine zeroes them for older extensions) */
+	int waiting;		/* playing, but the data is not there */
+	int seeks;		/* seeks done, for the seeked event */
+	int decoded, dropped;	/* video frames decoded, and never shown */
 } soie_media_state;
 
 struct soie_ext_media {
@@ -267,6 +272,38 @@ struct soie_ext_media {
 	/* The frame to show now, straight RGBA, valid until the next
 	 * call; NULL when there is none (yet). */
 	const unsigned char *(*frame)(void *player, int *w, int *h);
+
+	/* Since ABI 1.1: Media Source Extensions, a player whose bytes
+	 * a script appends to SourceBuffers. */
+	/* Nonzero when a SourceBuffer of this MIME type (with its codecs
+	 * and the width, height, framerate parameters) can play. */
+	int (*can_source)(void *data, const char *type);
+	/* A player fed by a script; NULL when not supported. */
+	void *(*open_source)(void *data);
+	/* A SourceBuffer for type: its id, -1 when it cannot play or
+	 * there are too many. */
+	int (*add_buffer)(void *player, const char *type);
+	/* Append bytes to buffer id; offset is added to their times and
+	 * coded frames outside [start, end) are dropped. Returns once
+	 * they are parsed: 0, SOIE_SOURCE_FULL when the buffer has no
+	 * room left, SOIE_SOURCE_ERROR when the bytes are not media. */
+	int (*append)(void *player, int id, const void *bytes, size_t len,
+		double offset, double start, double end);
+	/* The buffered time ranges of id (-1: what can play, all buffers
+	 * together), up to max (start, end) pairs; their count. */
+	int (*buffered)(void *player, int id, double *ranges, int max);
+	/* SOIE_SOURCE_* operations on buffer id */
+	void (*source)(void *player, int op, int id, double a, double b);
+};
+
+enum {
+	SOIE_SOURCE_REMOVE,	/* drop [a, b) from buffer id */
+	SOIE_SOURCE_ABORT,	/* drop the bytes not parsed yet */
+	SOIE_SOURCE_DROP,	/* removeSourceBuffer() */
+	SOIE_SOURCE_DURATION,	/* a: the duration, <= 0 unknown */
+	SOIE_SOURCE_END,	/* a: 1 end of stream, 0 more to come */
+	SOIE_SOURCE_FULL = -2,
+	SOIE_SOURCE_ERROR = -1
 };
 
 enum {
@@ -275,7 +312,8 @@ enum {
 	SOIE_MEDIA_TOGGLE,
 	SOIE_MEDIA_SEEK,	/* value: seconds */
 	SOIE_MEDIA_VOLUME,	/* value: 0 to 1 */
-	SOIE_MEDIA_MUTE		/* value: 0 or 1 */
+	SOIE_MEDIA_MUTE,	/* value: 0 or 1 */
+	SOIE_MEDIA_CLOSE	/* the player goes (since 1.2) */
 };
 
 /* Control the player of a <video> or <audio> element, opening it
@@ -292,5 +330,26 @@ int soie_media_click(soie_node *el, float x, float y);
 int soie_media_tick(soie_node *doc, int *repaint);
 /* Nonzero when a media extension says it can play type. */
 int soie_media_can_play(const char *type);
+
+/*
+ * Media Source Extensions, for script engines (since 1.2): el's player
+ * is fed by a script, through the hooks above, with el as handle.
+ */
+/* Nonzero when MediaSource.isTypeSupported(type). */
+int soie_media_source_supported(const char *type);
+/* Give el a player fed by a script (its player before closes); -1
+ * without support. */
+int soie_media_source_open(soie_node *el);
+/* A SourceBuffer of el's player: its id, or -1. */
+int soie_media_source_add(soie_node *el, const char *type);
+/* What the append hook returns; SOIE_SOURCE_ERROR without a player. */
+int soie_media_source_append(soie_node *el, int id, const void *bytes,
+	size_t len, double offset, double start, double end);
+/* Buffered ranges, as the hook; 0 without a player. */
+int soie_media_source_buffered(soie_node *el, int id, double *ranges,
+	int max);
+/* A SOIE_SOURCE_* operation; -1 without a player. */
+int soie_media_source_control(soie_node *el, int op, int id, double a,
+	double b);
 
 #endif

@@ -1,0 +1,15 @@
+log: types true true false false false
+log: sourceopen open true 0
+log: lists 2 true
+log: busy InvalidStateError
+log: bad bytes: error
+log: after error ended
+log: reopened
+log: buffered 0.0-2.0 0.0-2.0 0.0-2.0 4 4
+log: size 160 120
+log: waiting at 2.0 true
+log: end ended 0.0-4.0
+log: ended true 4.0 true
+log: events loadstart,error,loadedmetadata,play,playing,waiting,playing,ended
+log: removed 2.0-4.0
+log: closed closed 0 true

@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<video id=v></video>
+<script>
+var log = (...a) => console.log(a.map(String).join(' '));
+var v = document.getElementById('v'), seen = [], dir = '../media/mse/';
+for (const e of ['loadstart', 'loadedmetadata', 'play', 'playing', 'waiting', 'seeking', 'seeked', 'ended', 'error'])
+  v.addEventListener(e, () => seen.push(e));
+var rs = b => { let s = []; for (let i = 0; i < b.length; i++) s.push(b.start(i).toFixed(1) + '-' + b.end(i).toFixed(1)); return s.join(',') || 'none'; };
+var get = (u) => fetch(dir + u).then(r => r.arrayBuffer());
+var append = (sb, u) => get(u).then(buf => new Promise((ok) => {
+  sb.addEventListener('updateend', ok, { once: true });
+  sb.appendBuffer(buf);
+}));
+log('types', MediaSource.isTypeSupported('video/mp4; codecs="avc1.42d00b"'),
+  MediaSource.isTypeSupported('audio/mp4; codecs="mp4a.40.2"'),
+  MediaSource.isTypeSupported('video/webm; codecs="vp9"'),
+  MediaSource.isTypeSupported('video/mp4; codecs="avc1.640028"; width=1920; height=1080'),
+  MediaSource.isTypeSupported('application/x-mpegurl'));
+var ms = new MediaSource(), vb, ab;
+v.src = URL.createObjectURL(ms);
+ms.addEventListener('sourceopen', async () => {
+  log('sourceopen', ms.readyState, isNaN(v.duration), v.readyState);
+  vb = ms.addSourceBuffer('video/mp4; codecs="avc1.42d00b"');
+  ab = ms.addSourceBuffer('audio/mp4; codecs="mp4a.40.2"');
+  log('lists', ms.sourceBuffers.length, ms.sourceBuffers[1] === ab);
+  try { vb.appendBuffer(new Uint8Array([1, 2, 3])); vb.appendBuffer(new Uint8Array(1)); } catch (e) { log('busy', e.name); }
+  vb.addEventListener('error', () => log('bad bytes: error'), { once: true });
+  await new Promise((ok) => vb.addEventListener('updateend', ok, { once: true }));
+  log('after error', ms.readyState);
+  ms.addEventListener('sourceopen', () => log('reopened'), { once: true });
+  await append(vb, 'init-0.mp4');
+  await append(ab, 'init-1.mp4');
+  ms.duration = 4;
+  for (const n of [1, 2]) {
+    await append(vb, 'seg-0-' + n + '.m4s');
+    await append(ab, 'seg-1-' + n + '.m4s');
+  }
+  log('buffered', rs(vb.buffered), rs(ab.buffered), rs(v.buffered), v.readyState, v.duration);
+  log('size', v.videoWidth, v.videoHeight);
+  v.addEventListener('waiting', async () => {
+    log('waiting at', v.currentTime.toFixed(1), v.readyState < 3);
+    for (const n of [3, 4]) {
+      await append(vb, 'seg-0-' + n + '.m4s');
+      await append(ab, 'seg-1-' + n + '.m4s');
+    }
+    ms.endOfStream();
+    log('end', ms.readyState, rs(v.buffered));
+  }, { once: true });
+  v.play();
+}, { once: true });
+v.addEventListener('ended', () => {
+  const q = v.getVideoPlaybackQuality();
+  log('ended', v.ended, v.currentTime.toFixed(1), q.totalVideoFrames > 40);
+  log('events', seen.join());
+  vb.remove(0, 2);
+  vb.onupdateend = () => {
+    log('removed', rs(vb.buffered));
+    v.removeAttribute('src');
+    v.load();
+    ms.onsourceclose = () => log('closed', ms.readyState, ms.sourceBuffers.length, isNaN(ms.duration));
+  };
+});
+</script>

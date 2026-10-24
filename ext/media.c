@@ -10,6 +10,12 @@
  * there is sound, the system's otherwise; the host's thread takes
  * the frame due at that time.
  *
+ * A player can also be fed by a script (Media Source Extensions):
+ * each SourceBuffer has a parsing thread that demuxes what is appended
+ * into coded frames, kept in memory by time like browsers do; the
+ * decoding thread takes them in decode order from the video and audio
+ * tracks, and the clock waits where nothing is buffered.
+ *
  * SOIE_AUDIO=none plays without sound (tests, machines without a
  * sound card), SOIE_AUDIO=device picks the ALSA device ("default").
  */
@@ -35,6 +41,14 @@
 #define NFRAMES 4		/* decoded frames waiting */
 #define MAX_PIXELS (1280 * 720)	/* frames are scaled down to this */
 #define PCM_FRAMES 32768	/* sound waiting, in stereo frames */
+/* Media Source Extensions */
+#define MAX_BUFFERS 4		/* SourceBuffers per player */
+#define VIDEO_QUOTA (24 << 20)	/* coded bytes kept per SourceBuffer */
+#define AUDIO_QUOTA (4 << 20)
+#define INIT_MAX (1 << 20)	/* an initialization segment kept */
+#define MAX_RANGES 64
+#define GAP 150000		/* us: frames closer are one range */
+#define KEEP 3000000		/* us before the position never evicted */
 
 /* Bytes, by ranges */
 struct source {
@@ -51,7 +65,59 @@ struct source {
 
 struct frame {
 	unsigned char *rgba;
+	int w, h;
 	double pts;
+};
+
+/* Media Source Extensions: a track's codec, from an initialization
+ * segment, shared by its coded frames */
+struct init {
+	int refs;
+	AVCodecParameters *par;
+};
+
+struct cframe {
+	AVPacket *pkt;		/* times in microseconds, offset added */
+	int64_t pts, end;	/* what it shows: [pts, end) */
+	struct init *init;
+	unsigned run;		/* the append it came with */
+};
+
+struct track {
+	struct cframe *f;	/* in decode order */
+	int n, cap;
+	size_t bytes;
+	int64_t ranges[2 * MAX_RANGES];	/* buffered [start, end) pairs */
+	int nranges;
+	int64_t oldmax;		/* end of the frames of earlier appends */
+	unsigned oldrun;
+	int64_t cur;		/* the decoder's: next frame has dts > cur */
+	int seek;		/* waits for the frames at the seek's time */
+};
+
+struct player;
+
+/* A SourceBuffer */
+struct sbuf {
+	struct player *p;
+	int used;
+	AVInputFormat *ifmt;
+	pthread_t thread;
+	/* bytes appended, not parsed yet */
+	unsigned char *fifo;
+	size_t len, off, cap;
+	unsigned char *initseg;	/* the last initialization segment */
+	size_t initlen, replay;	/* replay: its bytes to read first */
+	int idle;		/* the parser waits for bytes */
+	int consumed;		/* the demuxer read bytes since it opened */
+	int reset;		/* a new initialization segment: reopen */
+	int error, quit;
+	int64_t offset, wstart, wend;	/* us */
+	unsigned run;
+	int stream[2];		/* the demuxer's video and audio streams */
+	struct init *init[2];
+	struct track t[2];	/* video, audio */
+	size_t quota;
 };
 
 struct player {
@@ -72,8 +138,11 @@ struct player {
 	struct frame ring[NFRAMES];
 	int head, count;
 	unsigned char *shown;	/* the frame on screen */
+	int shown_w, shown_h;
 	double shown_pts;
 	int quarter;		/* time in quarters, for repaints */
+	int seeks, decoded, dropped;
+	double skip;		/* frames ending before are not shown */
 	/* sound */
 	int16_t *pcm;
 	int pcm_head, pcm_count, rate;
@@ -89,6 +158,15 @@ struct player {
 	int vs, as;
 	struct SwsContext *sws;
 	SwrContext *swr;
+	AVRational vtb, atb;	/* the decoders' time bases */
+	/* fed by a script */
+	int source;
+	struct sbuf sb[MAX_BUFFERS];
+	int eos, waiting;
+	int64_t seek_us;
+	int64_t ranges[2 * MAX_RANGES];	/* what plays, all tracks */
+	int nranges;
+	struct init *vinit, *ainit;	/* the decoders' */
 };
 
 static double now(void)
@@ -211,27 +289,45 @@ static double clock_now(struct player *p)
 	return p->base + now() - p->started;
 }
 
+static void wait_or_go(struct player *p);
+
 /* Take the frame due now; count changes for repaints. */
 static void advance(struct player *p)
 {
-	double t = clock_now(p);
+	double t;
 	struct frame *f;
 	unsigned char *swap;
-	int q;
+	int q, sw, sh, taken = 0;
 
+	if (p->source)
+		wait_or_go(p);
+	t = clock_now(p);
 	while (p->count) {
 		f = &p->ring[p->head];
 		if (f->pts > t + 0.01 && p->shown)
 			break;
 		/* the next one is due too: this one is late, skip it */
+		if (taken++)
+			p->dropped++;
 		swap = p->shown;
+		sw = p->shown_w;
+		sh = p->shown_h;
 		p->shown = f->rgba;
+		p->shown_w = f->w;
+		p->shown_h = f->h;
 		p->shown_pts = f->pts;
 		f->rgba = swap;
+		f->w = sw;
+		f->h = sh;
 		p->head = (p->head + 1) % NFRAMES;
 		p->count--;
 		p->changes++;
 		pthread_cond_broadcast(&p->cond);
+	}
+	if (p->shown && (p->shown_w != p->width || p->shown_h != p->height)) {
+		p->width = p->shown_w;	/* a stream of another size */
+		p->height = p->shown_h;
+		p->changes++;
 	}
 	q = (int)(t * 4);
 	if (q != p->quarter) {
@@ -251,17 +347,38 @@ static void advance(struct player *p)
 
 /* The decoding thread */
 
+/* The size frames are shown at: at most MAX_PIXELS, even */
+static void fit(int *w, int *h)
+{
+	double scale;
+
+	if (*w > 0 && *h > 0 && (long long)*w * *h > MAX_PIXELS) {
+		scale = sqrt((double)MAX_PIXELS / ((double)*w * *h));
+		*w = (int)(*w * scale) & ~1;
+		*h = (int)(*h * scale) & ~1;
+	}
+	if (*w <= 0 || *h <= 0)
+		*w = *h = 0;
+}
+
 static void push_video(struct player *p, AVFrame *fr)
 {
-	AVRational tb = p->fmt->streams[p->vs]->time_base;
 	int64_t ts = fr->best_effort_timestamp;
+	double pts = ts == AV_NOPTS_VALUE ? 0 : (double)ts * av_q2d(p->vtb);
 	struct frame *f;
 	uint8_t *dst[4];
-	int linesize[4], w = p->width, h = p->height;
+	int linesize[4], w = fr->width, h = fr->height;
 
-	if (!p->sws)
-		p->sws = sws_getContext(fr->width, fr->height, fr->format, w, h,
-			AV_PIX_FMT_RGBA, SWS_BILINEAR, NULL, NULL, NULL);
+	/* what a seek lands past is not shown */
+	if (ts != AV_NOPTS_VALUE && fr->pkt_duration > 0 &&
+	    pts + (double)fr->pkt_duration * av_q2d(p->vtb) <= p->skip)
+		return;
+	fit(&w, &h);
+	if (!w)
+		return;
+	p->sws = sws_getCachedContext(p->sws, fr->width, fr->height,
+		fr->format, w, h, AV_PIX_FMT_RGBA, SWS_BILINEAR, NULL, NULL,
+		NULL);
 	if (!p->sws)
 		return;
 	pthread_mutex_lock(&p->lock);
@@ -273,19 +390,26 @@ static void push_video(struct player *p, AVFrame *fr)
 	}
 	f = &p->ring[(p->head + p->count) % NFRAMES];
 	pthread_mutex_unlock(&p->lock);
+	if (f->rgba && (f->w != w || f->h != h)) {
+		free(f->rgba);
+		f->rgba = NULL;
+	}
 	if (!f->rgba)
 		f->rgba = malloc((size_t)w * (size_t)h * 4);
 	if (!f->rgba)
 		return;
+	f->w = w;
+	f->h = h;
 	dst[0] = f->rgba;
 	dst[1] = dst[2] = dst[3] = NULL;
 	linesize[0] = w * 4;
 	linesize[1] = linesize[2] = linesize[3] = 0;
 	sws_scale(p->sws, (const uint8_t *const *)fr->data, fr->linesize, 0,
 		fr->height, dst, linesize);
-	f->pts = ts == AV_NOPTS_VALUE ? 0 : (double)ts * av_q2d(tb);
+	f->pts = pts;
 	pthread_mutex_lock(&p->lock);
 	p->count++;
+	p->decoded++;
 	pthread_mutex_unlock(&p->lock);
 }
 
@@ -293,8 +417,12 @@ static void push_audio(struct player *p, AVFrame *fr)
 {
 	int16_t tmp[2 * 4096];
 	uint8_t *out = (uint8_t *)tmp;
+	int64_t ts = fr->best_effort_timestamp;
 	int n, i, k;
 
+	if (ts != AV_NOPTS_VALUE && fr->pkt_duration > 0 &&
+	    (double)(ts + fr->pkt_duration) * av_q2d(p->atb) <= p->skip)
+		return;
 	n = swr_convert(p->swr, &out, 4096,
 		(const uint8_t **)fr->extended_data, fr->nb_samples);
 	while (n > 0) {
@@ -333,15 +461,16 @@ static void drain(struct player *p, AVCodecContext *dec, AVFrame *fr,
 	}
 }
 
-static AVCodecContext *open_decoder(AVFormatContext *fmt, int i)
+static AVCodecContext *open_codec(const AVCodecParameters *par,
+	AVRational tb)
 {
-	AVCodecParameters *par = fmt->streams[i]->codecpar;
 	AVCodec *codec = avcodec_find_decoder(par->codec_id);
 	AVCodecContext *c;
 
 	if (!codec || !(c = avcodec_alloc_context3(codec)))
 		return NULL;
 	c->thread_count = 1;
+	c->pkt_timebase = tb;
 	if (avcodec_parameters_to_context(c, par) < 0 ||
 	    avcodec_open2(c, codec, NULL) < 0) {
 		avcodec_free_context(&c);
@@ -350,13 +479,39 @@ static AVCodecContext *open_decoder(AVFormatContext *fmt, int i)
 	return c;
 }
 
+static AVCodecContext *open_decoder(AVFormatContext *fmt, int i)
+{
+	return open_codec(fmt->streams[i]->codecpar, fmt->streams[i]->time_base);
+}
+
+/* Sound conversion to 16-bit stereo at p->rate (the first stream's) */
+static int open_resampler(struct player *p)
+{
+	int64_t layout = p->adec->channel_layout ?
+		(int64_t)p->adec->channel_layout :
+		av_get_default_channel_layout(p->adec->channels);
+
+	if (!p->rate)
+		p->rate = p->adec->sample_rate > 0 &&
+			p->adec->sample_rate <= 96000 ? p->adec->sample_rate :
+			48000;
+	swr_free(&p->swr);
+	p->swr = swr_alloc_set_opts(NULL, AV_CH_LAYOUT_STEREO,
+		AV_SAMPLE_FMT_S16, p->rate, layout, p->adec->sample_fmt,
+		p->adec->sample_rate, 0, NULL);
+	if (!p->swr || swr_init(p->swr) < 0) {
+		swr_free(&p->swr);
+		return -1;
+	}
+	return 0;
+}
+
 static void start_audio(struct player *p);
 
 static int open_media(struct player *p)
 {
 	AVIOContext *io;
 	unsigned char *iobuf = av_malloc(65536);
-	double scale;
 	int w, h;
 
 	p->fmt = avformat_alloc_context();
@@ -384,19 +539,11 @@ static int open_media(struct player *p)
 		p->as = -1;
 	if (p->vs < 0 && p->as < 0)
 		return -1;
+	if (p->vs >= 0)
+		p->vtb = p->fmt->streams[p->vs]->time_base;
 	if (p->as >= 0) {
-		int64_t layout = p->adec->channel_layout ?
-			(int64_t)p->adec->channel_layout :
-			av_get_default_channel_layout(p->adec->channels);
-
-		p->rate = p->adec->sample_rate > 0 &&
-			p->adec->sample_rate <= 96000 ? p->adec->sample_rate :
-			48000;
-		p->swr = swr_alloc_set_opts(NULL, AV_CH_LAYOUT_STEREO,
-			AV_SAMPLE_FMT_S16, p->rate, layout, p->adec->sample_fmt,
-			p->adec->sample_rate, 0, NULL);
-		if (!p->swr || swr_init(p->swr) < 0) {
-			swr_free(&p->swr);
+		p->atb = p->fmt->streams[p->as]->time_base;
+		if (open_resampler(p)) {
 			avcodec_free_context(&p->adec);
 			p->as = -1;
 		}
@@ -405,13 +552,9 @@ static int open_media(struct player *p)
 	if (p->vs >= 0) {
 		w = p->vdec->width;
 		h = p->vdec->height;
-		if (w > 0 && h > 0 && (long long)w * h > MAX_PIXELS) {
-			scale = sqrt((double)MAX_PIXELS / ((double)w * h));
-			w = (int)(w * scale) & ~1;
-			h = (int)(h * scale) & ~1;
-		}
-		p->width = w > 0 ? w : 0;
-		p->height = h > 0 ? h : 0;
+		fit(&w, &h);
+		p->width = w;
+		p->height = h;
 		if (!p->width || !p->height)
 			p->vs = -1;
 	}
@@ -454,7 +597,9 @@ static void do_seek(struct player *p, double to)
 	for (i = 0; i < NFRAMES; i++)
 		p->ring[i].pts = 0;
 	p->shown_pts = to;
+	p->skip = to;
 	p->changes++;
+	p->seeks++;
 	pthread_mutex_unlock(&p->lock);
 }
 
@@ -532,7 +677,8 @@ static void *audio_thread(void *arg)
 
 	for (;;) {
 		pthread_mutex_lock(&p->lock);
-		while (!p->quit && (!p->playing || !p->pcm_count) && !p->flush)
+		while (!p->quit && (!p->playing || !p->pcm_count ||
+		       p->waiting) && !p->flush)
 			pthread_cond_wait(&p->cond, &p->lock);
 		if (p->quit) {
 			pthread_mutex_unlock(&p->lock);
@@ -598,6 +744,755 @@ static void start_audio(struct player *p)
 	p->has_athread = 1;
 }
 
+/*
+ * Media Source Extensions
+ */
+
+static void init_unref(struct init *in)
+{
+	if (in && !--in->refs) {
+		avcodec_parameters_free(&in->par);
+		free(in);
+	}
+}
+
+/* Is t (us) in ranges? */
+static int in_ranges(const int64_t *r, int n, int64_t t)
+{
+	int i;
+
+	for (i = 0; i < n; i++)
+		if (t >= r[2 * i] && t < r[2 * i + 1])
+			return 1;
+	return 0;
+}
+
+static int cmp_i64(const void *a, const void *b)
+{
+	const int64_t *x = a, *y = b;
+
+	return *x < *y ? -1 : *x > *y;
+}
+
+/* A track's buffered ranges: its frames by time, merged across GAP */
+static void track_ranges(struct track *t)
+{
+	int64_t *v;
+	int i, n = 0;
+
+	t->nranges = 0;
+	if (!t->n || !(v = malloc((size_t)t->n * 2 * sizeof(*v))))
+		return;
+	for (i = 0; i < t->n; i++) {
+		v[2 * i] = t->f[i].pts;
+		v[2 * i + 1] = t->f[i].end;
+	}
+	qsort(v, (size_t)t->n, 2 * sizeof(*v), cmp_i64);
+	for (i = 0; i < t->n; i++) {
+		if (n && v[2 * i] <= t->ranges[2 * n - 1] + GAP) {
+			if (v[2 * i + 1] > t->ranges[2 * n - 1])
+				t->ranges[2 * n - 1] = v[2 * i + 1];
+			continue;
+		}
+		if (n == MAX_RANGES)
+			break;
+		t->ranges[2 * n] = v[2 * i];
+		t->ranges[2 * n + 1] = v[2 * i + 1];
+		n++;
+	}
+	t->nranges = n;
+	free(v);
+}
+
+/* out = a and b (out may be a) */
+static int intersect(const int64_t *a, int na, const int64_t *b, int nb,
+	int64_t *out)
+{
+	int64_t r[2 * MAX_RANGES];
+	int i = 0, j = 0, n = 0;
+
+	while (i < na && j < nb && n < MAX_RANGES) {
+		int64_t s = a[2 * i] > b[2 * j] ? a[2 * i] : b[2 * j];
+		int64_t e = a[2 * i + 1] < b[2 * j + 1] ? a[2 * i + 1] :
+			b[2 * j + 1];
+
+		if (s < e) {
+			r[2 * n] = s;
+			r[2 * n + 1] = e;
+			n++;
+		}
+		if (a[2 * i + 1] < b[2 * j + 1])
+			i++;
+		else
+			j++;
+	}
+	memcpy(out, r, (size_t)n * 2 * sizeof(*r));
+	return n;
+}
+
+/* A buffer's ranges: those of its tracks together */
+static int buffer_ranges(const struct sbuf *b, int64_t *out)
+{
+	int n = -1, k;
+
+	for (k = 0; k < 2; k++) {
+		if (!b->init[k] && !b->t[k].n)
+			continue;
+		if (n < 0) {
+			n = b->t[k].nranges;
+			memcpy(out, b->t[k].ranges, (size_t)n * 2 * sizeof(*out));
+		} else {
+			n = intersect(out, n, b->t[k].ranges, b->t[k].nranges, out);
+		}
+	}
+	return n < 0 ? 0 : n;
+}
+
+/* The tracks that play: the first video one, the first audio one */
+static struct track *track_of(struct player *p, int k)
+{
+	int i;
+
+	for (i = 0; i < MAX_BUFFERS; i++)
+		if (p->sb[i].used && p->sb[i].init[k])
+			return &p->sb[i].t[k];
+	return NULL;
+}
+
+/* What plays, under lock */
+static void player_ranges(struct player *p)
+{
+	struct track *v = track_of(p, 0), *a = track_of(p, 1);
+
+	if (v && a)
+		p->nranges = intersect(v->ranges, v->nranges, a->ranges,
+			a->nranges, p->ranges);
+	else if (v || a) {
+		p->nranges = (v ? v : a)->nranges;
+		memcpy(p->ranges, (v ? v : a)->ranges,
+			(size_t)p->nranges * 2 * sizeof(*p->ranges));
+	} else
+		p->nranges = 0;
+}
+
+static void drop_frame(struct track *t, int i)
+{
+	t->bytes -= (size_t)t->f[i].pkt->size;
+	av_packet_free(&t->f[i].pkt);
+	init_unref(t->f[i].init);
+}
+
+/* Drop the frames of runs other than run starting in [start, end),
+ * and those decoded after them up to the next key frame (they need
+ * them). run 0: of any append. */
+static void remove_frames(struct track *t, int64_t start, int64_t end,
+	unsigned run)
+{
+	int i, w = 0, dropping = 0;
+
+	for (i = 0; i < t->n; i++) {
+		struct cframe *c = &t->f[i];
+		int old = c->run != run;
+
+		if (old && (c->pkt->flags & AV_PKT_FLAG_KEY))
+			dropping = 0;
+		if (old && (dropping || (c->pts >= start && c->pts < end))) {
+			drop_frame(t, i);
+			dropping = 1;
+			continue;
+		}
+		t->f[w++] = *c;
+	}
+	t->n = w;
+}
+
+/* A coded frame into its track, in decode order; under lock */
+static void insert_frame(struct track *t, struct cframe *f)
+{
+	int lo = 0, hi;
+
+	if (f->run != t->oldrun) {
+		/* a new append: what was there before may be replaced */
+		int i;
+
+		t->oldrun = f->run;
+		t->oldmax = INT64_MIN;
+		for (i = 0; i < t->n; i++)
+			if (t->f[i].end > t->oldmax)
+				t->oldmax = t->f[i].end;
+	}
+	if (f->pts < t->oldmax)
+		remove_frames(t, f->pts, f->end, f->run);
+	if (t->n == t->cap) {
+		struct cframe *v;
+
+		t->cap = t->cap ? t->cap * 2 : 256;
+		v = realloc(t->f, (size_t)t->cap * sizeof(*v));
+		if (!v)
+			abort();
+		t->f = v;
+	}
+	hi = t->n;
+	while (lo < hi) {
+		int mid = (lo + hi) / 2;
+
+		if (t->f[mid].pkt->dts <= f->pkt->dts)
+			lo = mid + 1;
+		else
+			hi = mid;
+	}
+	memmove(&t->f[lo + 1], &t->f[lo], (size_t)(t->n - lo) * sizeof(*f));
+	t->f[lo] = *f;
+	t->n++;
+	t->bytes += (size_t)f->pkt->size;
+}
+
+/* The parser's bytes: what was appended, after the initialization
+ * segment to replay; it waits for more and reads the end of the
+ * stream when the demuxer must open again. */
+static int fifo_read(void *opaque, uint8_t *out, int size)
+{
+	struct sbuf *b = opaque;
+	struct player *p = b->p;
+	size_t n;
+
+	pthread_mutex_lock(&p->lock);
+	while (!b->quit && !(b->reset && b->consumed) && b->off == b->len) {
+		if (!b->idle) {
+			b->idle = 1;	/* the append is parsed */
+			pthread_cond_broadcast(&p->cond);
+		}
+		pthread_cond_wait(&p->cond, &p->lock);
+	}
+	if (b->quit || (b->reset && b->consumed)) {
+		pthread_mutex_unlock(&p->lock);
+		return AVERROR_EOF;
+	}
+	if (b->replay) {
+		n = b->replay < (size_t)size ? b->replay : (size_t)size;
+		memcpy(out, b->initseg + b->initlen - b->replay, n);
+		b->replay -= n;
+	} else {
+		n = b->len - b->off < (size_t)size ? b->len - b->off :
+			(size_t)size;
+		memcpy(out, b->fifo + b->off, n);
+		b->off += n;
+		if (b->off == b->len)
+			b->off = b->len = 0;
+	}
+	b->consumed = 1;
+	pthread_mutex_unlock(&p->lock);
+	return (int)n;
+}
+
+/* The demuxer opened: its first video and audio streams */
+static void new_streams(struct sbuf *b, AVFormatContext *fmt)
+{
+	struct player *p = b->p;
+	int k, i;
+
+	pthread_mutex_lock(&p->lock);
+	for (k = 0; k < 2; k++) {
+		i = av_find_best_stream(fmt, k ? AVMEDIA_TYPE_AUDIO :
+			AVMEDIA_TYPE_VIDEO, -1, -1, NULL, 0);
+		b->stream[k] = i;
+		if (i < 0)
+			continue;
+		init_unref(b->init[k]);
+		b->init[k] = calloc(1, sizeof(struct init));
+		if (!b->init[k] || !(b->init[k]->par = avcodec_parameters_alloc()))
+			abort();
+		b->init[k]->refs = 1;
+		avcodec_parameters_copy(b->init[k]->par,
+			fmt->streams[i]->codecpar);
+		if (k == 0 && !p->width) {
+			int w = b->init[k]->par->width, h = b->init[k]->par->height;
+
+			fit(&w, &h);
+			p->width = w;
+			p->height = h;
+		}
+	}
+	if (fmt->duration > 0 && p->duration <= 0)
+		p->duration = (double)fmt->duration / AV_TIME_BASE;
+	p->changes++;
+	pthread_cond_broadcast(&p->cond);
+	pthread_mutex_unlock(&p->lock);
+}
+
+static void new_packet(struct sbuf *b, AVFormatContext *fmt, AVPacket *pkt)
+{
+	struct player *p = b->p;
+	AVRational tb, us = AV_TIME_BASE_Q;
+	struct cframe f;
+	int64_t pts, dts, dur;
+	int k;
+
+	k = pkt->stream_index == b->stream[0] ? 0 :
+		pkt->stream_index == b->stream[1] ? 1 : -1;
+	if (k < 0 || !b->init[k])
+		return;
+	tb = fmt->streams[pkt->stream_index]->time_base;
+	pts = pkt->pts != AV_NOPTS_VALUE ? pkt->pts : pkt->dts;
+	if (pts == AV_NOPTS_VALUE)
+		return;
+	dts = pkt->dts != AV_NOPTS_VALUE ? pkt->dts : pts;
+	pts = av_rescale_q(pts, tb, us) + b->offset;
+	dts = av_rescale_q(dts, tb, us) + b->offset;
+	dur = av_rescale_q(pkt->duration, tb, us);
+	if (dur <= 0)
+		dur = k ? 20000 : 33333;
+	/* the append window */
+	if (pts < b->wstart || pts + dur > b->wend)
+		return;
+	if (!(f.pkt = av_packet_clone(pkt)))
+		return;
+	f.pkt->pts = pts;
+	f.pkt->dts = dts;
+	f.pkt->duration = dur;
+	f.pkt->stream_index = 0;
+	f.pts = pts;
+	f.end = pts + dur;
+	f.run = b->run;
+	pthread_mutex_lock(&p->lock);
+	f.init = b->init[k];
+	f.init->refs++;
+	insert_frame(&b->t[k], &f);
+	pthread_mutex_unlock(&p->lock);
+}
+
+static void *parse_thread(void *arg)
+{
+	struct sbuf *b = arg;
+	struct player *p = b->p;
+	AVPacket *pkt = av_packet_alloc();
+	AVFormatContext *fmt;
+	AVIOContext *io;
+	unsigned char *iobuf;
+	int quit, reset;
+
+	for (;;) {
+		pthread_mutex_lock(&p->lock);
+		b->consumed = 0;
+		b->reset = 0;
+		pthread_mutex_unlock(&p->lock);
+		fmt = avformat_alloc_context();
+		iobuf = av_malloc(65536);
+		io = iobuf ? avio_alloc_context(iobuf, 65536, 0, b, fifo_read,
+			NULL, NULL) : NULL;
+		if (!fmt || !io || !pkt)
+			abort();
+		io->seekable = 0;
+		fmt->pb = io;
+		fmt->flags |= AVFMT_FLAG_CUSTOM_IO;
+		if (avformat_open_input(&fmt, "", b->ifmt, NULL) == 0) {
+			new_streams(b, fmt);
+			while (av_read_frame(fmt, pkt) >= 0) {
+				new_packet(b, fmt, pkt);
+				av_packet_unref(pkt);
+			}
+			avformat_close_input(&fmt);
+		}
+		av_freep(&io->buffer);
+		avio_context_free(&io);
+		pthread_mutex_lock(&p->lock);
+		quit = b->quit;
+		reset = b->reset && b->consumed;
+		if (!quit && !reset) {
+			/* not media: what is left goes, a new segment may come */
+			b->error = 1;
+			b->off = b->len = 0;
+			b->replay = b->initlen;
+			b->idle = 1;
+			pthread_cond_broadcast(&p->cond);
+		}
+		pthread_mutex_unlock(&p->lock);
+		if (quit)
+			break;
+	}
+	av_packet_free(&pkt);
+	return NULL;
+}
+
+/* The length of the initialization segment bytes start with, 0 when
+ * they start with a media segment */
+static size_t init_length(const unsigned char *d, size_t n)
+{
+	static const unsigned char ebml[4] = { 0x1a, 0x45, 0xdf, 0xa3 };
+	static const unsigned char cluster[4] = { 0x1f, 0x43, 0xb6, 0x75 };
+	size_t i = 0;
+
+	if (n >= 4 && !memcmp(d, ebml, 4)) {
+		for (i = 4; i + 4 <= n; i++)
+			if (!memcmp(d + i, cluster, 4))
+				return i;
+		return n;
+	}
+	if (n < 8 || (memcmp(d + 4, "ftyp", 4) && memcmp(d + 4, "moov", 4)))
+		return 0;
+	while (i + 8 <= n) {
+		uint64_t size = (uint64_t)d[i] << 24 | (uint64_t)d[i + 1] << 16 |
+			(uint64_t)d[i + 2] << 8 | d[i + 3];
+
+		if (!memcmp(d + i + 4, "moof", 4) ||
+		    !memcmp(d + i + 4, "mdat", 4) ||
+		    !memcmp(d + i + 4, "styp", 4) ||
+		    !memcmp(d + i + 4, "sidx", 4))
+			return i;
+		if (size == 1 && i + 16 <= n) {
+			int j;
+
+			for (size = 0, j = 8; j < 16; j++)
+				size = size << 8 | d[i + j];
+		}
+		if (size < 8 || size > n - i)
+			return n;
+		i += size;
+	}
+	return n;
+}
+
+/* Frames up to the last key frame before limit go from t (eviction) */
+static void evict(struct track *t, int64_t limit)
+{
+	int i, k = -1;
+
+	for (i = 0; i < t->n; i++)
+		if ((t->f[i].pkt->flags & AV_PKT_FLAG_KEY) &&
+		    t->f[i].pts <= limit)
+			k = i;
+	if (k <= 0)
+		return;
+	for (i = 0; i < k; i++)
+		drop_frame(t, i);
+	memmove(t->f, t->f + k, (size_t)(t->n - k) * sizeof(*t->f));
+	t->n -= k;
+}
+
+static void ranges_changed(struct sbuf *b)
+{
+	track_ranges(&b->t[0]);
+	track_ranges(&b->t[1]);
+	player_ranges(b->p);
+	b->p->changes++;
+	pthread_cond_broadcast(&b->p->cond);
+}
+
+/* The next frame of t to decode, under lock; after a seek, the key
+ * frame at or before its time, once it is buffered */
+static struct cframe *next_frame(struct player *p, struct track *t)
+{
+	int lo = 0, hi = t->n, i;
+
+	if (t->seek) {
+		int k = -1;
+
+		if (!in_ranges(t->ranges, t->nranges, p->seek_us))
+			return NULL;
+		for (i = 0; i < t->n; i++)
+			if ((t->f[i].pkt->flags & AV_PKT_FLAG_KEY) &&
+			    t->f[i].pts <= p->seek_us)
+				k = i;
+		if (k < 0)
+			return NULL;
+		t->seek = 0;
+		if (t == track_of(p, 0) || !track_of(p, 0))
+			p->seeks++;
+		return &t->f[k];
+	}
+	while (lo < hi) {
+		int mid = (lo + hi) / 2;
+
+		if (t->f[mid].pkt->dts <= t->cur)
+			lo = mid + 1;
+		else
+			hi = mid;
+	}
+	return lo < t->n ? &t->f[lo] : NULL;
+}
+
+/* A decoder for in (video or audio), the one open closes */
+static void set_decoder(struct player *p, int audio, struct init *in)
+{
+	AVCodecContext **dec = audio ? &p->adec : &p->vdec;
+	struct init **cur = audio ? &p->ainit : &p->vinit;
+
+	avcodec_free_context(dec);
+	init_unref(*cur);
+	*cur = in;
+	in->refs++;
+	*dec = open_codec(in->par, AV_TIME_BASE_Q);
+	if (audio) {
+		p->atb = AV_TIME_BASE_Q;
+		if (*dec && open_resampler(p))
+			avcodec_free_context(dec);
+		if (*dec) {
+			p->as = 0;
+			start_audio(p);
+		}
+		/* without a sound card, sound is not decoded */
+		if (!p->has_athread)
+			avcodec_free_context(dec);
+	} else {
+		p->vtb = AV_TIME_BASE_Q;
+	}
+}
+
+static void source_seek(struct player *p, double to)
+{
+	int i, k;
+
+	if (p->vdec)
+		avcodec_flush_buffers(p->vdec);
+	if (p->adec)
+		avcodec_flush_buffers(p->adec);
+	pthread_mutex_lock(&p->lock);
+	p->count = 0;
+	p->pcm_count = 0;
+	p->flush = 1;
+	p->eof = 0;
+	p->ended = 0;
+	p->waiting = 0;
+	p->base = to;
+	p->started = p->playing ? now() : 0;
+	p->audio_clock = -1;
+	p->played = 0;
+	p->shown_pts = to;
+	p->skip = to;
+	p->seek_us = (int64_t)(to * 1e6);
+	for (i = 0; i < MAX_BUFFERS; i++)
+		for (k = 0; k < 2; k++)
+			p->sb[i].t[k].seek = 1;
+	if (!track_of(p, 0) && !track_of(p, 1))
+		p->seeks++;
+	p->changes++;
+	pthread_mutex_unlock(&p->lock);
+}
+
+static void *source_thread(void *arg)
+{
+	struct player *p = arg;
+	AVFrame *fr = av_frame_alloc();
+	struct track *v, *a;
+	struct cframe *fv, *fa, *f;
+	AVPacket *pkt;
+	struct init *in;
+	int audio;
+
+	if (!fr)
+		return NULL;
+	pthread_mutex_lock(&p->lock);
+	for (;;) {
+		if (p->quit)
+			break;
+		if (p->seek_req) {
+			double to = p->seek_to;
+
+			p->seek_req = 0;
+			pthread_mutex_unlock(&p->lock);
+			source_seek(p, to);
+			pthread_mutex_lock(&p->lock);
+			continue;
+		}
+		v = track_of(p, 0);
+		a = track_of(p, 1);
+		fv = v ? next_frame(p, v) : NULL;
+		fa = a ? next_frame(p, a) : NULL;
+		if (p->eof && (fv || fa)) {
+			/* more came after the end */
+			p->eof = 0;
+			pthread_mutex_unlock(&p->lock);
+			if (p->vdec)
+				avcodec_flush_buffers(p->vdec);
+			if (p->adec)
+				avcodec_flush_buffers(p->adec);
+			pthread_mutex_lock(&p->lock);
+			continue;
+		}
+		/* paused, one frame ahead is enough */
+		if (!(p->playing || (v && !p->count)) || (!fv && !fa)) {
+			if (!fv && !fa && p->eos && !p->eof &&
+			    !(v && v->seek) && !(a && a->seek)) {
+				/* the end: what the decoders still hold */
+				pthread_mutex_unlock(&p->lock);
+				if (p->vdec) {
+					avcodec_send_packet(p->vdec, NULL);
+					drain(p, p->vdec, fr, 1);
+				}
+				if (p->adec) {
+					avcodec_send_packet(p->adec, NULL);
+					drain(p, p->adec, fr, 0);
+				}
+				pthread_mutex_lock(&p->lock);
+				p->eof = 1;
+				p->changes++;
+				pthread_cond_broadcast(&p->cond);
+				continue;
+			}
+			pthread_cond_wait(&p->cond, &p->lock);
+			continue;
+		}
+		audio = !fv || (fa && fa->pkt->dts < fv->pkt->dts);
+		f = audio ? fa : fv;
+		(audio ? a : v)->cur = f->pkt->dts;
+		pkt = av_packet_clone(f->pkt);
+		in = f->init;
+		in->refs++;
+		pthread_mutex_unlock(&p->lock);
+		if (in != (audio ? p->ainit : p->vinit)) {
+			/* a new stream: the old decoder gives what it holds */
+			AVCodecContext *old = audio ? p->adec : p->vdec;
+
+			if (old) {
+				avcodec_send_packet(old, NULL);
+				drain(p, old, fr, !audio);
+			}
+			set_decoder(p, audio, in);
+		}
+		if (pkt && (audio ? p->adec : p->vdec) &&
+		    avcodec_send_packet(audio ? p->adec : p->vdec, pkt) == 0)
+			drain(p, audio ? p->adec : p->vdec, fr, !audio);
+		av_packet_free(&pkt);
+		pthread_mutex_lock(&p->lock);
+		init_unref(in);
+	}
+	pthread_mutex_unlock(&p->lock);
+	av_frame_free(&fr);
+	return NULL;
+}
+
+/* The clock waits where nothing is buffered, and goes on once there
+ * is half a second ahead, or the end; small gaps are jumped. Under
+ * lock, from advance(). */
+static void wait_or_go(struct player *p)
+{
+	double t = clock_now(p);
+	int64_t us = (int64_t)(t * 1e6), last;
+	int i, end;
+
+	if (!p->playing)
+		return;
+	last = p->nranges ? p->ranges[2 * p->nranges - 1] : 0;
+	end = p->eos && us >= last - 100000;
+	if (!p->waiting) {
+		if (end || in_ranges(p->ranges, p->nranges, us))
+			return;
+		p->base = t;
+		p->started = 0;
+		p->audio_clock = -1;
+		p->waiting = 1;
+		p->changes++;
+		return;
+	}
+	for (i = 0; i < p->nranges; i++) {
+		int64_t s = p->ranges[2 * i], e = p->ranges[2 * i + 1];
+
+		if (us < s && s - us < 500000) {
+			us = s;	/* a gap */
+			p->base = (double)s / 1e6;
+		}
+		if (end || (us >= s && us < e && (e - us >= 500000 ||
+		    (p->eos && i == p->nranges - 1)))) {
+			p->waiting = 0;
+			p->started = now();
+			p->audio_clock = -1;
+			p->played = 0;
+			p->changes++;
+			pthread_cond_broadcast(&p->cond);
+			return;
+		}
+	}
+}
+
+/* Types: MIME type, codecs, and what a small machine plays well */
+static int codec_ok(const char *c, int video)
+{
+	static const struct {
+		const char *prefix;
+		enum AVCodecID id;
+		int video;
+	} codecs[] = {
+		{ "avc1", AV_CODEC_ID_H264, 1 }, { "avc3", AV_CODEC_ID_H264, 1 },
+		{ "vp8", AV_CODEC_ID_VP8, 1 },
+		{ "mp4a.40", AV_CODEC_ID_AAC, 0 }, { "mp4a.67", AV_CODEC_ID_AAC, 0 },
+		{ "mp4a.69", AV_CODEC_ID_MP3, 0 }, { "mp4a.6b", AV_CODEC_ID_MP3, 0 },
+		{ "opus", AV_CODEC_ID_OPUS, 0 }, { "vorbis", AV_CODEC_ID_VORBIS, 0 },
+		{ "flac", AV_CODEC_ID_FLAC, 0 }, { "ac-3", AV_CODEC_ID_AC3, 0 },
+		{ "ec-3", AV_CODEC_ID_EAC3, 0 }
+	};
+	size_t i, n;
+
+	for (i = 0; i < sizeof(codecs) / sizeof(*codecs); i++) {
+		n = strlen(codecs[i].prefix);
+		if (!strncmp(c, codecs[i].prefix, n) &&
+		    (!c[n] || c[n] == '.') && (video || !codecs[i].video))
+			return avcodec_find_decoder(codecs[i].id) != NULL;
+	}
+	/* VP9, AV1, HEVC: too heavy without hardware, H.264 is offered */
+	return 0;
+}
+
+/* A parameter of a MIME type ("codecs", "width"...), lower case,
+ * unquoted; NULL when absent */
+static char *type_param(const char *type, const char *name, char *out,
+	size_t size)
+{
+	const char *s = strchr(type, ';');
+	size_t n = strlen(name), i;
+
+	while (s) {
+		s++;
+		while (*s == ' ' || *s == '\t')
+			s++;
+		if (!strncasecmp(s, name, n) && s[n] == '=') {
+			s += n + 1;
+			if (*s == '"')
+				s++;
+			for (i = 0; *s && *s != '"' && *s != ';' &&
+			     i < size - 1; s++)
+				out[i++] = (char)tolower((unsigned char)*s);
+			out[i] = 0;
+			return out;
+		}
+		s = strchr(s, ';');
+	}
+	return NULL;
+}
+
+/* The demuxer for a SourceBuffer of type, or NULL */
+static AVInputFormat *source_format(const char *type)
+{
+	char codecs[256], num[32], *c, *next;
+	int video = !strncasecmp(type, "video/", 6);
+	AVInputFormat *f;
+
+	if (!strncasecmp(type, "video/mp4", 9) ||
+	    !strncasecmp(type, "audio/mp4", 9))
+		f = av_find_input_format("mp4");
+	else if (!strncasecmp(type, "video/webm", 10) ||
+		 !strncasecmp(type, "audio/webm", 10))
+		f = av_find_input_format("webm");
+	else
+		return NULL;
+	if (type_param(type, "codecs", codecs, sizeof(codecs)))
+		for (c = codecs; c; c = next) {
+			if ((next = strchr(c, ',')))
+				*next++ = 0;
+			while (*c == ' ')
+				c++;
+			if (!codec_ok(c, video))
+				return NULL;
+		}
+	if (type_param(type, "width", num, sizeof(num)) &&
+	    type_param(type, "height", num + 16, 16) &&
+	    atof(num) * atof(num + 16) > MAX_PIXELS)
+		return NULL;	/* decoded to be scaled down: wasted */
+	if (type_param(type, "framerate", num, sizeof(num)) &&
+	    atof(num) > 31)
+		return NULL;
+	return f;
+}
+
 /* The hooks */
 
 static int can_play(void *data, const char *type)
@@ -653,13 +1548,32 @@ static void *open_player(void *data, const char *url,
 static void close_player(void *h)
 {
 	struct player *p = h;
-	int i;
+	int i, k, j;
 
 	pthread_mutex_lock(&p->lock);
 	p->quit = 1;
+	for (i = 0; i < MAX_BUFFERS; i++)
+		p->sb[i].quit = 1;
 	pthread_cond_broadcast(&p->cond);
 	pthread_mutex_unlock(&p->lock);
 	pthread_join(p->thread, NULL);
+	for (i = 0; i < MAX_BUFFERS; i++) {
+		struct sbuf *b = &p->sb[i];
+
+		if (!b->used)
+			continue;
+		pthread_join(b->thread, NULL);
+		for (k = 0; k < 2; k++) {
+			for (j = 0; j < b->t[k].n; j++)
+				drop_frame(&b->t[k], j);
+			free(b->t[k].f);
+			init_unref(b->init[k]);
+		}
+		free(b->fifo);
+		free(b->initseg);
+	}
+	init_unref(p->vinit);
+	init_unref(p->ainit);
 	if (p->has_athread) {
 		pthread_join(p->athread, NULL);
 		snd_pcm_close(p->dev);
@@ -704,6 +1618,7 @@ static void play(void *h)
 		p->audio_clock = -1;
 		p->played = 0;
 		p->ended = 0;
+		p->waiting = 0;	/* the clock looks again */
 		p->changes++;
 	}
 	pthread_cond_broadcast(&p->cond);
@@ -764,6 +1679,20 @@ static void state(void *h, soie_media_state *st)
 	pthread_mutex_lock(&p->lock);
 	advance(p);
 	st->duration = p->duration;
+	if (p->source) {
+		/* known once every SourceBuffer had its initialization */
+		int i, ready = 0;
+
+		for (i = 0; i < MAX_BUFFERS; i++)
+			if (p->sb[i].used)
+				ready = p->sb[i].init[0] || p->sb[i].init[1] ?
+					ready | 1 : ready | 2;
+		if (ready != 1)
+			st->duration = 0;
+		else if (p->duration <= 0)
+			st->duration = p->nranges ?
+				(double)p->ranges[2 * p->nranges - 1] / 1e6 : 1e-6;
+	}
 	st->time = clock_now(p);
 	if (p->duration > 0 && st->time > p->duration)
 		st->time = p->duration;
@@ -773,6 +1702,10 @@ static void state(void *h, soie_media_state *st)
 	st->height = p->height;
 	st->error = p->error;
 	st->changes = p->changes;
+	st->waiting = p->waiting;
+	st->seeks = p->seeks;
+	st->decoded = p->decoded;
+	st->dropped = p->dropped;
 	pthread_mutex_unlock(&p->lock);
 }
 
@@ -784,16 +1717,245 @@ static const unsigned char *frame(void *h, int *w, int *hh)
 	pthread_mutex_lock(&p->lock);
 	advance(p);
 	f = p->shown;
-	*w = p->width;
-	*hh = p->height;
+	*w = p->shown_w;
+	*hh = p->shown_h;
 	pthread_mutex_unlock(&p->lock);
 	return f;
+}
+
+/* Media Source Extensions hooks */
+
+static int can_source(void *data, const char *type)
+{
+	(void)data;
+	return type && source_format(type) != NULL;
+}
+
+static void *open_source(void *data)
+{
+	struct player *p = calloc(1, sizeof(*p));
+
+	(void)data;
+	if (!p || !(p->pcm = malloc(PCM_FRAMES * 2 * sizeof(*p->pcm)))) {
+		free(p);
+		return NULL;
+	}
+	p->source = 1;
+	p->vs = p->as = -1;
+	p->audio_clock = -1;
+	p->volume = 1;
+	p->opened = 1;
+	pthread_mutex_init(&p->lock, NULL);
+	pthread_cond_init(&p->cond, NULL);
+	if (pthread_create(&p->thread, NULL, source_thread, p)) {
+		free(p->pcm);
+		free(p);
+		return NULL;
+	}
+	return p;
+}
+
+static int add_buffer(void *h, const char *type)
+{
+	struct player *p = h;
+	AVInputFormat *f = source_format(type);
+	struct sbuf *b;
+	int i;
+
+	if (!f)
+		return -1;
+	pthread_mutex_lock(&p->lock);
+	for (i = 0; i < MAX_BUFFERS && p->sb[i].used; i++)
+		;
+	if (i == MAX_BUFFERS) {
+		pthread_mutex_unlock(&p->lock);
+		return -1;
+	}
+	b = &p->sb[i];
+	memset(b, 0, sizeof(*b));
+	b->p = p;
+	b->ifmt = f;
+	b->stream[0] = b->stream[1] = -1;
+	b->wend = INT64_MAX;
+	b->wstart = INT64_MIN;
+	b->t[0].cur = b->t[1].cur = INT64_MIN;
+	b->quota = !strncasecmp(type, "audio/", 6) ? AUDIO_QUOTA : VIDEO_QUOTA;
+	if (pthread_create(&b->thread, NULL, parse_thread, b)) {
+		pthread_mutex_unlock(&p->lock);
+		return -1;
+	}
+	b->used = 1;
+	pthread_mutex_unlock(&p->lock);
+	return i;
+}
+
+static struct sbuf *buffer_of(struct player *p, int id)
+{
+	return id >= 0 && id < MAX_BUFFERS && p->sb[id].used ? &p->sb[id] :
+		NULL;
+}
+
+static int append(void *h, int id, const void *bytes, size_t len,
+	double offset, double start, double end)
+{
+	struct player *p = h;
+	struct sbuf *b;
+	size_t n;
+	int r = 0;
+
+	pthread_mutex_lock(&p->lock);
+	if (!(b = buffer_of(p, id))) {
+		pthread_mutex_unlock(&p->lock);
+		return SOIE_SOURCE_ERROR;
+	}
+	if (b->t[0].bytes + b->t[1].bytes + len > b->quota) {
+		/* what was played goes first */
+		int64_t limit = (int64_t)(clock_now(p) * 1e6) - KEEP;
+
+		evict(&b->t[0], limit);
+		evict(&b->t[1], limit);
+		ranges_changed(b);
+		if (b->t[0].bytes + b->t[1].bytes + len > b->quota) {
+			pthread_mutex_unlock(&p->lock);
+			return SOIE_SOURCE_FULL;
+		}
+	}
+	if (b->len + len > b->cap) {
+		unsigned char *f = realloc(b->fifo, b->len + len);
+
+		if (!f) {
+			pthread_mutex_unlock(&p->lock);
+			return SOIE_SOURCE_FULL;
+		}
+		b->fifo = f;
+		b->cap = b->len + len;
+	}
+	n = init_length(bytes, len);
+	if (!n && !b->initlen) {
+		/* the first segment must initialize */
+		pthread_mutex_unlock(&p->lock);
+		return SOIE_SOURCE_ERROR;
+	}
+	if (n) {
+		/* kept to open the demuxer again (abort(), errors) */
+		if (n <= INIT_MAX) {
+			unsigned char *in = malloc(n);
+
+			if (in) {
+				memcpy(in, bytes, n);
+				free(b->initseg);
+				b->initseg = in;
+				b->initlen = n;
+			}
+		}
+		if (b->consumed)
+			b->reset = 1;	/* the demuxer opens again */
+		b->replay = 0;
+	}
+	memcpy(b->fifo + b->len, bytes, len);
+	b->len += len;
+	b->offset = (int64_t)(offset * 1e6);
+	b->wstart = start <= -1e15 ? INT64_MIN : (int64_t)(start * 1e6);
+	b->wend = end >= 1e15 ? INT64_MAX : (int64_t)(end * 1e6);
+	b->run++;
+	b->idle = 0;
+	b->error = 0;
+	pthread_cond_broadcast(&p->cond);
+	/* parsing is quick: wait for it */
+	while (!b->idle && !b->quit)
+		pthread_cond_wait(&p->cond, &p->lock);
+	if (b->error)
+		r = SOIE_SOURCE_ERROR;
+	ranges_changed(b);
+	pthread_mutex_unlock(&p->lock);
+	return r;
+}
+
+static int buffered(void *h, int id, double *out, int max)
+{
+	struct player *p = h;
+	int64_t r[2 * MAX_RANGES];
+	struct sbuf *b;
+	int i, n = 0;
+
+	pthread_mutex_lock(&p->lock);
+	if (id < 0) {
+		n = p->nranges;
+		memcpy(r, p->ranges, (size_t)n * 2 * sizeof(*r));
+	} else if ((b = buffer_of(p, id))) {
+		n = buffer_ranges(b, r);
+	}
+	pthread_mutex_unlock(&p->lock);
+	if (n > max)
+		n = max;
+	for (i = 0; i < 2 * n; i++)
+		out[i] = (double)r[i] / 1e6;
+	return n;
+}
+
+static void source(void *h, int op, int id, double a, double z)
+{
+	struct player *p = h;
+	struct sbuf *b;
+	int k, j;
+
+	pthread_mutex_lock(&p->lock);
+	b = buffer_of(p, id);
+	switch (op) {
+	case SOIE_SOURCE_REMOVE:
+		if (!b)
+			break;
+		for (k = 0; k < 2; k++)
+			remove_frames(&b->t[k], (int64_t)(a * 1e6),
+				z >= 1e15 ? INT64_MAX : (int64_t)(z * 1e6), 0);
+		ranges_changed(b);
+		break;
+	case SOIE_SOURCE_ABORT:
+		if (!b)
+			break;
+		b->off = b->len = 0;
+		b->reset = 1;
+		b->replay = b->initlen;
+		break;
+	case SOIE_SOURCE_DROP:
+		if (!b)
+			break;
+		b->quit = 1;
+		pthread_cond_broadcast(&p->cond);
+		pthread_mutex_unlock(&p->lock);
+		pthread_join(b->thread, NULL);
+		pthread_mutex_lock(&p->lock);
+		for (k = 0; k < 2; k++) {
+			for (j = 0; j < b->t[k].n; j++)
+				drop_frame(&b->t[k], j);
+			free(b->t[k].f);
+			init_unref(b->init[k]);
+		}
+		free(b->fifo);
+		free(b->initseg);
+		memset(b, 0, sizeof(*b));
+		player_ranges(p);
+		p->changes++;
+		pthread_cond_broadcast(&p->cond);
+		break;
+	case SOIE_SOURCE_DURATION:
+		p->duration = a > 0 ? a : 0;
+		p->changes++;
+		break;
+	case SOIE_SOURCE_END:
+		p->eos = a != 0;
+		p->changes++;
+		pthread_cond_broadcast(&p->cond);
+		break;
+	}
+	pthread_mutex_unlock(&p->lock);
 }
 
 static struct soie_ext_media hooks = {
 	{ SOIE_EXT_ABI, sizeof(hooks), SOIE_EXT_MEDIA, "ffmpeg", NULL },
 	can_play, open_player, close_player, play, pause_player, seek,
-	volume, state, frame
+	volume, state, frame, can_source, open_source, add_buffer, append,
+	buffered, source
 };
 
 int soie_ext_init(void)
