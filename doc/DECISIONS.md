@@ -622,9 +622,25 @@ or the interpreter?).
   Found by measuring the same frozen page in headless Firefox (the
   ESR in /opt/mozilla): same min-content, but overflow-x: auto there.
 
+- transform moves boxes: translate(), translateX(), translateY(),
+  translate3d() and the translation of matrix() and matrix3d(),
+  percentages of the border box, as position: relative does (layout,
+  so painting, hit testing and getBoundingClientRect agree). Scales
+  and rotations are left out: the box keeps its size. YouTube's
+  thumbnails center with top: 50%; transform: translateY(-50%).
+- Negative z-index layers paint under the flow of their stacking
+  context, after its root's background (CSS 2 Appendix E), as hit
+  testing already had them: YouTube's masthead has a 90 % white
+  background at z-index -1, painted over its logo before.
+- soie_node_free() on a document freed its nodes first and stopped its
+  scripts last: the script engine then walked the wrappers of freed
+  nodes (soie-render, any host not calling soie_script_stop() first).
+  Scripts stop first now. The tests run with MALLOC_PERTURB_: every JS
+  test failed with it before the fix.
+
 Now: the consent dialog shows and its buttons work, search suggests
-and shows its results with their thumbnails. Still: a playlist's
-thumbnail stack sits too low.
+and shows its results, thumbnails in place; the page matches Firefox
+on the same frozen DOM.
 
 ## QuickJS 2026-06-04
 

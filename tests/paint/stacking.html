@@ -20,3 +20,14 @@
  background:navy"></div></div>
 <div style="position:fixed;top:200px;left:210px;width:110px;height:40px;
  background:rgba(255,255,0,.6);z-index:4"></div>
+<!-- negative z-index: under the flow of its context. A translucent
+     white background (z-index -1) behind a header's logo (YouTube's),
+     and at the root, pink under a line of text -->
+<div style="position:fixed;top:205px;left:20px;width:80px;height:30px;
+ z-index:6"><div style="position:absolute;top:0;left:0;width:80px;
+ height:30px;background:rgba(255,255,255,.9);z-index:-1"></div><div
+ style="width:30px;height:20px;background:red"></div></div>
+<div style="position:absolute;top:120px;left:170px;width:40px;height:20px;
+ background:pink;z-index:-1"></div>
+<p style="position:absolute;top:110px;left:165px;margin:0;font:16px
+ sans-serif;width:60px">text</p>

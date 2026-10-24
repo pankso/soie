@@ -520,6 +520,7 @@ struct zent {
 
 static struct zent *zlist;
 static int nz, capz;
+static const struct box *bg_done;	/* its background is painted */
 
 static int positioned(const struct box *b)
 {
@@ -596,7 +597,9 @@ static void paint_box(struct canvas *c, struct box *b, int stacking)
 	y = b->y - b->p[0] - b->b[0];
 	w = b->w + b->p[1] + b->p[3] + b->b[1] + b->b[3];
 	h = b->h + b->p[0] + b->p[2] + b->b[0] + b->b[2];
-	if (b->type != B_INLINE && b->parent &&
+	if (bg_done == b) {
+		bg_done = NULL;		/* painted under its negative layers */
+	} else if (b->type != B_INLINE && b->parent &&
 	    !kw(b->style, P_VISIBILITY, "hidden")) {
 		paint_background(c, b, x, y, w, h);
 		paint_borders(c, b, x, y, w, h);
@@ -633,40 +636,101 @@ static void paint_box(struct canvas *c, struct box *b, int stacking)
 
 static void paint_layer(struct canvas *c, struct box *b);
 
+static int zindex(const struct box *b)
+{
+	return b->style->v[P_Z_INDEX].kw ? 0 :
+		(int)b->style->v[P_Z_INDEX].u.num;
+}
+
+/* The negative z-index layers of the context b is the root of, not
+ * those in the contexts they make */
+static void negatives(struct box *b, struct zent **v, int *n, int *cap)
+{
+	struct box *k;
+
+	for (k = b->first; k; k = k->next) {
+		if (positioned(k)) {
+			if (zindex(k) < 0) {
+				if (*n == *cap) {
+					*cap = *cap ? *cap * 2 : 8;
+					*v = xrealloc(*v, (size_t)*cap * sizeof(**v));
+				}
+				(*v)[*n].box = k;
+				(*v)[*n].z = zindex(k);
+				(*v)[*n].order = *n;
+				(*n)++;
+			}
+			if (stacking_context(k))
+				continue;
+		}
+		negatives(k, v, n, cap);
+	}
+}
+
 /* The deferred layers of the current context, by z-index then tree
- * order; z < 0 is not drawn under the flow yet */
+ * order; the negative ones were painted under the flow */
 static void paint_layers(struct canvas *c)
 {
 	int i;
 
 	for (i = 0; i < nz; i++) {
 		qsort(zlist + i, (size_t)(nz - i), sizeof(*zlist), zcmp);
-		paint_layer(c, zlist[i].box);
+		if (zlist[i].z >= 0)
+			paint_layer(c, zlist[i].box);
 	}
 }
 
-/* A layer: a stacking context paints its own layers, under its
- * opacity; another one leaves them to the context it is in */
-static void paint_layer(struct canvas *c, struct box *b)
+/*
+ * A stacking context, CSS 2 Appendix E: the background and borders of
+ * its root, its negative z-index layers, its flow, its other layers.
+ */
+static void paint_context(struct canvas *c, struct box *b)
 {
-	struct zent *outer = zlist;
-	int onz = nz, ocap = capz;
+	struct zent *outer = zlist, *neg = NULL;
+	int onz = nz, ocap = capz, nneg = 0, capneg = 0, i;
 	float alpha = c->alpha;
+	float op = b->style ? (float)b->style->v[P_OPACITY].u.num : 1;
 
-	if (!stacking_context(b)) {
-		paint_box(c, b, 1);
-		return;
-	}
 	zlist = NULL;
 	nz = capz = 0;
+	negatives(b, &neg, &nneg, &capneg);
+	if (nneg) {
+		c->alpha *= op;
+		if (b->type != B_INLINE && b->parent &&
+		    !kw(b->style, P_VISIBILITY, "hidden")) {
+			float x = b->x - b->p[3] - b->b[3];
+			float y = b->y - b->p[0] - b->b[0];
+			float w = b->w + b->p[1] + b->p[3] + b->b[1] + b->b[3];
+			float h = b->h + b->p[0] + b->p[2] + b->b[0] + b->b[2];
+
+			paint_background(c, b, x, y, w, h);
+			paint_borders(c, b, x, y, w, h);
+			bg_done = b;
+		}
+		qsort(neg, (size_t)nneg, sizeof(*neg), zcmp);
+		for (i = 0; i < nneg; i++)
+			paint_layer(c, neg[i].box);
+		c->alpha = alpha;
+		free(neg);
+	}
 	paint_box(c, b, 1);
-	c->alpha *= (float)b->style->v[P_OPACITY].u.num;
+	c->alpha *= op;
 	paint_layers(c);
 	c->alpha = alpha;
 	free(zlist);
 	zlist = outer;
 	nz = onz;
 	capz = ocap;
+}
+
+/* A layer: a stacking context paints its own layers, under its
+ * opacity; another one leaves them to the context it is in */
+static void paint_layer(struct canvas *c, struct box *b)
+{
+	if (!stacking_context(b))
+		paint_box(c, b, 1);
+	else
+		paint_context(c, b);
 }
 
 /* The canvas background: the root's, or the body's (CSS 2 14.2). */
@@ -718,8 +782,7 @@ int soie_paint(soie_node *doc, unsigned char *rgba, int width, int height,
 	}
 	canvas_background(&c, root);
 	nz = 0;
-	paint_box(&c, root, 1);
-	paint_layers(&c);
+	paint_context(&c, root);
 	free(zlist);
 	zlist = NULL;
 	nz = capz = 0;
