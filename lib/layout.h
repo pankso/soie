@@ -113,8 +113,10 @@ void layout_cell(struct box *c, float x, float y, float w);
 void rel_offset(const struct box *b, float cbw, float *dx, float *dy);
 
 /* inline.c */
+/* cbh: b's content height when definite (percentage heights of its
+ * atomics), else -1 */
 float layout_inline(struct box *b, struct bfc *f, float x, float y,
-	float w);
+	float w, float cbh);
 void inline_sizes(struct box *b, float *min, float *max);
 
 char *layout_dump(const struct box *root, size_t *len);

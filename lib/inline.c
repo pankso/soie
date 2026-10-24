@@ -636,7 +636,8 @@ static void place_marker(struct ls *s, struct box *m)
 	f->w = w;
 }
 
-float layout_inline(struct box *b, struct bfc *f, float x, float y, float w)
+float layout_inline(struct box *b, struct bfc *f, float x, float y, float w,
+	float cbh)
 {
 	struct items it = { NULL, 0, 0 };
 	struct ls s;
@@ -698,7 +699,7 @@ float layout_inline(struct box *b, struct bfc *f, float x, float y, float w)
 			struct frag *fr;
 			float mw;
 
-			layout_atomic(c, w, -1);
+			layout_atomic(c, w, cbh);
 			mw = c->w + c->p[1] + c->p[3] + c->b[1] + c->b[3] +
 				c->m[1] + c->m[3];
 			need(&s, mw, 1);

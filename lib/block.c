@@ -364,7 +364,7 @@ static float layout_contents(struct box *b, struct bfc *f, float y,
 		float top = collapse_top ? y + strut_val(s) : y;
 
 		b->y = top;
-		h = layout_inline(b, f, b->x, top, b->w);
+		h = layout_inline(b, f, b->x, top, b->w, cbh);
 		if (b->nlines && collapse_top)
 			s->pos = s->neg = 0;
 		return h;

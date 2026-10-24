@@ -118,3 +118,17 @@ width=100
 |   block <body> 0,0 100x46
 |     line 0,0 100x46
 |       replaced <input> 0,0 16x40
+
+#data
+<!DOCTYPE html><body style="margin:0"><div style="height:100px;width:200px"><span><img style="display:inline-block;height:100%;width:50%"></span><span style="display:inline-block;height:50%;width:20px"></span></div>
+#errors
+#layout
+width=200
+#document
+| block <html> 0,0 200x100
+|   block <body> 0,0 200x100
+|     block <div> 0,0 200x100
+|       line 0,0 200x106
+|         replaced <img> 0,0 100x100
+|         inline <span> 0,88 100x16
+|         inline-block <span> 100,50 20x50
