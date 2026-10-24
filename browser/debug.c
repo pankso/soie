@@ -14,6 +14,7 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <execinfo.h>
+#include <pthread.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
 #ifdef __linux__
@@ -28,6 +29,7 @@ int debug_level;
 static char trail[TRAIL][200];
 static int ntrail;
 static double t0;
+static pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;	/* the trail */
 static char page_url[1024];
 static char crash_path[600];
 static char gdb[] = "/usr/bin/gdb";
@@ -51,10 +53,12 @@ void debug(int level, const char *fmt, ...)
 	va_start(ap, fmt);
 	vsnprintf(full + n, sizeof(full) - (size_t)n, fmt, ap);
 	va_end(ap);
-	/* the trail keeps the start, stderr gets it all */
+	/* the trail keeps the start, stderr gets it all; from any thread */
+	pthread_mutex_lock(&lock);
 	snprintf(trail[ntrail++ % TRAIL], sizeof(trail[0]), "%s", full);
 	if (level <= debug_level)
 		fprintf(stderr, "soie: %s\n", full);
+	pthread_mutex_unlock(&lock);
 }
 
 void debug_page(const char *url)

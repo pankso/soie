@@ -1,0 +1,12 @@
+log: sync, records queued
+log: takeRecords 1
+log: batch 5 true
+log:   attributes a class old=x
+log:   characterData #text old=text
+log:   childList a +1 -0
+log:   childList root +0 -1
+log:   childList root +1 -0
+log: filtered attributes B data-k old=null
+log: polymer microtask ran
+log: promise, queued after the first record
+log: timeout after the batch

@@ -65,6 +65,9 @@ int soie_find(soie_node *doc, const char *text, int n, float *x, float *y,
  * its value: soie_paint() draws the caret there.
  */
 void soie_set_focus(soie_node *doc, soie_node *el, int caret);
+/* The focused control (set by the host or a script's focus()) and its
+ * caret. Since 1.1. */
+soie_node *soie_get_focus(const soie_node *doc, int *caret);
 
 /*
  * Fonts: system fonts are found under /usr/share/fonts and ~/.fonts;

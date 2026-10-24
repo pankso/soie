@@ -648,6 +648,11 @@ static void key(XKeyEvent *e)
 		find_go(shift ? -1 : 1);
 		return;
 	}
+	if (ctrl && shift && (ks == XK_J || ks == XK_j)) {
+		if (shell_debug_js())
+			ui_alert("no $SOIE_DEBUG_JS to run");
+		return;
+	}
 	if (ks == XK_F12) {
 		char path[700], *e;
 

@@ -828,6 +828,47 @@ static JSValue n_viewport(JSContext *js, JSValueConst this, int argc,
 	return a;
 }
 
+/* focus(el or null): el takes the focus, its caret at the end of its
+ * value; the host follows (soie_get_focus()) */
+static JSValue n_focus(JSContext *js, JSValueConst this, int argc,
+	JSValueConst *argv)
+{
+	struct sctx *c = ctx_of(js);
+	soie_node *el = argc > 0 ? unwrap(argv[0]) : NULL;
+	const char *v;
+
+	(void)this;
+	if (el && soie_node_document(el) != c->doc)
+		return JS_UNDEFINED;
+	v = el && soie_node_get_type(el) == SOIE_ELEMENT ?
+		soie_element_get_attr(el, "value") : NULL;
+	soie_set_focus(c->doc, el, v ? (int)strlen(v) : 0);
+	return JS_UNDEFINED;
+}
+
+/* hit(x, y): the element at viewport point x, y, laid out first */
+static JSValue n_hit(JSContext *js, JSValueConst this, int argc,
+	JSValueConst *argv)
+{
+	struct sctx *c = ctx_of(js);
+	int w, h;
+	float sx = 0, sy = 0;
+	double x = 0, y = 0;
+	soie_node *n;
+
+	(void)this;
+	if (argc < 2 || JS_ToFloat64(js, &x, argv[0]) ||
+	    JS_ToFloat64(js, &y, argv[1]))
+		return JS_EXCEPTION;
+	if (c->host->viewport)
+		c->host->viewport(c->host->data, &w, &h, &sx, &sy);
+	soie_document_update(c->doc);
+	n = soie_hit_test(c->doc, (float)x + sx, (float)y + sy);
+	if (n && soie_node_get_type(n) != SOIE_ELEMENT)
+		n = soie_node_parent(n);
+	return wrap(c, n);
+}
+
 static JSValue n_scroll(JSContext *js, JSValueConst this, int argc,
 	JSValueConst *argv)
 {
@@ -1325,6 +1366,8 @@ static const JSCFunctionListEntry natives[] = {
 	JS_CFUNC_MAGIC_DEF("ownerDoc", 1, n_rel, 7),
 	JS_CFUNC_DEF("newDocument", 1, n_new_document),
 	JS_CFUNC_DEF("adopt", 2, n_adopt),
+	JS_CFUNC_DEF("hit", 2, n_hit),
+	JS_CFUNC_DEF("focus", 1, n_focus),
 	JS_CFUNC_DEF("children", 2, n_children),
 	JS_CFUNC_DEF("data", 1, n_data),
 	JS_CFUNC_DEF("text", 1, n_text),

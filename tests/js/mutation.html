@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<body><div id=root><p id=a class=x>text</p></div>
+<script>
+var log = (...a) => console.log(a.map(String).join(' '));
+var root = document.getElementById('root'), a = document.getElementById('a');
+var desc = r => r.type + ' ' + (r.target.id || r.target.nodeName) +
+	(r.type === 'childList' ? ' +' + r.addedNodes.length + ' -' + r.removedNodes.length :
+	 r.type === 'attributes' ? ' ' + r.attributeName + ' old=' + r.oldValue : ' old=' + r.oldValue);
+var mo = new MutationObserver((recs, o) => { log('batch', recs.length, o === mo); recs.forEach(r => log(' ', desc(r))); });
+mo.observe(root, { childList: true, subtree: true, attributes: true, attributeOldValue: true, characterData: true, characterDataOldValue: true });
+a.className = 'y';
+a.firstChild.data = 'changed';
+var b = document.createElement('b');
+a.appendChild(b);
+root.removeChild(a);
+log('sync, records queued');
+Promise.resolve().then(() => log('promise, queued after the first record'));
+setTimeout(() => log('timeout after the batch'), 0);
+var f = new MutationObserver(recs => log('filtered', recs.map(desc).join(', ')));
+f.observe(b, { attributeFilter: ['data-k'] });
+b.setAttribute('title', 't');
+b.setAttribute('data-k', '1');
+var t = new MutationObserver(() => log('never'));
+t.observe(root, { childList: true });
+root.appendChild(document.createElement('i'));
+log('takeRecords', t.takeRecords().length);
+t.disconnect();
+// Polymer's microtask: a text node's data changed
+var node = document.createTextNode(''), n = 0, queue = [];
+new MutationObserver(() => { while (queue.length) queue.shift()(); }).observe(node, { characterData: true });
+queue.push(() => log('polymer microtask ran'));
+node.textContent = n++;
+</script>

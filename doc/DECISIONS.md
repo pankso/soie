@@ -550,6 +550,38 @@ Still to do there: the consent dialog's content is not stamped yet;
 the time QuickJS spends in YouTube's scripts (profile it: DOM natives
 or the interpreter?).
 
+## YouTube, the second round: consent and search
+
+- MutationObserver was a stub. Polymer and ShadyDOM use one, on a text
+  node whose data they change, as their microtask: their templates
+  (the consent dialog's content) were never stamped. Records are made
+  around the natives that change the tree (insert, remove, attributes,
+  data), delivered in a microtask, with subtree, old values and
+  attribute filters; nothing is looked at while nobody observes.
+- elementFromPoint() was a stub; now the engine's hit test.
+- The hit test follows the paint order: positioned boxes are layers by
+  z-index then tree order, over the flow, negative ones under it.
+  Before, a later backdrop (z-index 2201) took the clicks of the
+  dialog over it (2202).
+- Stacking contexts, painting and hit testing: a positioned box with a
+  z-index, fixed, or translucent orders its positioned descendants
+  within itself. The flat model put YouTube's search box (relative, in
+  a fixed z-index 2020 header) under the header: clicks missed it.
+- visibility: hidden and pointer-events: none are not hit; descendants
+  that set them back are. pointer-events is a keyword property now.
+- A script's focus() moves the browser's focus: the engine keeps it
+  (soie_get_focus(), libsoie 1.1), the shell follows after scripts.
+  YouTube focuses its search input that way.
+- Flex: a replaced box with a specified width kept its intrinsic one
+  in a column; form controls (input, select, textarea) stretch across
+  the line like boxes, images keep their size.
+- The browser can run a debugging script: $SOIE_DEBUG_JS, Ctrl+Shift+J,
+  in a block (its const are new at each run); SOIE_DEBUG=2 logs the
+  scripts' requests.
+
+Now: the consent dialog shows and its buttons work, search suggests
+and goes to the results page; its results do not show yet.
+
 ## QuickJS 2026-06-04
 
 - QuickJS 2026-06-04, the one release built and tested: no build path

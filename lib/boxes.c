@@ -1226,3 +1226,12 @@ void soie_set_focus(soie_node *doc, soie_node *el, int caret)
 	doc->u.doc.focus = el;
 	doc->u.doc.caret = caret;
 }
+
+soie_node *soie_get_focus(const soie_node *doc, int *caret)
+{
+	if (doc->type != SOIE_DOCUMENT)
+		return NULL;
+	if (caret)
+		*caret = doc->u.doc.caret;
+	return doc->u.doc.focus;
+}

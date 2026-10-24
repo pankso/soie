@@ -1556,6 +1556,7 @@ class HTMLElement extends Element {
 			return;
 		const old = activeElement;
 		activeElement = this;
+		api.focus(this);	/* the browser types into it */
 		if (old)
 			dispatch(old, new FocusEvent('blur'));
 		dispatch(this, new FocusEvent('focus'));
@@ -1565,6 +1566,7 @@ class HTMLElement extends Element {
 		if (activeElement !== this)
 			return;
 		activeElement = null;
+		api.focus(null);
 		dispatch(this, new FocusEvent('blur'));
 	}
 	click() {
@@ -2612,8 +2614,14 @@ class Document extends Node {
 	writeln(...s) { api.write(s.join('') + '\n'); }
 	open() { return this; }
 	close() {}
-	elementFromPoint() { return null; }
-	elementsFromPoint() { return []; }
+	elementFromPoint(x, y) { return api.hit(+x || 0, +y || 0); }
+	elementsFromPoint(x, y) {
+		const r = [];
+		for (let n = this.elementFromPoint(x, y); n && api.type(n) === S_EL;
+		     n = api.parent(n))
+			r.push(n);
+		return r;
+	}
 	getSelection() { return g.getSelection(); }
 	execCommand() { return false; }
 	queryCommandSupported() { return false; }
@@ -3735,11 +3743,165 @@ const storageHandler = {
 
 /* Observers: no layout notifications; intersection observers say
  * "visible" once, which is what lazy loaders wait for. */
+/*
+ * MutationObserver: records made around the natives that change the
+ * tree (insert, remove, attributes, text), delivered in a microtask.
+ * Nothing is looked at while no observer observes.
+ */
+class MutationRecord {
+	constructor(type, target, o = {}) {
+		this.type = type;
+		this.target = target;
+		this.addedNodes = list(o.added || []);
+		this.removedNodes = list(o.removed || []);
+		this.previousSibling = o.prev || null;
+		this.nextSibling = o.next || null;
+		this.attributeName = o.name === undefined ? null : o.name;
+		this.attributeNamespace = null;
+		this.oldValue = o.old === undefined ? null : o.old;
+	}
+}
+
+const observing = new WeakMap();	/* node: [{ observer, options }] */
+let nobserving = 0;			/* registrations, all nodes */
+const pendingObservers = new Set();
+
+function observedMutation(type, target, o) {
+	const seen = new Set();
+	for (let n = target; n; n = api.parent(n)) {
+		const regs = observing.get(n);
+		if (!regs)
+			continue;
+		for (const { observer, options: op } of regs) {
+			if (seen.has(observer) || (n !== target && !op.subtree))
+				continue;
+			if (type === 'childList' ? !op.childList :
+			    type === 'attributes' ? !op.attributes ||
+			    (op.attributeFilter && !op.attributeFilter.includes(
+				o.name)) : !op.characterData)
+				continue;
+			seen.add(observer);
+			const keep = type === 'attributes' ? op.attributeOldValue :
+				type === 'characterData' ? op.characterDataOldValue :
+				false;
+			observer._records.push(new MutationRecord(type, target,
+				keep ? o : Object.assign({}, o, { old: undefined })));
+			if (!pendingObservers.size)
+				queueMicrotask(notifyObservers);
+			pendingObservers.add(observer);
+		}
+	}
+}
+
+function notifyObservers() {
+	const all = [...pendingObservers];
+	pendingObservers.clear();
+	for (const ob of all) {
+		const r = ob.takeRecords();
+		if (r.length)
+			try {
+				ob._cb.call(ob, r, ob);
+			} catch (e) {
+				report(e);
+			}
+	}
+}
+
 class MutationObserver {
-	constructor(cb) { this._cb = cb; }
-	observe() {}
-	disconnect() {}
-	takeRecords() { return []; }
+	constructor(cb) {
+		if (typeof cb !== 'function')
+			throw new TypeError('MutationObserver: not a function');
+		this._cb = cb;
+		this._records = [];
+		this._nodes = new Set();
+	}
+	observe(target, options = {}) {
+		check(target);
+		const op = Object.assign({}, options);
+		if (op.attributeOldValue || op.attributeFilter)
+			op.attributes = op.attributes !== false;
+		if (op.characterDataOldValue)
+			op.characterData = op.characterData !== false;
+		if (!op.childList && !op.attributes && !op.characterData)
+			throw new TypeError('MutationObserver: nothing to observe');
+		if (op.attributeFilter)
+			op.attributeFilter = Array.from(op.attributeFilter, String);
+		let regs = observing.get(target);
+		if (!regs)
+			observing.set(target, regs = []);
+		const r = regs.find((x) => x.observer === this);
+		if (r) {
+			r.options = op;
+		} else {
+			regs.push({ observer: this, options: op });
+			nobserving++;
+			this._nodes.add(target);
+		}
+	}
+	disconnect() {
+		for (const n of this._nodes) {
+			const regs = observing.get(n) || [];
+			const i = regs.findIndex((x) => x.observer === this);
+			if (i >= 0) {
+				regs.splice(i, 1);
+				nobserving--;
+			}
+		}
+		this._nodes.clear();
+		this._records = [];
+	}
+	takeRecords() {
+		const r = this._records;
+		this._records = [];
+		return r;
+	}
+}
+
+{
+	const setAttr = api.setAttr, removeAttr = api.removeAttr;
+	const setData = api.setData, insertNode = api.insert;
+	const remove = api.remove;
+
+	api.setAttr = function (el, name, v) {
+		if (nobserving)
+			observedMutation('attributes', el, { name,
+				old: api.getAttr(el, name) });
+		return setAttr(el, name, v);
+	};
+	api.removeAttr = function (el, name) {
+		if (nobserving && api.getAttr(el, name) !== null)
+			observedMutation('attributes', el, { name,
+				old: api.getAttr(el, name) });
+		return removeAttr(el, name);
+	};
+	api.setData = function (n, v) {
+		if (nobserving)
+			observedMutation('characterData', n, { old: api.data(n) });
+		return setData(n, v);
+	};
+	api.remove = function (n) {
+		const p = nobserving && api.parent(n);
+		if (p)
+			observedMutation('childList', p, { removed: [n],
+				prev: api.prev(n), next: api.next(n) });
+		return remove(n);
+	};
+	api.insert = function (parent, node, ref) {
+		if (!nobserving)
+			return insertNode(parent, node, ref);
+		const frag = api.type(node) === S_FRAG;
+		const added = frag ? api.children(node, false) : [node];
+		const old = !frag && api.parent(node);
+		if (old)
+			observedMutation('childList', old, { removed: [node],
+				prev: api.prev(node), next: api.next(node) });
+		const prev = ref ? api.prev(ref) : api.last(parent);
+		const r = insertNode(parent, node, ref);
+		if (r && added.length)
+			observedMutation('childList', parent, { added, prev,
+				next: ref || null });
+		return r;
+	};
 }
 class IntersectionObserver {
 	constructor(cb, opts = {}) {
@@ -3971,7 +4133,7 @@ const globals = {
 	NodeList: Array, HTMLCollection: Array, URL, URLSearchParams,
 	TextEncoder, TextDecoder, Blob, File, FormData, Headers, Request,
 	Response, fetch, XMLHttpRequest, AbortController, AbortSignal,
-	Storage, MutationObserver, IntersectionObserver, ResizeObserver,
+	Storage, MutationObserver, MutationRecord, IntersectionObserver, ResizeObserver,
 	PerformanceObserver, Window, Navigator, Screen, Location, History,
 	btoa, atob, getComputedStyle, matchMedia,
 	devicePixelRatio: 1,

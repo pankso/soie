@@ -11,7 +11,8 @@ extern int debug_level;
 
 /* Read $SOIE_DEBUG, catch the fatal signals. */
 void debug_init(void);
-/* A line into the trail, and on stderr when level <= debug_level. */
+/* A line into the trail, and on stderr when level <= debug_level; any
+ * thread may call it. */
 void debug(int level, const char *fmt, ...)
 #ifdef __GNUC__
 	__attribute__((format(printf, 2, 3)))

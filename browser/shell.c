@@ -307,8 +307,13 @@ static int page_request(void *data, const soie_request *req,
 
 	/* from the script engine's threads (fetch, async XHR): straight to
 	 * the network, the page's resources are the main thread's */
-	if (!pthread_equal(pthread_self(), main_thread))
-		return net_request(data, req, res);
+	if (!pthread_equal(pthread_self(), main_thread)) {
+		int r = net_request(data, req, res);
+
+		debug(2, "script request %s %s: %s %d", req->method ? req->method :
+			"GET", req->url, r ? "failed" : "HTTP", r ? 0 : res->status);
+		return r;
+	}
 	if (!req->body && (!req->method || !strcmp(req->method, "GET")))
 		r = res_find(req->url);
 	if (!r || r->state == R_GIVEN)
@@ -369,6 +374,19 @@ static void find_again(void);
 /* After scripts ran: their navigation, or their changes on screen. */
 static int after_scripts(void)
 {
+	int moved = 0;
+
+	/* a script's focus(): keys go there now */
+	if (page.doc) {
+		int c;
+		soie_node *f = soie_get_focus(page.doc, &c);
+
+		if (f != focus) {
+			focus = f;
+			caret = c;
+			moved = 1;
+		}
+	}
 	if (pending_nav) {
 		char *u = pending_nav;
 
@@ -381,7 +399,7 @@ static int after_scripts(void)
 		layout_done();
 		return 1;
 	}
-	return 0;
+	return moved;
 }
 
 /* Layout and drawing */
@@ -1549,6 +1567,52 @@ void shell_paint(unsigned char *rgba, int stride)
 }
 
 /*
+ * Debugging: run the JavaScript of $SOIE_DEBUG_JS in the page, read
+ * again each time, in a block; its console.log() shows with
+ * SOIE_DEBUG=2. A script element appended to the body, removed after.
+ */
+int shell_debug_js(void)
+{
+	const char *path = getenv("SOIE_DEBUG_JS");
+	soie_node *body, *el, *t;
+	char *src = NULL;
+	size_t len = 0, n;
+	FILE *f;
+
+	if (!path || !page.doc || !(body = find_tag(page.doc, "body")))
+		return -1;
+	if (!(f = fopen(path, "r")))
+		return -1;
+	/* in a block: its const and let are new at each run */
+	src = malloc(2);
+	if (!src)
+		abort();
+	src[len++] = '{';
+	for (;;) {
+		src = realloc(src, len + 65536 + 3);
+		if (!src)
+			abort();
+		n = fread(src + len, 1, 65536, f);
+		len += n;
+		if (n < 65536)
+			break;
+	}
+	fclose(f);
+	src[len++] = '\n';
+	src[len++] = '}';
+	debug(1, "running %s", path);
+	el = soie_element_new(page.doc, SOIE_NS_HTML, "script");
+	t = soie_text_new(page.doc, src, len);
+	free(src);
+	soie_node_append(el, t);
+	soie_node_append(body, el);
+	soie_script_element(el);
+	soie_node_remove(el);
+	after_scripts();
+	return 0;
+}
+
+/*
  * Save the page for a bug report: its DOM as HTML (after the scripts)
  * and, beside it, the address, the trail, the DOM and box trees.
  */
@@ -1581,7 +1645,9 @@ int shell_dump(char *path, size_t size)
 	debug_trail(fileno(f));
 	/* with what most rendering bugs come down to */
 	dom = soie_node_dump_style(page.doc, "display,position,z-index,"
-		"opacity,transform,visibility,overflow,width,height,"
+		"opacity,transform,visibility,pointer-events,overflow,width,"
+		"height,min-width,max-width,box-sizing,flex-grow,flex-shrink,"
+		"flex-basis,margin-left,margin-right,padding-left,padding-right,"
 		"background-color,color", &dl);
 	boxes = soie_layout_dump(page.doc, &bl);
 	fprintf(f, "\nDOM, computed styles:\n");

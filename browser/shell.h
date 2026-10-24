@@ -72,6 +72,8 @@ int shell_render_png(const char *url, const char *path);
 /* Save the page for a bug report in ~/.cache/soie (page-TIME.html and
  * .txt); path gets the .txt file's. */
 int shell_dump(char *path, size_t size);
+/* Run the file $SOIE_DEBUG_JS names in the page. */
+int shell_debug_js(void);
 
 /* Front calls, defined by the front */
 void ui_title(const char *title);
