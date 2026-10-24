@@ -1029,6 +1029,122 @@ static int match_compound(const struct compound *c, const soie_node *el,
 }
 
 /*
+ * Incremental restyling: could a change at n change what the :has()
+ * arguments of l match? A change of attribute attr on n, else n
+ * inserted or removed. No only when sure: the argument never looks at
+ * that attribute, or no element of n's subtree has what any of its
+ * compounds requires (a type, a class, an id, an attribute).
+ */
+static int subtree_has_key(const struct compound *c, const soie_node *n)
+{
+	const struct simple *k = NULL;
+	const soie_node *e = n;
+	const char *v;
+	int i, quirks = n->doc->u.doc.quirks == SOIE_QUIRKS;
+
+	for (i = 0; i < c->n && !k; i++)
+		if (c->s[i].type == SEL_TYPE || c->s[i].type == SEL_ID ||
+		    c->s[i].type == SEL_CLASS || c->s[i].type == SEL_ATTR)
+			k = &c->s[i];
+	if (!k)
+		return 1;
+	while (e) {
+		if (e->type == SOIE_ELEMENT) {
+			switch (k->type) {
+			case SEL_TYPE:
+				if (!strcmp(e->name, e->ns == SOIE_NS_HTML ?
+				    k->name : k->value))
+					return 1;
+				break;
+			case SEL_ID:
+				if ((v = attr(e, "id")) && str_eq(v, k->value,
+				    quirks))
+					return 1;
+				break;
+			case SEL_CLASS:
+				if ((v = attr(e, "class")) && word_in(v, k->value,
+				    quirks))
+					return 1;
+				break;
+			default:
+				if (attr(e, k->name))
+					return 1;
+			}
+		}
+		if (e->first) {
+			e = e->first;
+			continue;
+		}
+		while (e != n && !e->next)
+			e = e->parent;
+		if (e == n)
+			break;
+		e = e->next;
+	}
+	return 0;
+}
+
+static int arg_sees(const struct sellist *l, const soie_node *n,
+	const char *name)
+{
+	const struct compound *c;
+	const struct simple *s;
+	int i, j, k;
+
+	for (i = 0; i < l->n; i++)
+		for (j = 0; j < l->c[i].n; j++) {
+			c = &l->c[i].c[j];
+			for (k = 0; k < c->n; k++) {
+				s = &c->s[k];
+				if (s->args && arg_sees(s->args, n, name))
+					return 1;
+				if (s->type == SEL_NEST)
+					return 1;
+				if (s->type == SEL_PSEUDO && s->pseudo != PC_NOT &&
+				    s->pseudo != PC_IS && s->pseudo != PC_WHERE &&
+				    s->pseudo != PC_HAS && s->pseudo != PC_TRUE &&
+				    s->pseudo != PC_FALSE &&
+				    /* structural: attributes do not move them */
+				    (!name || s->pseudo < PC_ROOT ||
+				     s->pseudo > PC_NTH_LAST_OF_TYPE))
+					return 1;
+				if (!name)
+					continue;
+				if ((s->type == SEL_ATTR &&
+				     ascii_ieq(s->name, name)) ||
+				    (s->type == SEL_CLASS &&
+				     !strcmp(name, "class")) ||
+				    (s->type == SEL_ID && !strcmp(name, "id")))
+					return 1;
+			}
+			if (!name && n->type == SOIE_ELEMENT &&
+			    subtree_has_key(c, n))
+				return 1;
+		}
+	return 0;
+}
+
+int sellist_has_may_change(const struct sellist *l, const soie_node *n,
+	const char *name)
+{
+	const struct simple *s;
+	int i, j, k;
+
+	for (i = 0; l && i < l->n; i++)
+		for (j = 0; j < l->c[i].n; j++)
+			for (k = 0; k < l->c[i].c[j].n; k++) {
+				s = &l->c[i].c[j].s[k];
+				if (!s->args)
+					continue;
+				if (s->type == SEL_PSEUDO && s->pseudo == PC_HAS ?
+				    arg_sees(s->args, n, name) :
+				    sellist_has_may_change(s->args, n, name))
+					return 1;
+			}
+	return 0;
+}
+
+/*
  * Incremental restyling: is el the anchor of a :has() left of a
  * subject (`.wrap:has(.label) .input`)? The compound is matched alone
  * and without its :has(), which can only say yes too often: a change

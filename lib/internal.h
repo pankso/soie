@@ -128,6 +128,8 @@ void images_free(struct images *im);
 /* A change for incremental restyling (cascade.c) */
 enum { CH_ATTR, CH_INSERT, CH_REMOVE };
 void style_changed(soie_node *n, int kind);
+/* CH_ATTR with the attribute's name: :has() looks at fewer changes */
+void style_changed_attr(soie_node *n, int kind, const char *name);
 void style_forget(soie_node *n);
 
 /* The options of the last cascade (player.c) */

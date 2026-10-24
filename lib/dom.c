@@ -388,7 +388,7 @@ int soie_element_set_attr(soie_node *n, const char *name, const char *value)
 		element_add_attr(n, SOIE_NS_NONE, name, value, strlen(value));
 	}
 	n->doc->u.doc.gen++;
-	style_changed(n, CH_ATTR);
+	style_changed_attr(n, CH_ATTR, name);
 	return 0;
 }
 
@@ -405,7 +405,7 @@ int soie_element_remove_attr(soie_node *n, const char *name)
 	memmove(a, a + 1, (n->u.el.nattrs - i - 1) * sizeof(*a));
 	n->u.el.nattrs--;
 	n->doc->u.doc.gen++;
-	style_changed(n, CH_ATTR);
+	style_changed_attr(n, CH_ATTR, name);
 	return 0;
 }
 

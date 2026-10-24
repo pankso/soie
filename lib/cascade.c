@@ -2351,7 +2351,8 @@ static void mark_siblings(soie_node *n, int f, int bit, int next)
 		mark(k, how);
 }
 
-void style_changed(soie_node *n, int kind)
+/* n changed: an attribute (name), else n came or goes */
+void style_changed_attr(soie_node *n, int kind, const char *name)
 {
 	soie_node *doc = n->doc, *a, *k;
 	const struct styledb *db = doc->u.doc.styles;
@@ -2363,7 +2364,12 @@ void style_changed(soie_node *n, int kind)
 	if (f & (SF_HAS << SF_DEEP))
 		for (a = n->parent; a && a->type == SOIE_ELEMENT; a = a->parent)
 			for (i = 0; i < db->nanchors; i++)
-				if (sellist_has_anchor(db->anchors[i], a)) {
+				/* a :has() that cannot see the change (a
+				 * :has(dialog) and a div's class) needs
+				 * nothing: YouTube has one at the root */
+				if (sellist_has_anchor(db->anchors[i], a) &&
+				    sellist_has_may_change(db->anchors[i], n,
+				    kind == CH_ATTR ? name : NULL)) {
 					mark(a, SUBTREE);
 					for (k = a->next; k; k = k->next)
 						mark(k, SUBTREE);
@@ -2385,6 +2391,11 @@ void style_changed(soie_node *n, int kind)
 		mark_siblings(n, SF_FORWARD, SF_FORWARD, 0);
 	mark_siblings(n, f, SF_FORWARD, 1);
 	mark_siblings(n, f, SF_BACKWARD, 0);
+}
+
+void style_changed(soie_node *n, int kind)
+{
+	style_changed_attr(n, kind, NULL);
 }
 
 /* A node freed while marked */
