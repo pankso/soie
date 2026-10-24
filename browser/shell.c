@@ -66,6 +66,7 @@ static struct {
 	int old_scroll;
 	double t_load;		/* when the load started, for debugging */
 	int done;		/* everything in: told once */
+	float dirty[4];		/* page rectangle of the players' frames */
 } page;
 
 static int fetch_fd = -1;	/* readable when jobs finish */
@@ -1489,7 +1490,8 @@ int shell_find(const char *text, int dir, int *cur)
 int shell_tick(int *repaint)
 {
 	/* media events first: timers their listeners set count below */
-	int r = 0, mt = page.doc ? soie_media_tick(page.doc, &r) : -1;
+	int r = 0, mt = page.doc ? soie_media_tick_rect(page.doc, &r,
+		page.dirty) : -1;
 	double t0 = now_s(), t1;
 	int t = page.doc ? soie_script_tick(page.doc) : -1, m;
 	soie_node *d = page.doc;
@@ -1531,6 +1533,33 @@ int shell_tick(int *repaint)
 			now_s() - page.t_load, page.nres, failed, page.height);
 	}
 	return t;
+}
+
+int shell_dirty(int *x, int *y, int *w, int *h)
+{
+	int x0 = (int)page.dirty[0], y0 = (int)page.dirty[1] - page.scroll;
+	int x1 = (int)(page.dirty[0] + page.dirty[2] + 1);
+	int y1 = (int)(page.dirty[1] + page.dirty[3] + 1) - page.scroll;
+
+	x0 = x0 < 0 ? 0 : x0;
+	y0 = y0 < 0 ? 0 : y0;
+	x1 = x1 > view_w ? view_w : x1;
+	y1 = y1 > view_h ? view_h : y1;
+	if (x0 >= x1 || y0 >= y1)
+		return 0;
+	*x = x0;
+	*y = y0;
+	*w = x1 - x0;
+	*h = y1 - y0;
+	return 1;
+}
+
+void shell_paint_rect(unsigned char *rgba, int stride, int x, int y, int w,
+	int h)
+{
+	if (page.doc)
+		soie_paint(page.doc, rgba + (size_t)y * (size_t)stride +
+			(size_t)x * 4, w, h, stride, x, page.scroll + y);
 }
 
 void shell_paint(unsigned char *rgba, int stride)

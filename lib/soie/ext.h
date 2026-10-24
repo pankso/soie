@@ -328,6 +328,10 @@ int soie_media_click(soie_node *el, float x, float y);
  * controls changed; returns ms until the next call, -1 when none
  * plays. Also fires the media events (timeupdate, ended...). */
 int soie_media_tick(soie_node *doc, int *repaint);
+/* The same, *repaint 2 when only the players' boxes need painting
+ * again (new frames, their controls): rect gets their union, x, y, w,
+ * h in page coordinates. 1: the whole page. Since 1.2. */
+int soie_media_tick_rect(soie_node *doc, int *repaint, float *rect);
 /* Nonzero when a media extension says it can play type. */
 int soie_media_can_play(const char *type);
 

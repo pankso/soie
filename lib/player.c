@@ -383,12 +383,44 @@ static void fire(struct events *q, soie_node *el, const char *type)
 /* Events and repaints from state changes. */
 int soie_media_tick(soie_node *doc, int *repaint)
 {
+	float rect[4];
+	int next = soie_media_tick_rect(doc, repaint, rect);
+
+	if (*repaint)
+		*repaint = 1;
+	return next;
+}
+
+/* p's box joins rect (x0, y0, x1, y1); 0 when it has none */
+static int add_rect(const struct player *p, float *u, int any)
+{
+	float x, y, w, h;
+
+	if (soie_element_rect(p->el, &x, &y, &w, &h) || w <= 0 || h <= 0)
+		return any;
+	if (!any) {
+		u[0] = x;
+		u[1] = y;
+		u[2] = x + w;
+		u[3] = y + h;
+		return 1;
+	}
+	u[0] = x < u[0] ? x : u[0];
+	u[1] = y < u[1] ? y : u[1];
+	u[2] = x + w > u[2] ? x + w : u[2];
+	u[3] = y + h > u[3] ? y + h : u[3];
+	return 1;
+}
+
+int soie_media_tick_rect(soie_node *doc, int *repaint, float *rect)
+{
 	struct media *m = doc->u.doc.media;
 	struct events q = { NULL, 0, 0 };
 	soie_media_state st;
 	soie_event ev;
 	struct player *p;
-	int i, next = -1;
+	int i, next = -1, full = 0, any = 0;
+	float u[4] = { 0, 0, 0, 0 };
 
 	*repaint = 0;
 	for (i = 0; m && i < m->n; i++) {
@@ -396,10 +428,12 @@ int soie_media_tick(soie_node *doc, int *repaint)
 		memset(&st, 0, sizeof(st));
 		p->ext->state(p->p, &st);
 		if (st.changes != p->last.changes)
-			*repaint = 1;
+			any = add_rect(p, u, any);
 		if ((st.width != p->last.width || st.height != p->last.height) &&
-		    !strcmp(p->el->name, "video"))
+		    !strcmp(p->el->name, "video")) {
 			doc->u.doc.gen++;	/* a new intrinsic size */
+			full = 1;
+		}
 		if (st.duration != p->last.duration && st.duration > 0) {
 			fire(&q, p->el, "durationchange");
 			if (p->last.duration <= 0) {
@@ -433,6 +467,16 @@ int soie_media_tick(soie_node *doc, int *repaint)
 		else if (!p->req && !st.error && !st.ended &&
 			 (next < 0 || next > 250))
 			next = 250;	/* a script feeds it: data comes */
+	}
+	/* the rest of the page did not change: its boxes are enough */
+	if (full)
+		*repaint = 1;
+	else if (any) {
+		*repaint = 2;
+		rect[0] = u[0];
+		rect[1] = u[1];
+		rect[2] = u[2] - u[0];
+		rect[3] = u[3] - u[1];
 	}
 	for (i = 0; i < q.n; i++) {
 		memset(&ev, 0, sizeof(ev));

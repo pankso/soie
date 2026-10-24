@@ -21,11 +21,18 @@ int shell_init(int scripts);
 /* The size of the page view. */
 void shell_resize(int w, int h);
 /* Run what is due: arrived resources, late layouts, timers, media, a
- * meta refresh, scripts' navigations. *repaint is set when the page
- * changed. Returns ms until the next call is due, -1 without a timer. */
+ * meta refresh, scripts' navigations. *repaint is 1 when the page
+ * changed, 2 when only the rectangle shell_dirty() gives did (video
+ * frames). Returns ms until the next call is due, -1 without a timer. */
 int shell_tick(int *repaint);
 /* Paint the page view into rgba (stride bytes a row). */
 void shell_paint(unsigned char *rgba, int stride);
+/* After a repaint of 2: the view's rectangle to paint again; 0 when
+ * it is out of view. */
+int shell_dirty(int *x, int *y, int *w, int *h);
+/* Paint that rectangle of the view only, at its place in rgba. */
+void shell_paint_rect(unsigned char *rgba, int stride, int x, int y, int w,
+	int h);
 
 /* Navigation */
 void shell_load(const char *url);

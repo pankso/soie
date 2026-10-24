@@ -276,6 +276,33 @@ static void redraw(void)
 	XFlush(dpy);
 }
 
+/* Only the players' rectangle changed (a video frame): it alone is
+ * painted and sent, not the whole window */
+static void redraw_rect(void)
+{
+	int x, y, w, h, i, j;
+
+	if (!dpy || !shell_dirty(&x, &y, &w, &h))
+		return;
+	y += BAR;
+	if (y + h > win_h - (find_on ? FINDH : 0))
+		h = win_h - (find_on ? FINDH : 0) - y;
+	if (h <= 0)
+		return;
+	shell_paint_rect(rgba + (size_t)win_w * BAR * 4, win_w * 4, x,
+		y - BAR, w, h);
+	for (j = y; j < y + h; j++)
+		for (i = x; i < x + w; i++) {
+			unsigned char *p = rgba + ((size_t)j * win_w +
+				(size_t)i) * 4, t = p[0];
+
+			p[0] = p[2];
+			p[2] = t;
+		}
+	XPutImage(dpy, win, gc, ximg, x, y, x, y, (unsigned)w, (unsigned)h);
+	XFlush(dpy);
+}
+
 /* Selections */
 
 static void own(Atom sel, const char *text, Time t)
@@ -965,7 +992,9 @@ int main(int argc, char **argv)
 			const char *text;
 			int repaint, t = shell_tick(&repaint);
 
-			if (repaint) {
+			if (repaint == 2 && !*status) {
+				redraw_rect();
+			} else if (repaint) {
 				if (find_on)
 					find_go(0);
 				redraw();
