@@ -630,6 +630,8 @@ static void prefetch(void)
 	free(base);
 }
 
+static void debug_js_start(void);
+
 /* The page's bytes arrived: parse them, ask for what it needs. */
 static void doc_arrived(struct job *j)
 {
@@ -704,6 +706,7 @@ static void doc_arrived(struct job *j)
 			ho.charset = "UTF-8";
 		}
 		page.doc = soie_html_parse(src, len, &ho);
+		debug_js_start();
 		free(html);
 	}
 	free(page.user_css);
@@ -1566,6 +1569,52 @@ void shell_paint(unsigned char *rgba, int stride)
 			(size_t)view_w * 4);
 }
 
+static char *slurp(const char *path, size_t *len);
+
+/*
+ * Debugging: $SOIE_DEBUG_JS_START, a script that runs before the page's
+ * own ones (first in its <head>), to watch them from the start.
+ */
+static void debug_js_start(void)
+{
+	const char *path = getenv("SOIE_DEBUG_JS_START");
+	soie_node *head, *el;
+	char *src;
+	size_t len;
+
+	if (!path || !page.doc || !(head = find_tag(page.doc, "head")) ||
+	    !(src = slurp(path, &len)))
+		return;
+	el = soie_element_new(page.doc, SOIE_NS_HTML, "script");
+	soie_node_append(el, soie_text_new(page.doc, src, len));
+	soie_node_insert_before(head, el, soie_node_first_child(head));
+	free(src);
+	debug(1, "%s runs first", path);
+}
+
+/* A whole file, NULL when it cannot be read */
+static char *slurp(const char *path, size_t *len)
+{
+	FILE *f = fopen(path, "r");
+	char *s = NULL;
+	size_t n;
+
+	*len = 0;
+	if (!f)
+		return NULL;
+	for (;;) {
+		s = realloc(s, *len + 65536);
+		if (!s)
+			abort();
+		n = fread(s + *len, 1, 65536, f);
+		*len += n;
+		if (n < 65536)
+			break;
+	}
+	fclose(f);
+	return s;
+}
+
 /*
  * Debugging: run the JavaScript of $SOIE_DEBUG_JS in the page, read
  * again each time, in a block; its console.log() shows with
@@ -1575,29 +1624,21 @@ int shell_debug_js(void)
 {
 	const char *path = getenv("SOIE_DEBUG_JS");
 	soie_node *body, *el, *t;
-	char *src = NULL;
+	char *src, *body_src;
 	size_t len = 0, n;
-	FILE *f;
 
 	if (!path || !page.doc || !(body = find_tag(page.doc, "body")))
 		return -1;
-	if (!(f = fopen(path, "r")))
+	if (!(body_src = slurp(path, &n)))
 		return -1;
 	/* in a block: its const and let are new at each run */
-	src = malloc(2);
+	src = malloc(n + 3);
 	if (!src)
 		abort();
 	src[len++] = '{';
-	for (;;) {
-		src = realloc(src, len + 65536 + 3);
-		if (!src)
-			abort();
-		n = fread(src + len, 1, 65536, f);
-		len += n;
-		if (n < 65536)
-			break;
-	}
-	fclose(f);
+	memcpy(src + len, body_src, n);
+	len += n;
+	free(body_src);
 	src[len++] = '\n';
 	src[len++] = '}';
 	debug(1, "running %s", path);

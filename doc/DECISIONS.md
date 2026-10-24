@@ -579,8 +579,20 @@ or the interpreter?).
   in a block (its const are new at each run); SOIE_DEBUG=2 logs the
   scripts' requests.
 
+- document.all exists, as HTML has it: an object that reads as
+  undefined ([[IsHTMLDDA]], QuickJS's JS_SetIsHTMLDDA): typeof gives
+  "undefined", if () false, == undefined true, === undefined false.
+  polymer-resin, YouTube's binding sanitizer, leaves false values alone
+  with `r || r === document.all ? sanitize(r) : r`: without document.all,
+  undefined matched, came back as "zClosurez", a true string, and
+  hidden="[[data.hideContents]]" hid every search result.
+- $SOIE_DEBUG_JS_START: a script that runs first in the page (put at
+  the start of its <head>), to watch the page's own scripts from the
+  start (it caught the hidden = "zClosurez").
+
 Now: the consent dialog shows and its buttons work, search suggests
-and goes to the results page; its results do not show yet.
+and shows its results (the videos, the Shorts shelf). Still: the first
+result's thumbnail is missing, the results row runs past the window.
 
 ## QuickJS 2026-06-04
 

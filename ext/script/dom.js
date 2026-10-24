@@ -2453,6 +2453,17 @@ class DOMRect extends DOMRectReadOnly {}
 
 /* Document */
 
+/* document.all: falsy and typeof "undefined", but not undefined (HTML's
+ * IsHTMLDDA); polymer-resin tells values from it */
+const htmlAll = api.htmlAll();
+Object.defineProperties(htmlAll, {
+	length: { get: () => query(document, '*', 0).length },
+	item: { value: (i) => htmlAll(i) },
+	namedItem: { value: (name) => query(document, '[id="' + String(name)
+		.replace(/["\\]/g, '\\$&') + '"], [name="' + String(name)
+		.replace(/["\\]/g, '\\$&') + '"]', 1)[0] || null },
+});
+
 class DOMParser {
 	parseFromString(s, type) {
 		return api.newDocument(str(s));
@@ -2525,6 +2536,7 @@ class Document extends Node {
 		return null;
 	}
 	get defaultView() { return this === document ? g : null; }
+	get all() { return htmlAll; }
 	get activeElement() { return activeElement || this.body; }
 	get currentScript() { return api.currentScript(); }
 	get hidden() { return false; }

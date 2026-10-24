@@ -846,6 +846,42 @@ static JSValue n_focus(JSContext *js, JSValueConst this, int argc,
 	return JS_UNDEFINED;
 }
 
+/* document.all(i): the i-th element of the page, in tree order */
+static JSValue n_all_call(JSContext *js, JSValueConst this, int argc,
+	JSValueConst *argv)
+{
+	struct sctx *c = ctx_of(js);
+	soie_node **v;
+	size_t n;
+	int32_t i = 0;
+	JSValue r = JS_NULL;
+
+	(void)this;
+	if (argc > 0 && JS_ToInt32(js, &i, argv[0]))
+		return JS_EXCEPTION;
+	v = soie_query(c->doc, "*", 0, &n);
+	if (v && i >= 0 && (size_t)i < n)
+		r = wrap(c, v[i]);
+	free(v);
+	return r;
+}
+
+/* htmlAll(): what document.all is, an object that reads as undefined
+ * (HTML's [[IsHTMLDDA]]): typeof says "undefined", if () says false,
+ * yet document.all === undefined does not hold */
+static JSValue n_html_all(JSContext *js, JSValueConst this, int argc,
+	JSValueConst *argv)
+{
+	JSValue f = JS_NewCFunction(js, n_all_call, "all", 1);
+
+	(void)this;
+	(void)argc;
+	(void)argv;
+	if (!JS_IsException(f))
+		JS_SetIsHTMLDDA(js, f);
+	return f;
+}
+
 /* hit(x, y): the element at viewport point x, y, laid out first */
 static JSValue n_hit(JSContext *js, JSValueConst this, int argc,
 	JSValueConst *argv)
@@ -1368,6 +1404,7 @@ static const JSCFunctionListEntry natives[] = {
 	JS_CFUNC_DEF("adopt", 2, n_adopt),
 	JS_CFUNC_DEF("hit", 2, n_hit),
 	JS_CFUNC_DEF("focus", 1, n_focus),
+	JS_CFUNC_DEF("htmlAll", 0, n_html_all),
 	JS_CFUNC_DEF("children", 2, n_children),
 	JS_CFUNC_DEF("data", 1, n_data),
 	JS_CFUNC_DEF("text", 1, n_text),

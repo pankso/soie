@@ -1,0 +1,13 @@
+<!DOCTYPE html>
+<!-- document.all reads as undefined but is not (HTML's IsHTMLDDA):
+     polymer-resin, on YouTube, tells false values from it -->
+<p id=x name=y>t</p>
+<script>
+var log = (...a) => console.log(a.map(String).join(' '));
+log('typeof', typeof document.all, 'falsy', !document.all, '== undefined', document.all == undefined,
+	'=== undefined', document.all === undefined, '=== null', document.all === null);
+var r = undefined;
+log('resin sees undefined as', (r || r === document.all) ? 'a value to sanitize' : 'left alone');
+log('length > 3', document.all.length > 3, 'item(0)', document.all.item(0).tagName,
+	'call', document.all(0).tagName, 'namedItem', document.all.namedItem('x').tagName);
+</script>

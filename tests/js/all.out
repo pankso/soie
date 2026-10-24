@@ -1,0 +1,3 @@
+log: typeof undefined falsy true == undefined true === undefined false === null false
+log: resin sees undefined as left alone
+log: length > 3 true item(0) HTML call HTML namedItem P
