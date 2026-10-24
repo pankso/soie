@@ -149,6 +149,7 @@ struct player {
 	int flush;		/* the output drops what it has */
 	int64_t played;		/* frames given to ALSA since base */
 	double audio_clock;	/* -1 while the sound has not started */
+	double audio_at;	/* the monotonic time it was read */
 	double volume;
 	int muted;
 	snd_pcm_t *dev;
@@ -284,8 +285,13 @@ static double clock_now(struct player *p)
 {
 	if (!p->started)
 		return p->base;
-	if (p->audio_clock >= 0)
-		return p->audio_clock;
+	if (p->audio_clock >= 0) {
+		/* read at each write to the card (every 80 ms or so):
+		 * the system's clock goes on in between, a little */
+		double d = now() - p->audio_at;
+
+		return p->audio_clock + (d < 0 ? 0 : d > 0.2 ? 0.2 : d);
+	}
 	return p->base + now() - p->started;
 }
 
@@ -713,9 +719,11 @@ static void *audio_thread(void *arg)
 			p->played += w;
 		if (snd_pcm_delay(p->dev, &delay) < 0)
 			delay = 0;
-		if (p->rate)
+		if (p->rate) {
 			p->audio_clock = p->base + (double)(p->played - delay) /
 				p->rate;
+			p->audio_at = now();
+		}
 		pthread_mutex_unlock(&p->lock);
 	}
 	return NULL;
@@ -1196,6 +1204,7 @@ static struct cframe *next_frame(struct player *p, struct track *t)
 		if (k < 0)
 			return NULL;
 		t->seek = 0;
+		t->cur = t->f[k].pkt->dts - 1;	/* from there on */
 		if (t == track_of(p, 0) || !track_of(p, 0))
 			p->seeks++;
 		return &t->f[k];
@@ -1335,6 +1344,19 @@ static void *source_thread(void *arg)
 			pthread_cond_wait(&p->cond, &p->lock);
 			continue;
 		}
+		/*
+		 * Decode order, unless what one track gives cannot go: the
+		 * frames wait to be shown, or the sound to be played. With
+		 * sound the clock is the card's: video frames ahead of the
+		 * sound decoded (B-frames come late out of the decoder) would
+		 * fill the frames and stop the decoding, the sound would run
+		 * out and the clock stop with it.
+		 */
+		if (fv && fa && p->count == NFRAMES)
+			fv = NULL;
+		else if (fv && fa && p->adec &&
+			 p->pcm_count > PCM_FRAMES - 8192)
+			fa = NULL;
 		audio = !fv || (fa && fa->pkt->dts < fv->pkt->dts);
 		f = audio ? fa : fv;
 		(audio ? a : v)->cur = f->pkt->dts;
