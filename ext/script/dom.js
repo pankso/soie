@@ -575,7 +575,6 @@ api.tick = function () {
 			report(e);
 		}
 	}
-	checkIntersections(false);
 	let next = -1;
 	const later = api.now();
 	for (const t of timers.values()) {
@@ -583,10 +582,6 @@ api.tick = function () {
 		if (next < 0 || d < next)
 			next = d;
 	}
-	/* intersection observers look again soon */
-	if ((intersectionObservers.size || resizeObservers.size) &&
-	    (next < 0 || next > 100))
-		next = 100;
 	return next;
 };
 
@@ -3923,8 +3918,7 @@ class MutationObserver {
 /*
  * IntersectionObserver: targets against the viewport (or a root), grown
  * by rootMargin; an entry at observe() and whenever a target crosses a
- * threshold. Looked at from the timers' tick, when the page scrolled or
- * changed, at most every 100 ms (resize observers too).
+ * threshold, in the rendering step (api.frame()).
  */
 const intersectionObservers = new Set();
 
@@ -3946,7 +3940,7 @@ for (const [cls, names] of [[IntersectionObserverEntry, ['target', 'time',
 	for (const n of names)
 		Object.defineProperty(cls.prototype, n, { configurable: true,
 			enumerable: true, get() { return this[ENTRY][n]; } });
-let ioLast = '', ioWhen = 0;
+let ioLast = '';
 
 function margins(s, w, h) {
 	const p = String(s || '0px').trim().split(/\s+/).map((v, i) => {
@@ -3957,20 +3951,58 @@ function margins(s, w, h) {
 	return [t, r, b, l];
 }
 
-function checkIntersections(force) {
+/*
+ * The rendering step of HTML's event loop, after the timers and their
+ * microtasks, at most every 16 ms: animation frame callbacks, then
+ * resize observers (again while sizes move, 4 rounds at most), then
+ * intersection observers. Observers look only when the page scrolled
+ * or changed, or a target is new. api.frame() returns ms until the
+ * next step is due, -1 when nothing waits for one.
+ */
+const frameCallbacks = new Map();
+let frameIds = 0, lastFrame = -1e9, observersNew = false;
+
+function frameWanted() {
+	if (frameCallbacks.size || observersNew)
+		return true;
 	if (!intersectionObservers.size && !resizeObservers.size)
-		return;
-	const v = api.viewport(), now = api.now();
-	const state = v.join() + ',' + api.gen();
-	if (!force && (state === ioLast || now - ioWhen < 100))
-		return;
-	ioLast = state;
-	ioWhen = now;
+		return false;
+	return api.viewport().join() + ',' + api.gen() !== ioLast;
+}
+
+api.frame = function () {
+	const now = api.now();
+	if (!frameWanted())
+		return frameCallbacks.size || intersectionObservers.size ||
+			resizeObservers.size ? 100 : -1;
+	if (now - lastFrame < 16)
+		return 16 - (now - lastFrame);
+	lastFrame = now;
+	const cbs = [...frameCallbacks.values()];
+	frameCallbacks.clear();
+	for (const fn of cbs) {
+		try {
+			fn(now);
+		} catch (e) {
+			report(e);
+		}
+		api.drain();	/* each callback, its microtasks */
+	}
+	observersNew = false;
+	for (let round = 0; round < 4; round++) {
+		let moved = false;
+		for (const ro of [...resizeObservers])
+			moved = ro._check() || moved;
+		if (!moved)
+			break;
+	}
+	const v = api.viewport();
 	for (const io of [...intersectionObservers])
 		io._check(v);
-	for (const ro of [...resizeObservers])
-		ro._check();
-}
+	ioLast = v.join() + ',' + api.gen();
+	return frameWanted() ? 16 : intersectionObservers.size ||
+		resizeObservers.size ? 100 : -1;
+};
 
 class IntersectionObserver {
 	constructor(cb, opts = {}) {
@@ -3992,7 +4024,7 @@ class IntersectionObserver {
 			return;
 		this._targets.set(el, undefined);
 		intersectionObservers.add(this);
-		addTimer(() => checkIntersections(true), 0, [], false);
+		observersNew = true;
 	}
 	unobserve(el) {
 		this._targets.delete(el);
@@ -4039,12 +4071,14 @@ class IntersectionObserver {
 				boundingClientRect: b, intersectionRect: inter,
 				rootBounds: new DOMRect(rx0, ry0, rx1 - rx0, ry1 - ry0) }));
 		}
-		if (entries.length)
+		if (entries.length) {
 			try {
 				this._cb.call(this, entries, this);
 			} catch (e) {
 				report(e);
 			}
+			api.drain();
+		}
 	}
 }
 /* ResizeObserver: an entry at observe() and when a target's size
@@ -4064,7 +4098,7 @@ class ResizeObserver {
 			return;
 		this._targets.set(el, undefined);
 		resizeObservers.add(this);
-		addTimer(() => checkIntersections(true), 0, [], false);
+		observersNew = true;
 	}
 	unobserve(el) {
 		this._targets.delete(el);
@@ -4091,12 +4125,15 @@ class ResizeObserver {
 				borderBoxSize: size, contentBoxSize: size,
 				devicePixelContentBoxSize: size }));
 		}
-		if (entries.length)
+		if (entries.length) {
 			try {
 				this._cb.call(this, entries, this);
 			} catch (e) {
 				report(e);
 			}
+			api.drain();
+		}
+		return entries.length > 0;
 	}
 }
 class PerformanceObserver {
@@ -4284,9 +4321,11 @@ const globals = {
 	clearInterval: (id) => { timers.delete(id); },
 	setImmediate: (fn, ...a) => addTimer(fn, 0, a, false),
 	clearImmediate: (id) => { timers.delete(id); },
-	requestAnimationFrame: (fn) => addTimer(() => fn(performance.now()),
-		16, [], false),
-	cancelAnimationFrame: (id) => { timers.delete(id); },
+	requestAnimationFrame: (fn) => {
+		frameCallbacks.set(++frameIds, fn);
+		return frameIds;
+	},
+	cancelAnimationFrame: (id) => { frameCallbacks.delete(id); },
 	requestIdleCallback: (fn) => addTimer(() => fn({ didTimeout: false,
 		timeRemaining: () => 10 }), 1, [], false),
 	cancelIdleCallback: (id) => { timers.delete(id); },

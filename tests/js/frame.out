@@ -1,0 +1,7 @@
+log: task
+log: its microtask
+log: frame 1 number
+log: frame microtask
+log: resize 200
+log: intersection true
+log: frame 2, the next one

@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<!-- HTML's event loop: a task, its microtasks, then the rendering step:
+     animation frames, resize observers, intersection observers; a frame
+     callback asked for in a frame runs in the next one -->
+<body><div id=box style="width:100px;height:10px"></div>
+<script>
+var log = (...a) => console.log(a.map(String).join(' '));
+var box = document.getElementById('box'), frames = 0;
+new ResizeObserver(es => log('resize', es[0].contentRect.width)).observe(box);
+new IntersectionObserver(es => log('intersection', es[0].isIntersecting)).observe(box);
+setTimeout(() => {
+	log('task');
+	Promise.resolve().then(() => log('its microtask'));
+	requestAnimationFrame(t => {
+		log('frame 1', typeof t);
+		box.style.width = '200px';	/* seen by resize observers now */
+		requestAnimationFrame(() => log('frame 2, the next one'));
+		Promise.resolve().then(() => log('frame microtask'));
+	});
+}, 0);
+var id = requestAnimationFrame(() => log('cancelled!'));
+cancelAnimationFrame(id);
+</script>

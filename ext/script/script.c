@@ -37,7 +37,7 @@ struct sctx {
 	const soie_script_host *host;
 	char *url;
 	JSValue api;
-	JSValue proto_for, dispatch, tick;
+	JSValue proto_for, dispatch, tick, frame;
 	soie_node **wrapped;
 	size_t nwrapped, capwrapped;
 	double deadline;
@@ -893,6 +893,24 @@ static JSValue n_gen(JSContext *js, JSValueConst this, int argc,
 		ctx_of(js)->doc));
 }
 
+/* drain(): the microtask checkpoint, after each callback of the
+ * rendering step */
+static JSValue n_drain(JSContext *js, JSValueConst this, int argc,
+	JSValueConst *argv)
+{
+	struct sctx *c = ctx_of(js);
+	JSContext *job;
+	int r;
+
+	(void)this;
+	(void)argc;
+	(void)argv;
+	while ((r = JS_ExecutePendingJob(c->rt, &job)) != 0)
+		if (r < 0)
+			report(c);
+	return JS_UNDEFINED;
+}
+
 /* hit(x, y): the element at viewport point x, y, laid out first */
 static JSValue n_hit(JSContext *js, JSValueConst this, int argc,
 	JSValueConst *argv)
@@ -1417,6 +1435,7 @@ static const JSCFunctionListEntry natives[] = {
 	JS_CFUNC_DEF("focus", 1, n_focus),
 	JS_CFUNC_DEF("htmlAll", 0, n_html_all),
 	JS_CFUNC_DEF("gen", 0, n_gen),
+	JS_CFUNC_DEF("drain", 0, n_drain),
 	JS_CFUNC_DEF("children", 2, n_children),
 	JS_CFUNC_DEF("data", 1, n_data),
 	JS_CFUNC_DEF("text", 1, n_text),
@@ -1595,6 +1614,7 @@ static void *start(void *data, soie_node *doc, const char *url,
 	c->proto_for = JS_GetPropertyStr(c->js, c->api, "protoFor");
 	c->dispatch = JS_GetPropertyStr(c->js, c->api, "dispatch");
 	c->tick = JS_GetPropertyStr(c->js, c->api, "tick");
+	c->frame = JS_GetPropertyStr(c->js, c->api, "frame");
 	c->received = JS_GetPropertyStr(c->js, c->api, "received");
 	/* the document object */
 	{
@@ -1633,6 +1653,7 @@ static void stop(void *ctx)
 	JS_FreeValue(c->js, c->proto_for);
 	JS_FreeValue(c->js, c->dispatch);
 	JS_FreeValue(c->js, c->tick);
+	JS_FreeValue(c->js, c->frame);
 	JS_FreeValue(c->js, c->received);
 	JS_FreeValue(c->js, c->api);
 	/* requests still out: abandoned, their threads free them */
@@ -1715,7 +1736,7 @@ static int tick(void *ctx)
 {
 	struct sctx *c = ctx;
 	JSValue v;
-	double d = -1;
+	double d = -1, f = -1;
 
 	c->deadline = now_ms() + RUN_MS;
 	deliver(c);
@@ -1723,6 +1744,14 @@ static int tick(void *ctx)
 	if (!JS_IsException(v))
 		JS_ToFloat64(c->js, &d, v);
 	settle(c, v);
+	/* then the rendering step, its own microtasks after it */
+	c->deadline = now_ms() + RUN_MS;
+	v = JS_Call(c->js, c->frame, JS_UNDEFINED, 0, NULL);
+	if (!JS_IsException(v))
+		JS_ToFloat64(c->js, &f, v);
+	settle(c, v);
+	if (f >= 0 && (d < 0 || f < d))
+		d = f;
 	c->deadline = 0;
 	/* answers are looked for while requests are out */
 	if (c->inflight && (d < 0 || d > 20))
