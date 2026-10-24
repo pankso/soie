@@ -1218,9 +1218,12 @@ static void set_decoder(struct player *p, int audio, struct init *in)
 	struct init **cur = audio ? &p->ainit : &p->vinit;
 
 	avcodec_free_context(dec);
+	/* the parsers count references too */
+	pthread_mutex_lock(&p->lock);
 	init_unref(*cur);
 	*cur = in;
 	in->refs++;
+	pthread_mutex_unlock(&p->lock);
 	*dec = open_codec(in->par, AV_TIME_BASE_Q);
 	if (audio) {
 		p->atb = AV_TIME_BASE_Q;
