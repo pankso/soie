@@ -3068,15 +3068,30 @@ class URL {
 }
 
 /* Text encoding */
+/* Bytes are Uint8Arrays; UTF-8 is native */
+function asBytes(b) {
+	return b instanceof Uint8Array ? b : b instanceof ArrayBuffer ?
+		new Uint8Array(b) : ArrayBuffer.isView(b) ?
+		new Uint8Array(b.buffer, b.byteOffset, b.byteLength) : null;
+}
+/* A latin1 string's bytes (data: URLs, atob()); UTF-8 beyond latin1 */
+function latin1Bytes(s) {
+	const a = new Uint8Array(s.length);
+	for (let i = 0; i < s.length; i++) {
+		const c = s.charCodeAt(i);
+		if (c > 255)
+			return new Uint8Array(api.utf8Encode(s));
+		a[i] = c;
+	}
+	return a;
+}
+/* A copy of the bytes as an ArrayBuffer of their own */
+function bufferOf(b) {
+	return b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength);
+}
 class TextEncoder {
 	get encoding() { return 'utf-8'; }
-	encode(s = '') {
-		const u = unescape(encodeURIComponent(String(s)));
-		const a = new Uint8Array(u.length);
-		for (let i = 0; i < u.length; i++)
-			a[i] = u.charCodeAt(i);
-		return a;
-	}
+	encode(s = '') { return new Uint8Array(api.utf8Encode(String(s))); }
 	encodeInto(s, dest) {
 		const a = this.encode(s);
 		const n = Math.min(a.length, dest.length);
@@ -3085,22 +3100,48 @@ class TextEncoder {
 	}
 }
 class TextDecoder {
-	constructor(label = 'utf-8') { this.encoding = String(label).toLowerCase(); }
-	decode(buf) {
-		if (!buf)
-			return '';
-		const a = buf instanceof ArrayBuffer ? new Uint8Array(buf) :
-			new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength);
-		let s = '';
-		for (let i = 0; i < a.length; i += 8192)
-			s += String.fromCharCode.apply(null, a.subarray(i, i + 8192));
-		if (this.encoding !== 'utf-8' && this.encoding !== 'utf8')
-			return s;
-		try {
-			return decodeURIComponent(escape(s));
-		} catch (e) {
+	constructor(label = 'utf-8', opts = {}) {
+		const l = String(label).trim().toLowerCase();
+		this.encoding = l === 'utf8' || l === 'unicode-1-1-utf-8' ?
+			'utf-8' : l;
+		this.fatal = !!opts.fatal;
+		this.ignoreBOM = !!opts.ignoreBOM;
+		this._rest = null;
+	}
+	decode(buf, opts = {}) {
+		let a = buf ? asBytes(buf) : new Uint8Array(0);
+		if (!a)
+			throw new TypeError('decode: not bytes');
+		if (this.encoding !== 'utf-8') {
+			let s = '';
+			for (let i = 0; i < a.length; i += 8192)
+				s += String.fromCharCode.apply(null,
+					a.subarray(i, i + 8192));
 			return s;
 		}
+		if (this._rest) {
+			const j = new Uint8Array(this._rest.length + a.length);
+			j.set(this._rest);
+			j.set(a, this._rest.length);
+			a = j;
+			this._rest = null;
+		}
+		if (opts.stream) {
+			/* a sequence cut at the end waits for the next bytes */
+			let i = a.length - 1, k = 0;
+			while (i >= 0 && k < 3 && (a[i] & 0xc0) === 0x80) {
+				i--;
+				k++;
+			}
+			if (i >= 0 && a[i] >= 0xc0) {
+				const need = a[i] >= 0xf0 ? 4 : a[i] >= 0xe0 ? 3 : 2;
+				if (a.length - i < need) {
+					this._rest = a.slice(i);
+					a = a.subarray(0, i);
+				}
+			}
+		}
+		return api.utf8Decode(a);
 	}
 }
 
@@ -3142,17 +3183,22 @@ function atob(s) {
 /* Blobs and form data, enough for the usual uses */
 class Blob {
 	constructor(parts = [], opts = {}) {
-		this._s = parts.map((p) => p instanceof Blob ? p._s :
-			typeof p === 'string' ? p : new TextDecoder().decode(p))
-			.join('');
-		this.type = opts.type || '';
+		const l = [...parts].map((p) => p instanceof Blob ? p._b :
+			asBytes(p) || new TextEncoder().encode(p));
+		this._b = new Uint8Array(l.reduce((n, b) => n + b.length, 0));
+		let n = 0;
+		for (const b of l) {
+			this._b.set(b, n);
+			n += b.length;
+		}
+		this.type = opts.type ? String(opts.type).toLowerCase() : '';
 	}
-	get size() { return new TextEncoder().encode(this._s).length; }
-	text() { return Promise.resolve(this._s); }
-	arrayBuffer() {
-		return Promise.resolve(new TextEncoder().encode(this._s).buffer);
-	}
-	slice(a, b, type) { return new Blob([this._s.slice(a, b)], { type }); }
+	get size() { return this._b.length; }
+	text() { return Promise.resolve(api.utf8Decode(this._b)); }
+	arrayBuffer() { return Promise.resolve(bufferOf(this._b)); }
+	bytes() { return Promise.resolve(this._b.slice()); }
+	slice(a, b, type) { return new Blob([this._b.slice(a, b)], { type }); }
+	stream() { return new Response(this._b).body; }
 }
 class File extends Blob {
 	constructor(parts, name, opts = {}) {
@@ -3265,22 +3311,110 @@ function parseHeaders(raw) {
 	return h;
 }
 
+/* A body: null, a string (sent as UTF-8) or bytes */
 function bodyString(b) {
 	if (b === undefined || b === null)
 		return null;
-	if (b instanceof URLSearchParams)
+	if (b instanceof URLSearchParams || typeof b === 'string')
 		return String(b);
 	if (b instanceof FormData) {
 		const q = new URLSearchParams();
 		for (const [k, v] of b)
-			q.append(k, v instanceof Blob ? v._s : v);
+			q.append(k, v instanceof Blob ? api.utf8Decode(v._b) : v);
 		return String(q);
 	}
 	if (b instanceof Blob)
-		return b._s;
-	if (b instanceof ArrayBuffer || ArrayBuffer.isView(b))
-		return new TextDecoder('latin1').decode(b);
-	return String(b);
+		return b._b;
+	return asBytes(b) || String(b);
+}
+function bodyText(b) { return typeof b === 'string' ? b : api.utf8Decode(b); }
+function bodyBytes(b) {
+	return typeof b === 'string' ? new Uint8Array(api.utf8Encode(b)) : b;
+}
+
+/* Streams, enough to read a body (fetch's response.body) or a source
+ * the page writes to: chunks queue up, read() takes them in order. */
+class ReadableStream {
+	constructor(src = {}) {
+		this._q = [];
+		this._wait = [];
+		this._done = false;
+		this._error = null;
+		this.locked = false;
+		const c = {
+			enqueue: (v) => {
+				const w = this._wait.shift();
+				if (w)
+					w({ value: v, done: false });
+				else
+					this._q.push(v);
+			},
+			close: () => {
+				this._done = true;
+				for (const w of this._wait.splice(0))
+					w({ value: undefined, done: true });
+			},
+			error: (e) => {
+				this._error = e || new TypeError('stream error');
+				this._done = true;
+				for (const w of this._wait.splice(0))
+					w(Promise.reject(this._error));
+			},
+			get desiredSize() { return 1; },
+		};
+		this._pull = src.pull ? () => src.pull(c) : null;
+		this._cancel = src.cancel;
+		try {
+			if (src.start)
+				src.start(c);
+		} catch (e) {
+			c.error(e);
+		}
+	}
+	_read() {
+		if (this._q.length)
+			return Promise.resolve({ value: this._q.shift(), done: false });
+		if (this._error)
+			return Promise.reject(this._error);
+		if (this._done)
+			return Promise.resolve({ value: undefined, done: true });
+		const p = new Promise((r) => this._wait.push(r));
+		if (this._pull)
+			Promise.resolve().then(this._pull).catch(() => {});
+		return p;
+	}
+	getReader() {
+		if (this.locked)
+			throw new TypeError('stream locked');
+		this.locked = true;
+		const s = this;
+		return {
+			read: () => s._read(),
+			releaseLock() { s.locked = false; },
+			cancel(r) { return s.cancel(r); },
+			get closed() { return Promise.resolve(); },
+		};
+	}
+	cancel(r) {
+		this._q = [];
+		this._done = true;
+		if (this._cancel)
+			try {
+				this._cancel(r);
+			} catch (e) {
+				report(e);
+			}
+		return Promise.resolve();
+	}
+	async *[Symbol.asyncIterator]() {
+		const r = this.getReader();
+		for (;;) {
+			const { value, done } = await r.read();
+			if (done)
+				return;
+			yield value;
+		}
+	}
 }
 
 const STATUS_TEXT = { 200: 'OK', 201: 'Created', 204: 'No Content',
@@ -3291,6 +3425,7 @@ const STATUS_TEXT = { 200: 'OK', 201: 'Created', 204: 'No Content',
 class Response {
 	constructor(body = null, init = {}) {
 		this._body = body === null ? '' : bodyString(body);
+		this._stream = null;
 		this.status = init.status === undefined ? 200 : init.status;
 		this.statusText = init.statusText ||
 			STATUS_TEXT[this.status] || '';
@@ -3301,32 +3436,33 @@ class Response {
 		this.bodyUsed = false;
 	}
 	get ok() { return this.status >= 200 && this.status < 300; }
+	/* the whole body as one chunk */
+	get body() {
+		if (!this._stream) {
+			const b = this._body;
+			this._stream = new ReadableStream({ start: (c) => {
+				this.bodyUsed = true;
+				if (b.length)
+					c.enqueue(bodyBytes(b));
+				c.close();
+			} });
+		}
+		return this._stream;
+	}
 	_take() {
 		if (this.bodyUsed)
 			return Promise.reject(new TypeError('body used'));
 		this.bodyUsed = true;
 		return Promise.resolve(this._body);
 	}
-	text() {
-		return this._take().then((s) => {
-			try {
-				return decodeURIComponent(escape(s));
-			} catch (e) {
-				return s;
-			}
-		});
-	}
+	text() { return this._take().then(bodyText); }
 	json() { return this.text().then(JSON.parse); }
 	arrayBuffer() {
-		return this._take().then((s) => {
-			const a = new Uint8Array(s.length);
-			for (let i = 0; i < s.length; i++)
-				a[i] = s.charCodeAt(i) & 255;
-			return a.buffer;
-		});
+		return this._take().then((b) => bufferOf(bodyBytes(b)));
 	}
+	bytes() { return this._take().then((b) => bodyBytes(b).slice()); }
 	blob() {
-		return this.text().then((s) => new Blob([s],
+		return this._take().then((b) => new Blob([bodyBytes(b)],
 			{ type: this.headers.get('content-type') || '' }));
 	}
 	formData() {
@@ -3377,27 +3513,35 @@ class Request {
 	get mode() { return this[REQ].mode; }
 	get signal() { return this[REQ].signal; }
 	get _body() { return this[REQ].body; }
-	text() { return Promise.resolve(this[REQ].body || ''); }
+	text() {
+		const b = this[REQ].body;
+		return Promise.resolve(b === null ? '' : bodyText(b));
+	}
+	arrayBuffer() {
+		const b = this[REQ].body;
+		return Promise.resolve(bufferOf(bodyBytes(b === null ? '' : b)));
+	}
 	json() { return this.text().then(JSON.parse); }
 	clone() { return new Request(this); }
 }
 
-/* A data: URL's bytes (a latin1 string) and type, or null */
+/* A data: URL's bytes and type, or null */
 function dataURL(url) {
 	const m = /^data:([^,]*?)(;base64)?,(.*)$/is.exec(url);
 	if (!m)
 		return null;
 	let body;
 	try {
-		body = m[2] ? atob(m[3].replace(/\s+/g, '')) : unescape(m[3]);
+		body = latin1Bytes(m[2] ? atob(m[3].replace(/\s+/g, '')) :
+			unescape(m[3]));
 	} catch (e) {
 		return null;
 	}
 	return { body, type: m[1] || 'text/plain;charset=US-ASCII' };
 }
 
-/* The page's latin1 response body as UTF-8 text happens in text();
- * request() gives the bytes as a latin1 string. */
+/* request() gives a response's body as an ArrayBuffer, text() decodes
+ * it. */
 /*
  * Requests from scripts, as browsers make them: an Origin header off
  * the page's origin, a preflight for what a form could not send, and
@@ -3567,7 +3711,8 @@ function fetch(input, init = {}) {
 				resolve(o);
 				return;
 			}
-			const res = new Response(r.body, { status: r.status,
+			const res = new Response(r.body === '' ? null : r.body, {
+				status: r.status,
 				headers: parseHeaders(r.headers) });
 			res.url = r.url;
 			res.redirected = r.url !== req.url;
@@ -3582,7 +3727,8 @@ class XMLHttpRequest extends EventTarget {
 		this.readyState = 0;
 		this.status = 0;
 		this.statusText = '';
-		this.responseText = '';
+		this._raw = null;
+		this._text = null;
 		this.responseXML = null;
 		this.responseType = '';
 		this.responseURL = '';
@@ -3604,16 +3750,16 @@ class XMLHttpRequest extends EventTarget {
 				return null;
 			}
 		}
-		if (this.responseType === 'arraybuffer') {
-			const s = this._raw || '';
-			const a = new Uint8Array(s.length);
-			for (let i = 0; i < s.length; i++)
-				a[i] = s.charCodeAt(i) & 255;
-			return a.buffer;
-		}
+		if (this.responseType === 'arraybuffer')
+			return this._raw ? bufferOf(this._raw) : null;
 		if (this.responseType === 'blob')
-			return new Blob([this.responseText]);
+			return new Blob(this._raw ? [this._raw] : []);
 		return this.responseText;
+	}
+	get responseText() {
+		if (this._text === null)
+			this._text = this._raw ? api.utf8Decode(this._raw) : '';
+		return this._text;
 	}
 	open(m, url, async = true) {
 		this._method = method(m);
@@ -3698,12 +3844,8 @@ class XMLHttpRequest extends EventTarget {
 			this.statusText = STATUS_TEXT[r.status] || '';
 			this.responseURL = r.url;
 			this._resHeaders = parseHeaders(r.headers);
-			this._raw = r.body;
-			try {
-				this.responseText = decodeURIComponent(escape(r.body));
-			} catch (e) {
-				this.responseText = r.body;
-			}
+			this._raw = asBytes(r.body) || new Uint8Array(0);
+			this._text = null;
 			this._state(2);
 			this._state(3);
 			this._state(4);
@@ -4355,6 +4497,7 @@ const globals = {
 	TreeWalker, NodeIterator: TreeWalker, Range,
 	NodeList: Array, HTMLCollection: Array, URL, URLSearchParams,
 	TextEncoder, TextDecoder, Blob, File, FormData, Headers, Request,
+	ReadableStream,
 	Response, fetch, XMLHttpRequest, AbortController, AbortSignal,
 	Storage, MutationObserver, MutationRecord, IntersectionObserver,
 	IntersectionObserverEntry, ResizeObserver, ResizeObserverEntry,

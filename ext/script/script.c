@@ -983,6 +983,27 @@ static JSValue n_resolve(JSContext *js, JSValueConst this, int argc,
 
 /* request(method, url, headers, body) -> {status, url, headers, body} */
 /* A response for the scripts: status, url, headers, body */
+static void free_bytes(JSRuntime *rt, void *opaque, void *ptr)
+{
+	(void)rt;
+	(void)opaque;
+	free(ptr);
+}
+
+static char *dup_or_null(const char *s, size_t n)
+{
+	char *d;
+
+	if (!s)
+		return NULL;
+	d = malloc(n + 1);
+	if (!d)
+		abort();
+	memcpy(d, s, n);
+	d[n] = 0;
+	return d;
+}
+
 static JSValue response_object(JSContext *js, soie_response *res,
 	const char *url)
 {
@@ -993,9 +1014,61 @@ static JSValue response_object(JSContext *js, soie_response *res,
 		url));
 	JS_SetPropertyStr(js, o, "headers", JS_NewString(js, res->headers ?
 		res->headers : ""));
-	JS_SetPropertyStr(js, o, "body", JS_NewStringLen(js, res->body ?
-		res->body : "", res->len));
+	JS_SetPropertyStr(js, o, "body", res->body ? JS_NewArrayBuffer(js,
+		(uint8_t *)res->body, res->len, free_bytes, NULL, 0) :
+		JS_NewArrayBufferCopy(js, (const uint8_t *)"", 0));
+	res->body = NULL;	/* the ArrayBuffer's now */
+	res->len = 0;
 	return o;
+}
+
+/* Bytes of an ArrayBuffer or a view of one (NULL otherwise, no
+ * exception): valid while v lives. */
+static const uint8_t *bytes_of(JSContext *js, JSValueConst v, size_t *len)
+{
+	size_t off, n, bpe;
+	JSValue b;
+	uint8_t *p;
+
+	*len = 0;
+	if (!JS_IsObject(v))
+		return NULL;
+	if ((p = JS_GetArrayBuffer(js, &n, v))) {
+		*len = n;
+		return p;
+	}
+	JS_FreeValue(js, JS_GetException(js));
+	b = JS_GetTypedArrayBuffer(js, v, &off, &n, &bpe);
+	if (JS_IsException(b)) {
+		JS_FreeValue(js, JS_GetException(js));
+		return NULL;
+	}
+	p = JS_GetArrayBuffer(js, &bpe, b);
+	JS_FreeValue(js, b);	/* v keeps it */
+	if (!p)
+		return NULL;
+	*len = n;
+	return p + off;
+}
+
+/* A request body: a string (sent as UTF-8) or bytes; malloc'ed, NULL
+ * when there is none. */
+static char *body_arg(JSContext *js, JSValueConst v, size_t *len)
+{
+	const uint8_t *b;
+	const char *s;
+	char *d = NULL;
+
+	*len = 0;
+	if (JS_IsString(v)) {
+		if ((s = JS_ToCStringLen(js, len, v))) {
+			d = dup_or_null(s, *len);
+			JS_FreeCString(js, s);
+		}
+	} else if ((b = bytes_of(js, v, len))) {
+		d = dup_or_null((const char *)b, *len);
+	}
+	return d;
 }
 
 /*
@@ -1022,20 +1095,6 @@ static pthread_mutex_t jobs_lock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t jobs_wake = PTHREAD_COND_INITIALIZER;
 static struct job *queue, *queue_last, *all_jobs;
 static int workers, idle;
-
-static char *dup_or_null(const char *s, size_t n)
-{
-	char *d;
-
-	if (!s)
-		return NULL;
-	d = malloc(n + 1);
-	if (!d)
-		abort();
-	memcpy(d, s, n);
-	d[n] = 0;
-	return d;
-}
 
 /* Out of every list, freed; jobs_lock held */
 static void job_free(struct job *j)
@@ -1135,12 +1194,8 @@ static JSValue n_request_async(JSContext *js, JSValueConst this, int argc,
 		j->headers = dup_or_null(s, n);
 		JS_FreeCString(js, s);
 	}
-	if (argc > 3 && JS_IsString(argv[3]) &&
-	    (s = JS_ToCStringLen(js, &n, argv[3]))) {
-		j->body = dup_or_null(s, n);
-		j->blen = n;
-		JS_FreeCString(js, s);
-	}
+	if (argc > 3)
+		j->body = body_arg(js, argv[3], &j->blen);
 	if (argc > 4)
 		JS_ToInt32(js, &flags, argv[4]);
 	j->flags = flags;
@@ -1207,7 +1262,8 @@ static JSValue n_request(JSContext *js, JSValueConst this, int argc,
 	struct sctx *c = ctx_of(js);
 	soie_request rq;
 	soie_response res;
-	const char *body = NULL, *headers = NULL;
+	const char *headers = NULL;
+	char *body = NULL;
 	size_t blen = 0;
 	JSValue o = JS_NULL;
 	int r;
@@ -1217,8 +1273,8 @@ static JSValue n_request(JSContext *js, JSValueConst this, int argc,
 	(void)this;
 	if (argc > 2 && JS_IsString(argv[2]))
 		headers = JS_ToCString(js, argv[2]);
-	if (argc > 3 && JS_IsString(argv[3]))
-		body = JS_ToCStringLen(js, &blen, argv[3]);
+	if (argc > 3)
+		body = body_arg(js, argv[3], &blen);
 	memset(&rq, 0, sizeof(rq));
 	rq.url = url;
 	rq.method = method;
@@ -1247,8 +1303,7 @@ static JSValue n_request(JSContext *js, JSValueConst this, int argc,
 	JS_FreeCString(js, url);
 	if (headers)
 		JS_FreeCString(js, headers);
-	if (body)
-		JS_FreeCString(js, body);
+	free(body);
 	return o;
 }
 
@@ -1371,6 +1426,40 @@ static JSValue n_can_play(JSContext *js, JSValueConst this, int argc,
 	return JS_NewBool(js, r);
 }
 
+/* UTF-8: bytes to a string (bad sequences become U+FFFD, a BOM goes),
+ * a string to an ArrayBuffer */
+static JSValue n_utf8_decode(JSContext *js, JSValueConst this, int argc,
+	JSValueConst *argv)
+{
+	const uint8_t *b;
+	size_t n;
+
+	(void)this;
+	b = argc > 0 ? bytes_of(js, argv[0], &n) : NULL;
+	if (!b)
+		return JS_NewString(js, "");
+	if (n >= 3 && b[0] == 0xef && b[1] == 0xbb && b[2] == 0xbf) {
+		b += 3;
+		n -= 3;
+	}
+	return JS_NewStringLen(js, (const char *)b, n);
+}
+
+static JSValue n_utf8_encode(JSContext *js, JSValueConst this, int argc,
+	JSValueConst *argv)
+{
+	JSValue r;
+	size_t n;
+	const char *s = argc > 0 ? JS_ToCStringLen(js, &n, argv[0]) : NULL;
+
+	(void)this;
+	if (!s)
+		return JS_EXCEPTION;
+	r = JS_NewArrayBufferCopy(js, (const uint8_t *)s, n);
+	JS_FreeCString(js, s);
+	return r;
+}
+
 /* Bytes from the kernel, for crypto.getRandomValues() */
 static JSValue n_random(JSContext *js, JSValueConst this, int argc,
 	JSValueConst *argv)
@@ -1475,6 +1564,8 @@ static const JSCFunctionListEntry natives[] = {
 	JS_CFUNC_DEF("player", 3, n_player),
 	JS_CFUNC_DEF("playerState", 1, n_player_state),
 	JS_CFUNC_DEF("canPlay", 1, n_can_play),
+	JS_CFUNC_DEF("utf8Decode", 1, n_utf8_decode),
+	JS_CFUNC_DEF("utf8Encode", 1, n_utf8_encode),
 	JS_CFUNC_DEF("mapModule", 2, n_map_module),
 };
 
