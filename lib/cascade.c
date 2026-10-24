@@ -1734,9 +1734,10 @@ static const struct style *intern_style(struct styledb *db,
 	return e;
 }
 
-static int display_kw(const char *name)
+/* The keyword number of name in prop's list, 0 when absent */
+static int prop_kw(int prop, const char *name)
 {
-	const char *list = props[P_DISPLAY].keywords;
+	const char *list = props[prop].keywords;
 	int i = 0;
 	size_t n = strlen(name);
 
@@ -1752,6 +1753,11 @@ static int display_kw(const char *name)
 		i++;
 	}
 	return 0;
+}
+
+static int display_kw(const char *name)
+{
+	return prop_kw(P_DISPLAY, name);
 }
 
 static int kw_is(const struct cval *v, int prop, const char *name)
@@ -1819,6 +1825,22 @@ static void fixups(struct style *s, const struct style *parent, int root)
 			memset(&s->v[sides[i][1]], 0, sizeof(struct cval));
 	if (kw_is(&s->v[P_OUTLINE_STYLE], P_OUTLINE_STYLE, "none"))
 		memset(&s->v[P_OUTLINE_WIDTH], 0, sizeof(struct cval));
+	/* CSS Overflow 3: one axis scrolls or hides, then visible in the
+	 * other is auto and clip is hidden (overflow-y: hidden alone makes
+	 * a scroll container, flex items of which may shrink to nothing) */
+	for (i = 0; i < 2; i++) {
+		int ap = i ? P_OVERFLOW_Y : P_OVERFLOW_X;
+		int bp = i ? P_OVERFLOW_X : P_OVERFLOW_Y;
+		struct cval *a = &s->v[ap];
+		const struct cval *b = &s->v[bp];
+
+		if (kw_is(b, bp, "visible") || kw_is(b, bp, "clip"))
+			continue;
+		if (kw_is(a, ap, "visible"))
+			a->kw = (unsigned char)prop_kw(ap, "auto");
+		else if (kw_is(a, ap, "clip"))
+			a->kw = (unsigned char)prop_kw(ap, "hidden");
+	}
 }
 
 /* A pending (var()) value made concrete, or 0 if invalid. */

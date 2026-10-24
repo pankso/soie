@@ -607,10 +607,24 @@ or the interpreter?).
   resolve against the block container's height when it is definite:
   inline layout passed -1. YouTube's thumbnails were 1 px high.
 
+- The rendering step of HTML's event loop: after the timers and their
+  microtasks, at most every 16 ms, animation frame callbacks (asked in
+  a frame: the next one), then resize observers (again while sizes
+  move, 4 rounds), then intersection observers, a microtask
+  checkpoint after each callback (drain()). Its own call from C after
+  tick, and it asks to come again only for a frame callback waiting or
+  a page that changed.
+- overflow-x and overflow-y compute together (CSS Overflow 3): when one
+  is neither visible nor clip, visible becomes auto and clip hidden.
+  ytd-search has overflow-y: hidden alone: a scroll container, whose
+  automatic minimum size in a flex line is 0. Without it its Shorts
+  row (widths set by script) kept it 72 px wider than the window.
+  Found by measuring the same frozen page in headless Firefox (the
+  ESR in /opt/mozilla): same min-content, but overflow-x: auto there.
+
 Now: the consent dialog shows and its buttons work, search suggests
 and shows its results with their thumbnails. Still: a playlist's
-thumbnail stack sits too low, the results row runs past the window
-(min-width: auto of flex items).
+thumbnail stack sits too low.
 
 ## QuickJS 2026-06-04
 

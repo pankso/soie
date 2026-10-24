@@ -563,3 +563,36 @@ width,height,margin-left,padding-left
 |       @height: 40px
 |       @margin-left: 16px
 |       @padding-left: min(10%, 20px)
+
+#data
+<!DOCTYPE html><div style="overflow-y:hidden"></div><div style="overflow-x:scroll;overflow-y:clip"></div><div style="overflow:clip"></div><div style="overflow-x:clip"></div>
+#errors
+#properties
+overflow-x,overflow-y
+#document
+| <!DOCTYPE html>
+| <html>
+|   @overflow-x: visible
+|   @overflow-y: visible
+|   <head>
+|     @overflow-x: visible
+|     @overflow-y: visible
+|   <body>
+|     @overflow-x: visible
+|     @overflow-y: visible
+|     <div>
+|       style="overflow-y:hidden"
+|       @overflow-x: auto
+|       @overflow-y: hidden
+|     <div>
+|       style="overflow-x:scroll;overflow-y:clip"
+|       @overflow-x: scroll
+|       @overflow-y: hidden
+|     <div>
+|       style="overflow:clip"
+|       @overflow-x: clip
+|       @overflow-y: clip
+|     <div>
+|       style="overflow-x:clip"
+|       @overflow-x: clip
+|       @overflow-y: visible
