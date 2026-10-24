@@ -816,11 +816,88 @@ on the same frozen DOM.
   another extension's job. Progressive files (mp4, webm, ogg, mp3,
   wav, flac...) play.
 - The host calls `soie_media_tick()` in its event loop: it says when
-  to repaint and fires the events. The browser repaints the page for
-  each new frame, which is simple and costs a full paint per frame;
-  painting only the video's rectangle would be cheaper.
+  to repaint and fires the events. Since 1.2 `soie_media_tick_rect()`
+  says when only the players' boxes changed (a new frame, the
+  controls), with their rectangle: the browser paints and sends that
+  rectangle alone (soie_paint() on a sub-rectangle of the view). A
+  full repaint per frame of YouTube's page lost 65% of the frames of
+  a 480p video; the rectangle loses 4%.
 - `SOIE_AUDIO=none` plays without sound (tests, no sound card),
   `SOIE_AUDIO=hw:0` picks an ALSA device.
+
+## Media Source Extensions
+
+YouTube serves no progressive file any more: its player fetches
+segments itself (SABR: a POST, an answer in UMP parts) and appends them
+to SourceBuffers. Most video sites do the same through dash.js or
+hls.js. So the streaming playlists refused in phase 11 come through
+MSE, not through an HLS/DASH loader of our own.
+
+- The media extension plays it (ext ABI 1.1, libsoie 1.2.0): new hooks
+  appended to `soie_ext_media` (can_source, open_source, add_buffer,
+  append, buffered, source) and `soie_media_source_*()` for the script
+  engine, the element as handle. `MediaSource` exists in pages only
+  when such an extension is loaded.
+- As browsers do, a SourceBuffer keeps coded frames, not bytes: a
+  parsing thread per SourceBuffer demuxes what is appended (FFmpeg,
+  mp4 and webm, over a FIFO that waits for the next append), each
+  frame stored by time with its codec parameters. `buffered`,
+  `remove()`, overlapping appends (a quality switch rewrites a time
+  range: the old frames and those that need them go), the append
+  window and timestampOffset all work on these frames.
+- A new initialization segment opens the demuxer again (FFmpeg's mp4
+  demuxer skips a second moov); after `abort()` or bad bytes the last
+  one is replayed before the next segment. The decoder opens again
+  when a frame comes with other parameters: resolution switches work.
+- appendBuffer() parses at once (demuxing is cheap) and the events
+  follow in a task: `buffered` is right when updateend fires, and a
+  full buffer is a QuotaExceededError at the call, as the spec wants.
+- Memory: 24 MB of coded video and 4 MB of audio per SourceBuffer;
+  past that, what played more than 3 s ago goes (coded frame
+  eviction), then QuotaExceededError (players remove() and retry).
+- Playing: the decoding thread takes the next frame in decode order
+  from the video and the audio tracks. The clock waits (`waiting`)
+  where nothing is buffered and goes on with half a second ahead or
+  at the end of the stream; gaps under 0.5 s are jumped. `seeked`
+  fires when the frames at the new time are there.
+- What a small machine plays well: H.264, VP8, AAC, Opus, Vorbis,
+  FLAC, MP3, AC-3. VP9, AV1 and HEVC are refused (too heavy without
+  hardware, and the sites that matter offer H.264), so are widths or
+  heights over 1280, more pixels than 1280x720 and more than 30
+  frames a second: `isTypeSupported()` says no and YouTube picks
+  another format. `getVideoPlaybackQuality()` counts dropped frames,
+  which players use to step down.
+- Bodies are bytes: fetch, XHR and Blob gave binary data through a
+  UTF-8 string, which broke every segment. Response bodies are now
+  ArrayBuffers (no copy), request bodies may be bytes, UTF-8 coding is
+  native (QuickJS), `response.body` is a ReadableStream (one chunk:
+  the body is complete when it comes), blob: URLs from
+  createObjectURL() answer fetch and XHR.
+- Found on the way, from YouTube's load: every layout a script forced
+  rebuilt all the style rules while a sheet or font was still on its
+  way (YouTube's player forces hundreds); the URLs on their way are
+  now asked again and the rules rebuilt only when one came. The
+  connection pool could give a connection and keep it (a TLS session
+  closed twice, with SABR's many connections). Media events waited
+  for the next X event when their listeners set timers: media ticks
+  now run before the timers.
+- Tests: `tests/js/media-source.html` (fMP4 segments made by ffmpeg in
+  `tests/media/mse/`): appends, a bad segment, buffered, waiting at
+  the end of the data then playing again, endOfStream, ended,
+  remove(), detaching. soie-render got `-T ms` for longer pages.
+- YouTube, October 2026: the watch page plays through SABR, ads
+  first, then the video, H.264 480p and 360p chosen by its own ABR
+  (it stepped up from 240p), Opus sound, 0.65 of a core and about
+  410 MB in all for the page. What stays slow: layouts a script
+  forces are redone whole (layout is not incremental), and YouTube
+  forces many when a player starts (10 to 25 s of scripts between an
+  ad and the video), and QuickJS compiles base.js in O(n^2) of its
+  variables (`find_var()`, linear). The 5 s limit per script entry
+  stays: one of YouTube's ad callbacks hits it, the video plays.
+- Not done: `changeType()` to another container, sequence mode
+  (timestamps are always those of the segments), live seekable ranges
+  beyond what is stored, EME (no DRM: such videos do not play),
+  `playbackRate`.
 
 ## Security
 

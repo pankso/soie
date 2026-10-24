@@ -6,7 +6,7 @@
 #define SOIE_H
 
 #define SOIE_VERSION_MAJOR 1
-#define SOIE_VERSION_MINOR 1
+#define SOIE_VERSION_MINOR 2
 #define SOIE_VERSION_PATCH 0
 
 #include "dom.h"
