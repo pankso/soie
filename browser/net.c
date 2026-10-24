@@ -172,6 +172,9 @@ static int tls_start(struct conn *c, const char *host, struct response *r)
 	return 0;
 }
 
+/* Closed, c is no connection: closing it again does nothing (a pooled
+ * connection the server dropped is closed in pool_take(), then the new
+ * one may fail before it has a TLS session of its own) */
 static void conn_close(struct conn *c)
 {
 	if (c->tls) {
@@ -180,6 +183,8 @@ static void conn_close(struct conn *c)
 	}
 	if (c->fd >= 0)
 		close(c->fd);
+	c->fd = -1;
+	c->tls = NULL;
 }
 
 /* URL pieces */
@@ -852,8 +857,6 @@ static int request(const char *url, const soie_request *rq,
 		    !read_response(&c, &raw, method, &reuse) && raw.len)
 			break;
 		conn_close(&c);
-		c.fd = -1;
-		c.tls = NULL;
 		if (!reused) {
 			set_error(r, "no response");
 			goto out;
