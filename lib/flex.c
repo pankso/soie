@@ -29,6 +29,15 @@ static int by_order(const void *a, const void *b)
 		x->idx - y->idx;
 }
 
+/* Stretched across the line: boxes, and form controls (replaced here,
+ * not in CSS); images and the like keep their size */
+static int stretches(const struct box *b)
+{
+	return b->type != B_REPLACED || (b->node &&
+		(is_html(b->node, TAG_INPUT) || is_html(b->node, TAG_SELECT) ||
+		 is_html(b->node, TAG_TEXTAREA)));
+}
+
 static int is_row(const struct style *st)
 {
 	return kw(st, P_FLEX_DIRECTION, "row") ||
@@ -318,10 +327,12 @@ float layout_flex(struct box *f, float cbh)
 		} else {
 			float ws = box_spec_w(b, P_WIDTH, W);
 
-			if (ws < 0)
+			/* auto: the intrinsic width of a replaced box, or the
+			 * line's (stretched later) */
+			if (ws < 0 && b->type == B_REPLACED && b->iw > 0)
+				ws = b->iw;
+			else if (ws < 0)
 				ws = W - it->cbefore - it->cafter;
-			if (b->type == B_REPLACED)
-				ws = b->iw > 0 ? b->iw : ws;
 			ws = box_clamp_w(b, ws, W);
 			layout_item(b, 0, 0, ws, it->main);
 			it->cross = b->w;
@@ -414,7 +425,7 @@ float layout_flex(struct box *f, float cbh)
 
 			if (al == 's' && (row ? is_auto(b->style, P_HEIGHT) :
 			    is_auto(b->style, P_WIDTH)) && !it->auto_cs &&
-			    !it->auto_ce && b->type != B_REPLACED) {
+			    !it->auto_ce && stretches(b)) {
 				cross = lcross[i] - it->cbefore - it->cafter;
 				if (row)
 					cross = box_clamp_h(b, cross, H);

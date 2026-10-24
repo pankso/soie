@@ -111,3 +111,28 @@ width=300
 |       block <div> 0,20 100x20
 |         line 0,20 100x20
 |           text "nav" 0,22 24x16
+
+#data
+<!DOCTYPE html><body style="margin:0"><form style="display:flex;flex-direction:column;width:200px"><input style="width:100%;padding:0;border:0"><input style="padding:0;border:0"><img style="width:20px;height:10px"></form>
+#errors
+#layout
+width=200
+#document
+| block <html> 0,0 200x43.3333
+|   block <body> 0,0 200x43.3333
+|     block <form> 0,0 200x43.3333
+|       replaced <input> 0,0 200x16.6667
+|       replaced <input> 0,16.6667 200x16.6667
+|       replaced <img> 0,33.3333 20x10
+
+#data
+<!DOCTYPE html><body style="margin:0"><div style="display:flex;height:40px;width:200px"><input style="padding:0;border:0"><img style="width:20px;height:10px"></div>
+#errors
+#layout
+width=200
+#document
+| block <html> 0,0 200x40
+|   block <body> 0,0 200x40
+|     block <div> 0,0 200x40
+|       replaced <input> 0,0 133.3333x40
+|       replaced <img> 133.3333,0 20x10
