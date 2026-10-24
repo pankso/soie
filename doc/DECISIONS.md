@@ -267,6 +267,23 @@ reversed, edit the entry and say why; do not leave stale rules here.
   real one; Wikipedia's rotated navbox labels were wrong before and
   are wrong elsewhere after. Next steps: keep the box tree and lay out
   again only what a change reaches.
+- Styles on YouTube after that: 315 full restyles in 90 s (17 s), all
+  from a deep :has() at the root, `:has(>[role=dialog]:not([aria-
+  hidden=true]) .ytwChannelBlocksViewModelHost) [dialog]`, seeing every
+  class change. A change is now checked against what the :has()
+  arguments can see: an attribute only through the compounds testing
+  it (a class or an id through its old and new values, a state
+  pseudo-class through the attributes it reads); an inserted or
+  removed subtree only when it holds what the subject (rightmost)
+  compound requires, since with descendant and child combinators an
+  element's ancestors do not move; sibling combinators and positions
+  are always seen. 72 full restyles left (2 s). It also showed an old
+  bug the root mark hid: for `:has(+ .x)` and `:has(~ .x)` the anchor
+  is a previous sibling, now looked for. Checked by a differential
+  test (random class, attribute, insertion and removal changes on
+  :has() rules, each compared with a full restyle: 24000 changes, no
+  difference). A parsed style sheet cache was measured and not done:
+  YouTube's 3.8 MB sheet parses in 0.1 s but weighs 56 MB parsed.
 - `soie_document_update()` redoes cascade and layout with the last
   options and viewport (the library keeps a copy) when the document's
   change counter moved: the host calls it after scripts ran, and the
