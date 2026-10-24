@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<!-- A Request's state is its own: YouTube makes one of a data: URL
+     holding the player's answer, then redefines its url and method;
+     fetch() reads the data: URL, as browsers do -->
+<script>
+var log = (...a) => console.log(a.map(String).join(' '));
+var r = new Request('data:application/json;base64,' + btoa('{"player":"answer"}'));
+Object.defineProperty(r, 'url', { get: () => 'https://www.youtube.com/youtubei/v1/player' });
+Object.defineProperty(r, 'method', { get: () => 'POST' });
+log('pretends', r.url, r.method);
+fetch(r).then(x => x.json()).then(j => log('fetched', j.player));
+fetch('data:text/plain,a%20b%E2%82%AC').then(x => x.text()).then(t => log('percent', t.length, t.charCodeAt(3)));
+fetch('data:,').then(x => log('empty', x.status, x.headers.get('content-type')));
+fetch('data:broken').then(() => log('never'), e => log('bad data: URL', e.name));
+var x = new XMLHttpRequest();
+x.open('GET', 'data:text/plain;base64,' + btoa('xhr ok'));
+x.onload = () => log('xhr', x.status, x.responseText);
+x.send();
+var p = new Request('/a', { method: 'post', body: 'b=1', headers: { 'x-k': 'v' } });
+var q = new Request(p);
+log('copied', q.method, q.headers.get('x-k'), q.url.endsWith('/a'));
+q.text().then(t => log('body', t));
+</script>

@@ -1,0 +1,8 @@
+log: pretends https://www.youtube.com/youtubei/v1/player POST
+log: copied POST v true
+log: body b=1
+log: xhr 200 xhr ok
+log: empty 200 text/plain;charset=US-ASCII
+log: bad data: URL TypeError
+log: percent 4 8364
+log: fetched answer

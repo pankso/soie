@@ -3350,20 +3350,50 @@ class Response {
 	}
 }
 
+/* A request's state is its own: fetch() reads it, not the properties a
+ * page may redefine (YouTube makes a Request of a data: URL holding the
+ * player's answer, then gives it another url and method: browsers
+ * fetch the data: URL) */
+const REQ = Symbol('request');
 class Request {
 	constructor(input, init = {}) {
-		const r = input instanceof Request ? input : null;
-		this.url = r ? r.url : new URL(String(input), document.baseURI).href;
-		this.method = method(init.method || (r && r.method) || 'GET');
-		this.headers = new Headers(init.headers || (r && r.headers));
-		this._body = bodyString(init.body !== undefined ? init.body :
-			r && r._body);
-		this.credentials = init.credentials || (r && r.credentials) ||
-			'same-origin';
-		this.mode = init.mode || (r && r.mode) || 'cors';
-		this.signal = init.signal || null;
+		const r = input instanceof Request ? input[REQ] : null;
+		this[REQ] = {
+			url: r ? r.url : new URL(String(input), document.baseURI).href,
+			method: method(init.method || (r && r.method) || 'GET'),
+			headers: new Headers(init.headers || (r && r.headers)),
+			body: bodyString(init.body !== undefined ? init.body :
+				r && r.body),
+			credentials: init.credentials || (r && r.credentials) ||
+				'same-origin',
+			mode: init.mode || (r && r.mode) || 'cors',
+			signal: init.signal || (r && r.signal) || null,
+		};
 	}
+	get url() { return this[REQ].url; }
+	get method() { return this[REQ].method; }
+	get headers() { return this[REQ].headers; }
+	get credentials() { return this[REQ].credentials; }
+	get mode() { return this[REQ].mode; }
+	get signal() { return this[REQ].signal; }
+	get _body() { return this[REQ].body; }
+	text() { return Promise.resolve(this[REQ].body || ''); }
+	json() { return this.text().then(JSON.parse); }
 	clone() { return new Request(this); }
+}
+
+/* A data: URL's bytes (a latin1 string) and type, or null */
+function dataURL(url) {
+	const m = /^data:([^,]*?)(;base64)?,(.*)$/is.exec(url);
+	if (!m)
+		return null;
+	let body;
+	try {
+		body = m[2] ? atob(m[3].replace(/\s+/g, '')) : unescape(m[3]);
+	} catch (e) {
+		return null;
+	}
+	return { body, type: m[1] || 'text/plain;charset=US-ASCII' };
 }
 
 /* The page's latin1 response body as UTF-8 text happens in text();
@@ -3504,6 +3534,16 @@ function fetch(input, init = {}) {
 				reject(new DOMException('aborted', 'AbortError'));
 				return;
 			}
+			if (/^data:/i.test(req.url)) {
+				/* no network: the URL holds the bytes */
+				const d = dataURL(req.url);
+				if (d)
+					answered({ status: 200, url: req.url, body: d.body,
+						headers: 'content-type: ' + d.type + '\r\n' });
+				else
+					reject(new TypeError('Failed to fetch'));
+				return;
+			}
 			const h = req.headers;
 			if (req._body !== null && !h.has('content-type'))
 				h.set('content-type', 'text/plain;charset=UTF-8');
@@ -3631,6 +3671,12 @@ class XMLHttpRequest extends EventTarget {
 					'text/plain;charset=UTF-8');
 			const args = [this._method, this._url, this._headers, b,
 				this.withCredentials ? 'include' : 'same-origin'];
+			if (/^data:/i.test(this._url)) {
+				const d = dataURL(this._url);
+				done(d && { status: 200, url: this._url, body: d.body,
+					headers: 'content-type: ' + d.type + '\r\n' });
+				return;
+			}
 			/* asynchronous ones in the background: the page lives
 			 * on while they wait */
 			if (this._async)
