@@ -743,6 +743,10 @@ void soie_node_free(soie_node *n)
 		c = n;
 	}
 
+	/* a document's scripts let go of their wrappers before its nodes
+	 * go: they look at every node they wrapped */
+	if (n->type == SOIE_DOCUMENT)
+		soie_script_stop(n);
 	node_detach(n);
 	while (c) {
 		while (c->first)

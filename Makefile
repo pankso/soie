@@ -171,12 +171,16 @@ tools/soie-render.o tests/html5lib.o tests/unit.o tests/painttest.o \
 	tests/exttest.o: $(HEADERS)
 tests/csstest.o tests/cssvalue.o: CPPFLAGS += -Ilib
 
+# Tests run with glibc filling freed memory: a use after free shows.
+PERTURB = MALLOC_PERTURB_=165
+
 # Our own corpus, no network needed.
 check: tests/unit tests/html5lib tests/painttest tests/exttest $(EXTS)
-	./tests/unit
-	./tests/exttest
-	./tests/painttest tests/paint/*.html
-	./tests/html5lib tests/tree/*.dat tests/style/*.dat tests/layout/*.dat
+	$(PERTURB) ./tests/unit
+	$(PERTURB) ./tests/exttest
+	$(PERTURB) ./tests/painttest tests/paint/*.html
+	$(PERTURB) ./tests/html5lib tests/tree/*.dat tests/style/*.dat \
+		tests/layout/*.dat
 
 # Scripts: each tests/js page's console output against its .out file,
 # without the stack traces (they name lines of dom.js).
@@ -186,7 +190,8 @@ check-js: tools/soie-render ext/script.so
 		x="-x ext/script.so"; \
 		case $$f in */media-*) [ -f ext/media.so ] || continue; \
 			x="$$x -x ext/media.so";; esac; \
-		SOIE_AUDIO=none tools/soie-render -S $$x -j $$f 2>&1 >/dev/null | \
+		$(PERTURB) SOIE_AUDIO=none tools/soie-render -S $$x -j $$f \
+			2>&1 >/dev/null | \
 			grep -v '^    at ' | cmp -s - $${f%.html}.out || \
 			{ echo "FAIL $$f"; fail=1; }; \
 	done; [ $$fail = 0 ] && echo "js: all passed"
