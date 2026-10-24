@@ -517,15 +517,16 @@ static int pool_take(const char *key, struct conn *c)
 	int i, found = -1;
 
 	pthread_mutex_lock(&pool_lock);
-	for (i = npool - 1; i >= 0; i--) {
+	/* the old ones go first: the last entry fills their place, it
+	 * cannot be the one found, else it would be given and kept */
+	for (i = npool - 1; i >= 0; i--)
 		if (now - pool[i].since > POOL_IDLE) {
 			conn_close(&pool[i].c);
 			pool[i] = pool[--npool];
-			continue;
 		}
-		if (found < 0 && !strcmp(pool[i].key, key))
+	for (i = npool - 1; i >= 0 && found < 0; i--)
+		if (!strcmp(pool[i].key, key))
 			found = i;
-	}
 	if (found >= 0) {
 		*c = pool[found].c;
 		pool[found] = pool[--npool];
