@@ -590,9 +590,27 @@ or the interpreter?).
   the start of its <head>), to watch the page's own scripts from the
   start (it caught the hidden = "zClosurez").
 
+- calc() parsing freed a tree twice: calc_sum() and calc_product()
+  freed out->tree on failure and left the pointer, calc(min(1px, 2%) + )
+  then freed it again. YouTube's CSS has such values: a heap corruption
+  glibc caught later, in a restyle or in another thread's TLS teardown
+  (both crash reports came from it). On failure out owns nothing now;
+  a unit test parses the cases.
+- IntersectionObserver and ResizeObserver were stubs answering once.
+  Now they observe: intersection with the viewport or a root grown by
+  rootMargin, thresholds, isVisible; sizes. Looked at from the timers'
+  tick when the page scrolled or changed, at most every 100 ms. Their
+  entries have their fields on the prototype: the intersection-observer
+  polyfill YouTube loads replaced ours without that, and its lazy
+  thumbnails never loaded.
+- Percentage heights of inline-level atomics (images, inline-blocks)
+  resolve against the block container's height when it is definite:
+  inline layout passed -1. YouTube's thumbnails were 1 px high.
+
 Now: the consent dialog shows and its buttons work, search suggests
-and shows its results (the videos, the Shorts shelf). Still: the first
-result's thumbnail is missing, the results row runs past the window.
+and shows its results with their thumbnails. Still: a playlist's
+thumbnail stack sits too low, the results row runs past the window
+(min-width: auto of flex items).
 
 ## QuickJS 2026-06-04
 

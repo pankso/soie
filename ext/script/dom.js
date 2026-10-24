@@ -575,6 +575,7 @@ api.tick = function () {
 			report(e);
 		}
 	}
+	checkIntersections(false);
 	let next = -1;
 	const later = api.now();
 	for (const t of timers.values()) {
@@ -582,6 +583,10 @@ api.tick = function () {
 		if (next < 0 || d < next)
 			next = d;
 	}
+	/* intersection observers look again soon */
+	if ((intersectionObservers.size || resizeObservers.size) &&
+	    (next < 0 || next > 100))
+		next = 100;
 	return next;
 };
 
@@ -3915,61 +3920,184 @@ class MutationObserver {
 		return r;
 	};
 }
+/*
+ * IntersectionObserver: targets against the viewport (or a root), grown
+ * by rootMargin; an entry at observe() and whenever a target crosses a
+ * threshold. Looked at from the timers' tick, when the page scrolled or
+ * changed, at most every 100 ms (resize observers too).
+ */
+const intersectionObservers = new Set();
+
+/* Entries with their fields on the prototype, as browsers have them:
+ * the intersection-observer polyfill (YouTube loads it) replaces an
+ * IntersectionObserver whose entries lack intersectionRatio there */
+const ENTRY = Symbol('entry');
+class IntersectionObserverEntry {
+	constructor(init) { this[ENTRY] = init; }
+}
+class ResizeObserverEntry {
+	constructor(init) { this[ENTRY] = init; }
+}
+for (const [cls, names] of [[IntersectionObserverEntry, ['target', 'time',
+    'isIntersecting', 'intersectionRatio', 'isVisible', 'boundingClientRect',
+    'intersectionRect', 'rootBounds']], [ResizeObserverEntry, ['target',
+    'contentRect', 'borderBoxSize', 'contentBoxSize',
+    'devicePixelContentBoxSize']]])
+	for (const n of names)
+		Object.defineProperty(cls.prototype, n, { configurable: true,
+			enumerable: true, get() { return this[ENTRY][n]; } });
+let ioLast = '', ioWhen = 0;
+
+function margins(s, w, h) {
+	const p = String(s || '0px').trim().split(/\s+/).map((v, i) => {
+		const n = parseFloat(v) || 0;
+		return /%$/.test(v) ? n / 100 * (i % 2 ? w : h) : n;
+	});
+	const [t = 0, r = t, b = t, l = r] = p;
+	return [t, r, b, l];
+}
+
+function checkIntersections(force) {
+	if (!intersectionObservers.size && !resizeObservers.size)
+		return;
+	const v = api.viewport(), now = api.now();
+	const state = v.join() + ',' + api.gen();
+	if (!force && (state === ioLast || now - ioWhen < 100))
+		return;
+	ioLast = state;
+	ioWhen = now;
+	for (const io of [...intersectionObservers])
+		io._check(v);
+	for (const ro of [...resizeObservers])
+		ro._check();
+}
+
 class IntersectionObserver {
 	constructor(cb, opts = {}) {
+		if (typeof cb !== 'function')
+			throw new TypeError('IntersectionObserver: not a function');
 		this._cb = cb;
 		this.root = opts.root || null;
 		this.rootMargin = opts.rootMargin || '0px';
-		this.thresholds = [].concat(opts.threshold || 0);
-		this._targets = new Set();
+		const t = [].concat(opts.threshold === undefined ? 0 :
+			opts.threshold).map(Number).sort((a, b) => a - b);
+		this.thresholds = t.length ? t : [0];
+		this.delay = opts.delay || 0;
+		this.trackVisibility = !!opts.trackVisibility;
+		this._targets = new Map();	/* element: last threshold index */
 	}
 	observe(el) {
+		check(el);
 		if (this._targets.has(el))
 			return;
-		this._targets.add(el);
-		addTimer(() => {
-			if (!this._targets.has(el))
-				return;
-			const r = el.getBoundingClientRect();
+		this._targets.set(el, undefined);
+		intersectionObservers.add(this);
+		addTimer(() => checkIntersections(true), 0, [], false);
+	}
+	unobserve(el) {
+		this._targets.delete(el);
+		if (!this._targets.size)
+			intersectionObservers.delete(this);
+	}
+	disconnect() {
+		this._targets.clear();
+		intersectionObservers.delete(this);
+	}
+	takeRecords() { return []; }
+	_check(v) {
+		const root = this.root && this.root !== document ?
+			this.root.getBoundingClientRect() :
+			new DOMRect(0, 0, v[0], v[1]);
+		const [mt, mr, mb, ml] = margins(this.rootMargin, root.width,
+			root.height);
+		const rx0 = root.left - ml, ry0 = root.top - mt;
+		const rx1 = root.right + mr, ry1 = root.bottom + mb;
+		const entries = [];
+		for (const [el, last] of this._targets) {
+			const b = el.isConnected ? el.getBoundingClientRect() :
+				new DOMRect();
+			const x0 = Math.max(b.left, rx0), y0 = Math.max(b.top, ry0);
+			const x1 = Math.min(b.right, rx1), y1 = Math.min(b.bottom, ry1);
+			const meets = el.isConnected && x0 <= x1 && y0 <= y1 &&
+				(b.width > 0 || b.height > 0 || x0 < x1 || y0 < y1);
+			const area = b.width * b.height;
+			const ratio = !meets ? 0 : area > 0 ?
+				Math.max(0, x1 - x0) * Math.max(0, y1 - y0) / area : 1;
+			let idx = meets ? 0 : -1;
+			if (meets)
+				for (const t of this.thresholds)
+					if (ratio >= t)
+						idx++;
+			if (idx === last)
+				continue;
+			this._targets.set(el, idx);
+			const inter = meets ? new DOMRect(x0, y0, x1 - x0, y1 - y0) :
+				new DOMRect();
+			entries.push(new IntersectionObserverEntry({ target: el,
+				time: performance.now(), isIntersecting: meets,
+				intersectionRatio: ratio, isVisible: meets,
+				boundingClientRect: b, intersectionRect: inter,
+				rootBounds: new DOMRect(rx0, ry0, rx1 - rx0, ry1 - ry0) }));
+		}
+		if (entries.length)
 			try {
-				this._cb([{ target: el, isIntersecting: true,
-					intersectionRatio: 1, boundingClientRect: r,
-					intersectionRect: r,
-					rootBounds: new DOMRect(0, 0, g.innerWidth,
-						g.innerHeight),
-					time: performance.now() }], this);
+				this._cb.call(this, entries, this);
 			} catch (e) {
 				report(e);
 			}
-		}, 0, [], false);
 	}
-	unobserve(el) { this._targets.delete(el); }
-	disconnect() { this._targets.clear(); }
-	takeRecords() { return []; }
 }
+/* ResizeObserver: an entry at observe() and when a target's size
+ * changes, looked at with the intersection observers */
+const resizeObservers = new Set();
+
 class ResizeObserver {
 	constructor(cb) {
+		if (typeof cb !== 'function')
+			throw new TypeError('ResizeObserver: not a function');
 		this._cb = cb;
-		this._targets = new Set();
+		this._targets = new Map();	/* element: last "w h" */
 	}
 	observe(el) {
-		this._targets.add(el);
-		addTimer(() => {
-			if (!this._targets.has(el))
-				return;
-			const r = el.getBoundingClientRect();
+		check(el);
+		if (this._targets.has(el))
+			return;
+		this._targets.set(el, undefined);
+		resizeObservers.add(this);
+		addTimer(() => checkIntersections(true), 0, [], false);
+	}
+	unobserve(el) {
+		this._targets.delete(el);
+		if (!this._targets.size)
+			resizeObservers.delete(this);
+	}
+	disconnect() {
+		this._targets.clear();
+		resizeObservers.delete(this);
+	}
+	takeRecords() { return []; }
+	_check() {
+		const entries = [];
+		for (const [el, last] of this._targets) {
+			const r = el.isConnected ? el.getBoundingClientRect() :
+				new DOMRect();
+			const key = r.width + ' ' + r.height;
+			if (key === last)
+				continue;
+			this._targets.set(el, key);
 			const size = [{ inlineSize: r.width, blockSize: r.height }];
+			entries.push(new ResizeObserverEntry({ target: el,
+				contentRect: new DOMRect(0, 0, r.width, r.height),
+				borderBoxSize: size, contentBoxSize: size,
+				devicePixelContentBoxSize: size }));
+		}
+		if (entries.length)
 			try {
-				this._cb([{ target: el, contentRect: r,
-					borderBoxSize: size, contentBoxSize: size,
-					devicePixelContentBoxSize: size }], this);
+				this._cb.call(this, entries, this);
 			} catch (e) {
 				report(e);
 			}
-		}, 0, [], false);
 	}
-	unobserve(el) { this._targets.delete(el); }
-	disconnect() { this._targets.clear(); }
 }
 class PerformanceObserver {
 	observe() {}
@@ -4145,7 +4273,8 @@ const globals = {
 	NodeList: Array, HTMLCollection: Array, URL, URLSearchParams,
 	TextEncoder, TextDecoder, Blob, File, FormData, Headers, Request,
 	Response, fetch, XMLHttpRequest, AbortController, AbortSignal,
-	Storage, MutationObserver, MutationRecord, IntersectionObserver, ResizeObserver,
+	Storage, MutationObserver, MutationRecord, IntersectionObserver,
+	IntersectionObserverEntry, ResizeObserver, ResizeObserverEntry,
 	PerformanceObserver, Window, Navigator, Screen, Location, History,
 	btoa, atob, getComputedStyle, matchMedia,
 	devicePixelRatio: 1,

@@ -1,0 +1,7 @@
+log: entry true true true
+log: io in in 1.00, half in 0.50, far out, hid out
+log: margin near in 1.00
+log: resize in 1024x50
+log: io hid in 1.00
+log: resize in 300x50
+log: done

@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<body style="margin:0">
+<div id=in style="height:50px">in view</div>
+<div id=half style="position:absolute;top:743px;height:50px;width:10px"></div>
+<div id=far style="position:absolute;top:3000px;height:50px;width:10px"></div>
+<div id=near style="position:absolute;top:900px;height:50px;width:10px"></div>
+<div id=hid style="display:none;height:20px"></div>
+<script>
+var log = (...a) => console.log(a.map(String).join(' '));
+var show = e => e.target.id + (e.isIntersecting ? ' in ' + e.intersectionRatio.toFixed(2) : ' out');
+var io = new IntersectionObserver(es => log('io', es.map(show).join(', ')), { threshold: [0, 0.5, 1] });
+['in', 'half', 'far', 'hid'].forEach(id => io.observe(document.getElementById(id)));
+var m = new IntersectionObserver(es => log('margin', es.map(show).join(', ')), { rootMargin: '200px' });
+m.observe(document.getElementById('near'));
+setTimeout(() => { document.getElementById('hid').style.display = 'block'; }, 200);
+var box = document.getElementById('in');
+var ro = new ResizeObserver(es => log('resize', es.map(e => e.target.id + ' ' + e.contentRect.width + 'x' + e.contentRect.height).join(', ')));
+ro.observe(box);
+setTimeout(() => { box.style.width = '300px'; }, 300);
+setTimeout(() => { box.style.color = 'red'; }, 400);
+// the polyfill's test: entries' fields are on their prototype
+log('entry', 'intersectionRatio' in IntersectionObserverEntry.prototype, 'isIntersecting' in IntersectionObserverEntry.prototype, 'contentRect' in ResizeObserverEntry.prototype);
+setTimeout(() => { io.disconnect(); m.disconnect(); ro.disconnect(); log('done'); }, 600);
+</script>

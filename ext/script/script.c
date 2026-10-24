@@ -882,6 +882,17 @@ static JSValue n_html_all(JSContext *js, JSValueConst this, int argc,
 	return f;
 }
 
+/* gen(): bumped by every change of the page */
+static JSValue n_gen(JSContext *js, JSValueConst this, int argc,
+	JSValueConst *argv)
+{
+	(void)this;
+	(void)argc;
+	(void)argv;
+	return JS_NewFloat64(js, (double)soie_document_generation(
+		ctx_of(js)->doc));
+}
+
 /* hit(x, y): the element at viewport point x, y, laid out first */
 static JSValue n_hit(JSContext *js, JSValueConst this, int argc,
 	JSValueConst *argv)
@@ -1405,6 +1416,7 @@ static const JSCFunctionListEntry natives[] = {
 	JS_CFUNC_DEF("hit", 2, n_hit),
 	JS_CFUNC_DEF("focus", 1, n_focus),
 	JS_CFUNC_DEF("htmlAll", 0, n_html_all),
+	JS_CFUNC_DEF("gen", 0, n_gen),
 	JS_CFUNC_DEF("children", 2, n_children),
 	JS_CFUNC_DEF("data", 1, n_data),
 	JS_CFUNC_DEF("text", 1, n_text),
