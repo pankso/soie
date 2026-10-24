@@ -80,6 +80,10 @@ struct box {
 	int nfrags, capfrags;
 	float baseline;		/* first baseline, for inline-blocks */
 	float last_baseline;
+	/* content_sizes(), computed once in a layout: flex and grid ask
+	 * again at each level */
+	float cmin, cmax;
+	unsigned char sized;
 };
 
 struct layout {

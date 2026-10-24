@@ -252,6 +252,21 @@ reversed, edit the entry and say why; do not leave stale rules here.
   in 375 changes.
 - Layout is still redone whole after any change (the box tree is
   rebuilt): 0.02 to 0.03 s on those pages, not worth more yet.
+- Incremental layout, step 1 (October 2026, measured on YouTube: 540
+  layouts forced by scripts in 90 s, 40 s of layout, 220000 text
+  widths asked per layout): an element's intrinsic sizes
+  (content_sizes(), min- and max-content) are computed once per
+  layout, where nested flex and grid asked again at each level
+  (Wikipedia's Cat page: 9.7 s to 0.25 s, its navboxes nest tables);
+  the cache of text widths stays from one layout to the next, cleared
+  with the rules it is keyed by (styledb_free()) and when fonts change.
+  Same layouts on a corpus (Wikipedia, GitHub, Bootstrap, Le Monde,
+  two YouTube DOMs, 1280 and 700 px wide) but one known bug: the
+  static position of an absolute box in a table cell comes from the
+  last of the table's trial layouts (width 0, then 1e7), not from the
+  real one; Wikipedia's rotated navbox labels were wrong before and
+  are wrong elsewhere after. Next steps: keep the box tree and lay out
+  again only what a change reaches.
 - `soie_document_update()` redoes cascade and layout with the last
   options and viewport (the library keeps a copy) when the document's
   change counter moved: the host calls it after scripts ran, and the

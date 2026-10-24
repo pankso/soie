@@ -862,8 +862,9 @@ int soie_layout_document(soie_node *doc, int width, int height)
 	memset(l, 0, sizeof(*l));
 	l->width = width > 0 ? (float)width : 1024;
 	l->height = height > 0 ? (float)height : 768;
+	/* the text widths stay: their styles live as long as the rules
+	 * (styledb_free() clears them), the fonts too (fonts_drop_*) */
 	font_doc = doc;
-	font_cache_clear();
 	l->root = build_boxes(doc);
 	if (l->root)
 		layout_root(l);

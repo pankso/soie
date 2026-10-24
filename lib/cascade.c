@@ -267,6 +267,10 @@ void styledb_free(struct styledb *db)
 {
 	int i, j;
 
+	/* text widths and font chains are cached by style and family:
+	 * these go with the rules */
+	font_cache_clear();
+
 	for (i = 0; i < db->nmqs; i++)
 		cvlist_free(&db->mqs[i].q);
 	free(db->mqs);

@@ -257,6 +257,11 @@ void content_sizes(struct box *b, float *mn, float *mx)
 	struct box *c;
 
 	edges(b, 0);
+	if (b->sized) {
+		*mn = b->cmin;
+		*mx = b->cmax;
+		return;
+	}
 	if (b->type == B_REPLACED) {
 		w = spec_width(b, P_WIDTH, -1);
 		*mn = *mx = w >= 0 ? w : b->iw > 0 ? b->iw : 0;
@@ -296,6 +301,9 @@ void content_sizes(struct box *b, float *mn, float *mx)
 	}
 	*mn = clamp_w(b, *mn, -1);
 	*mx = clamp_w(b, *mx, -1);
+	b->cmin = *mn;
+	b->cmax = *mx;
+	b->sized = 1;
 }
 
 /* Margin box intrinsic widths (percentages count as zero). */
