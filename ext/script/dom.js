@@ -2440,8 +2440,8 @@ class SourceBuffer extends EventTarget {
 				'QuotaExceededError');
 		this.updating = true;
 		this._done(r === -1);
-		addTimer(() => dispatch(ms._el, new Event('progress')), 0, [],
-			false);
+		const el = ms._el;
+		addTimer(() => dispatch(el, new Event('progress')), 0, [], false);
 	}
 	remove(start, end) {
 		this._check();

@@ -1467,6 +1467,7 @@ static AVInputFormat *source_format(const char *type)
 {
 	char codecs[256], num[32], *c, *next;
 	int video = !strncasecmp(type, "video/", 6);
+	double w, h;
 	AVInputFormat *f;
 
 	if (!strncasecmp(type, "video/mp4", 9) ||
@@ -1486,10 +1487,12 @@ static AVInputFormat *source_format(const char *type)
 			if (!codec_ok(c, video))
 				return NULL;
 		}
-	if (type_param(type, "width", num, sizeof(num)) &&
-	    type_param(type, "height", num + 16, 16) &&
-	    atof(num) * atof(num + 16) > MAX_PIXELS)
-		return NULL;	/* decoded to be scaled down: wasted */
+	/* decoded to be scaled down: wasted (a side of 1280 at most, and
+	 * the pixels of 1280x720, portrait videos too) */
+	w = type_param(type, "width", num, sizeof(num)) ? atof(num) : 0;
+	h = type_param(type, "height", num, sizeof(num)) ? atof(num) : 0;
+	if (w > 1280 || h > 1280 || w * h > MAX_PIXELS)
+		return NULL;
 	if (type_param(type, "framerate", num, sizeof(num)) &&
 	    atof(num) > 31)
 		return NULL;
