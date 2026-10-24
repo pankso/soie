@@ -835,6 +835,19 @@ struct cnode {
 
 static int calc_sum(struct cur *c, struct cnode *out);
 
+/* calc() parsers: on failure out owns nothing (out->tree is NULL), so
+ * that a caller freeing it after does not free it twice */
+static int sum_to_end(struct cur *c, struct cnode *out)
+{
+	if (!calc_sum(c, out))
+		return 0;
+	if (cur_end(c))
+		return 1;
+	calc_free(out->tree);
+	out->tree = NULL;
+	return 0;
+}
+
 static int calc_math_fn(const struct cv *f, struct cnode *out)
 {
 	struct cur c;
@@ -847,7 +860,7 @@ static int calc_math_fn(const struct cv *f, struct cnode *out)
 	if (op < 0) {
 		if (!cv_func(f, "calc") && !cv_func(f, "-webkit-calc"))
 			return 0;
-		return calc_sum(&c, out) && cur_end(&c);
+		return sum_to_end(&c, out);
 	}
 	for (;;) {
 		const struct cv *v;
@@ -945,7 +958,7 @@ static int calc_value(struct cur *c, struct cnode *out)
 			struct cur in;
 
 			cur_init(&in, &v->kids);
-			return calc_sum(&in, out) && cur_end(&in);
+			return sum_to_end(&in, out);
 		}
 		return 0;
 	case CT_FUNCTION:
@@ -1008,6 +1021,7 @@ static int calc_product(struct cur *c, struct cnode *out)
 	return 1;
 fail:
 	calc_free(out->tree);
+	out->tree = NULL;
 	return 0;
 }
 
@@ -1041,6 +1055,7 @@ static int calc_sum(struct cur *c, struct cnode *out)
 	return 1;
 fail:
 	calc_free(out->tree);
+	out->tree = NULL;
 	return 0;
 }
 

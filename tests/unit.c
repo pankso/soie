@@ -337,6 +337,24 @@ static void test_resize(void)
 	soie_node_free(doc);
 }
 
+/* Invalid calc()s with a tree inside (min() of a percentage cannot
+ * fold): parsing them failed freeing the tree twice (YouTube's CSS). */
+static void test_bad_calc(void)
+{
+	static const char html[] = "<!DOCTYPE html><style>p{"
+		"width:calc(min(1px, 2%) + );"
+		"width:calc(min(1px, 2%) +3px);"
+		"width:calc(max(1px, 2%) 4px);"
+		"width:calc((min(1px, 2%)) 4px);"
+		"width:calc(min(1px, 2%) * min(3%, 4px));"
+		"width:clamp(1px, calc(min(1px, 2%) + ), 3px);"
+		"height:calc(min(10px, 20%))}</style><p id=p>t";
+	soie_node *doc = soie_html_parse(html, sizeof(html) - 1, NULL);
+
+	CHECK(soie_style_document(doc, NULL) == 0);
+	soie_node_free(doc);
+}
+
 /* What script engines use: queries, serialization, clones, updates. */
 static void test_script_api(void)
 {
@@ -432,6 +450,7 @@ int main(void)
 	test_url();
 	test_style_api();
 	test_resize();
+	test_bad_calc();
 	test_script_api();
 	test_deep();
 	printf("unit: %s (%d failures)\n", failures ? "FAIL" : "ok", failures);
