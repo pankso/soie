@@ -161,7 +161,9 @@ struct styledb {
 	/* What the rules were built from, to reuse them on a restyle */
 	unsigned sig;
 	int sel_flags;		/* SF_*: what changes can reach */
-	int incomplete;		/* a sheet or font comes later */
+	int incomplete;		/* a sheet or font comes later: */
+	char **pending;		/* their URLs, asked again at a restyle */
+	int npending;
 	struct sellist **anchors;	/* selectors with a deep :has() */
 	int nanchors, capanchors;
 	float rem;		/* the root's font size */
@@ -296,6 +298,9 @@ void styledb_free(struct styledb *db)
 			free(v);
 		}
 	}
+	for (i = 0; i < db->npending; i++)
+		free(db->pending[i]);
+	free(db->pending);
 	free((char *)db->saved.base_url);
 	free((char *)db->saved.user_css);
 	free(db->anchors);
@@ -665,6 +670,35 @@ static void decode_css(struct styledb *db, const char *s, size_t len,
 	charset_decode(cs, (const unsigned char *)s + bom, len - bom, out);
 }
 
+/* url comes later: the rules are built again when it is there */
+static void pending_add(struct styledb *db, const char *url)
+{
+	db->incomplete = 1;
+	db->pending = xrealloc(db->pending, (size_t)(db->npending + 1) *
+		sizeof(*db->pending));
+	db->pending[db->npending++] = xstrndup(url, strlen(url));
+}
+
+/* Has a sheet or font that was on its way come (or failed)? */
+static int pending_changed(const struct styledb *db,
+	const soie_style_options *o)
+{
+	char *buf;
+	size_t len;
+	int i, r;
+
+	for (i = 0; i < db->npending; i++) {
+		if (!o || !o->fetch)
+			return 1;
+		buf = NULL;
+		r = o->fetch(o->fetch_data, db->pending[i], &buf, &len);
+		free(buf);
+		if (r != SOIE_FETCH_LATER)
+			return 1;
+	}
+	return 0;
+}
+
 static void fetch_sheet(struct styledb *db, const char *url,
 	const struct pctx *pc)
 {
@@ -679,7 +713,7 @@ static void fetch_sheet(struct styledb *db, const char *url,
 		return;
 	r = o->fetch(o->fetch_data, url, &buf, &len);
 	if (r == SOIE_FETCH_LATER)
-		db->incomplete = 1;
+		pending_add(db, url);
 	if (r || !buf)
 		return;
 	decode_css(db, buf, len, &text);
@@ -2156,7 +2190,7 @@ static void load_font_face(struct styledb *db, const void *doc,
 			continue;
 		r = db->opts->fetch(db->opts->fetch_data, url, &buf, &len);
 		if (r == SOIE_FETCH_LATER)
-			db->incomplete = 1;
+			pending_add(db, url);
 		if (r || !buf)
 			continue;
 		if (font_add_memory(doc, fam.s, (unsigned char *)buf, len,
@@ -2555,7 +2589,8 @@ int soie_style_document(soie_node *doc, const soie_style_options *opts)
 	}
 	sig = sheet_signature(doc, opts);
 	db = doc->u.doc.styles;
-	if (db && db->sig == sig && env_of(db, opts, &env)) {
+	if (db && db->sig == sig && env_of(db, opts, &env) &&
+	    !(db->incomplete && pending_changed(db, opts))) {
 		/* same rules: only the cascade again, all of it when the
 		 * viewport (its units) changed */
 		resized = env.width != db->env.width ||
@@ -2639,8 +2674,6 @@ cascade:
 	}
 	clear_marks(doc);
 	save_options(db, opts);
-	if (db->incomplete)
-		db->sig = 0;	/* rebuild next time: a sheet or font came */
 	doc->u.doc.styled_gen = doc->u.doc.gen;
 	db->opts = NULL;
 	db->base = NULL;
