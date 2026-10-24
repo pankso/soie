@@ -539,6 +539,16 @@ static void zadd(struct box *b)
 	nz++;
 }
 
+/* A positioned box with a z-index, fixed, or translucent, is a
+ * stacking context: its positioned descendants are ordered within it,
+ * then it takes its place among its own siblings. */
+static int stacking_context(const struct box *b)
+{
+	return positioned(b) && (!b->style->v[P_Z_INDEX].kw ||
+		kw(b->style, P_POSITION, "fixed") ||
+		b->style->v[P_OPACITY].u.num < 1);
+}
+
 static int zcmp(const void *a, const void *b)
 {
 	const struct zent *x = a, *y = b;
@@ -621,6 +631,44 @@ static void paint_box(struct canvas *c, struct box *b, int stacking)
 	c->alpha = save_alpha;
 }
 
+static void paint_layer(struct canvas *c, struct box *b);
+
+/* The deferred layers of the current context, by z-index then tree
+ * order; z < 0 is not drawn under the flow yet */
+static void paint_layers(struct canvas *c)
+{
+	int i;
+
+	for (i = 0; i < nz; i++) {
+		qsort(zlist + i, (size_t)(nz - i), sizeof(*zlist), zcmp);
+		paint_layer(c, zlist[i].box);
+	}
+}
+
+/* A layer: a stacking context paints its own layers, under its
+ * opacity; another one leaves them to the context it is in */
+static void paint_layer(struct canvas *c, struct box *b)
+{
+	struct zent *outer = zlist;
+	int onz = nz, ocap = capz;
+	float alpha = c->alpha;
+
+	if (!stacking_context(b)) {
+		paint_box(c, b, 1);
+		return;
+	}
+	zlist = NULL;
+	nz = capz = 0;
+	paint_box(c, b, 1);
+	c->alpha *= (float)b->style->v[P_OPACITY].u.num;
+	paint_layers(c);
+	c->alpha = alpha;
+	free(zlist);
+	zlist = outer;
+	nz = onz;
+	capz = ocap;
+}
+
 /* The canvas background: the root's, or the body's (CSS 2 14.2). */
 static void canvas_background(struct canvas *c, struct box *root)
 {
@@ -648,7 +696,6 @@ int soie_paint(soie_node *doc, unsigned char *rgba, int width, int height,
 {
 	struct canvas c;
 	struct box *root;
-	int i;
 
 	if (doc->type != SOIE_DOCUMENT || !doc->u.doc.layout)
 		return -1;
@@ -672,12 +719,7 @@ int soie_paint(soie_node *doc, unsigned char *rgba, int width, int height,
 	canvas_background(&c, root);
 	nz = 0;
 	paint_box(&c, root, 1);
-	/* stacking order: z-index, then tree order; z < 0 is not drawn
-	 * under the flow yet */
-	for (i = 0; i < nz; i++) {
-		qsort(zlist + i, (size_t)(nz - i), sizeof(*zlist), zcmp);
-		paint_box(&c, zlist[i].box, 1);
-	}
+	paint_layers(&c);
 	free(zlist);
 	zlist = NULL;
 	nz = capz = 0;

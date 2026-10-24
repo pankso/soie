@@ -900,26 +900,44 @@ static int inside(float x, float y, float bx, float by, float bw, float bh)
 	return x >= bx && y >= by && x < bx + bw && y < by + bh;
 }
 
+/*
+ * Hit testing follows painting (paint.c): every positioned box is a
+ * layer of its own, over the flow, by z-index then tree order; within
+ * a layer, floats over blocks, the text and atomics of the lines.
+ */
+static int positioned(const struct box *b)
+{
+	return b->style && !kw(b->style, P_POSITION, "static");
+}
+
+/* visibility: hidden and pointer-events: none are not hit, their
+ * descendants may be (both inherit, a child can set them back) */
+static int hittable(const struct style *st)
+{
+	return !st || (kw(st, P_VISIBILITY, "visible") &&
+		!kw(st, P_POINTER_EVENTS, "none"));
+}
+
 static soie_node *hit(struct box *b, float x, float y);
 
-/* Floats and positioned boxes inside the inline boxes of b: the last
- * one under x, y */
+/* Floats inside the inline boxes of b: the last one under x, y */
 static soie_node *hit_in_inline(struct box *b, float x, float y)
 {
 	struct box *c;
 	soie_node *r, *top = NULL;
 
 	for (c = b->first; c; c = c->next)
-		if (c->type == B_INLINE) {
+		if (c->type == B_INLINE && !positioned(c)) {
 			if ((r = hit_in_inline(c, x, y)))
 				top = r;
-		} else if ((c->flags & (BF_FLOAT | BF_ABS)) &&
+		} else if ((c->flags & BF_FLOAT) && !positioned(c) &&
 			   b->type == B_INLINE && (r = hit(c, x, y))) {
 			top = r;
 		}
 	return top;
 }
 
+/* b's layer: b and its descendants, but the positioned ones */
 static soie_node *hit(struct box *b, float x, float y)
 {
 	struct box *c, *kids[4096];
@@ -928,9 +946,9 @@ static soie_node *hit(struct box *b, float x, float y)
 
 	for (c = b->first; c && n < 4096; c = c->next)
 		kids[n++] = c;
-	/* floats and positioned children are over the rest */
+	/* floats are over the rest */
 	for (i = n - 1; i >= 0; i--)
-		if ((kids[i]->flags & (BF_FLOAT | BF_ABS)) &&
+		if ((kids[i]->flags & BF_FLOAT) && !positioned(kids[i]) &&
 		    (r = hit(kids[i], x, y)))
 			return r;
 	if (b->flags & BF_INLINE_KIDS) {
@@ -940,9 +958,10 @@ static soie_node *hit(struct box *b, float x, float y)
 			struct frag *f = &b->frags[i];
 
 			if (f->kind == F_ATOMIC) {
-				if ((r = hit(f->box, x, y)))
+				if (!positioned(f->box) && (r = hit(f->box, x, y)))
 					return r;
-			} else if (inside(x, y, f->x, f->y, f->w, f->h)) {
+			} else if (inside(x, y, f->x, f->y, f->w, f->h) &&
+				   hittable(f->box->style)) {
 				return node_of(f->kind == F_TEXT ?
 					f->box->parent : f->box);
 			}
@@ -950,10 +969,10 @@ static soie_node *hit(struct box *b, float x, float y)
 	} else {
 		for (i = n - 1; i >= 0; i--)
 			if (!(kids[i]->flags & (BF_FLOAT | BF_ABS)) &&
-			    (r = hit(kids[i], x, y)))
+			    !positioned(kids[i]) && (r = hit(kids[i], x, y)))
 				return r;
 	}
-	if (b->type != B_INLINE && b->node &&
+	if (b->type != B_INLINE && b->node && hittable(b->style) &&
 	    inside(x, y, b->x - b->p[3] - b->b[3], b->y - b->p[0] - b->b[0],
 		   b->w + b->p[1] + b->p[3] + b->b[1] + b->b[3],
 		   b->h + b->p[0] + b->p[2] + b->b[0] + b->b[2]))
@@ -961,12 +980,83 @@ static soie_node *hit(struct box *b, float x, float y)
 	return NULL;
 }
 
+/* As paint.c: a positioned box with a z-index, fixed, or translucent */
+static int stacking_context(const struct box *b)
+{
+	return positioned(b) && (!b->style->v[P_Z_INDEX].kw ||
+		kw(b->style, P_POSITION, "fixed") ||
+		b->style->v[P_OPACITY].u.num < 1);
+}
+
+struct layer {
+	struct box *box;
+	int z, order;
+};
+
+/* The positioned boxes of the context b is the root of: not those in
+ * the contexts they make */
+static void layers(struct box *b, struct layer **v, int *n, int *cap)
+{
+	struct box *c;
+
+	for (c = b->first; c; c = c->next) {
+		if (positioned(c)) {
+			if (*n == *cap) {
+				*cap = *cap ? *cap * 2 : 32;
+				*v = xrealloc(*v, (size_t)*cap * sizeof(**v));
+			}
+			(*v)[*n].box = c;
+			(*v)[*n].z = c->style->v[P_Z_INDEX].kw ? 0 :
+				(int)c->style->v[P_Z_INDEX].u.num;
+			(*v)[*n].order = *n;
+			(*n)++;
+			if (stacking_context(c))
+				continue;
+		}
+		layers(c, v, n, cap);
+	}
+}
+
+/* the top layer first: higher z-index, then later in the tree */
+static int layer_cmp(const void *a, const void *b)
+{
+	const struct layer *x = a, *y = b;
+
+	if (x->z != y->z)
+		return x->z > y->z ? -1 : 1;
+	return y->order - x->order;
+}
+
+/* A stacking context: its layers over its flow, but those with a
+ * negative z-index, under it (CSS 2 Appendix E) */
+static soie_node *hit_context(struct box *root, float x, float y)
+{
+	struct layer *v = NULL;
+	int n = 0, cap = 0, i;
+	soie_node *r = NULL;
+
+	layers(root, &v, &n, &cap);
+	qsort(v, (size_t)n, sizeof(*v), layer_cmp);
+	for (i = 0; i < n && !r && v[i].z >= 0; i++)
+		r = stacking_context(v[i].box) ? hit_context(v[i].box, x, y) :
+			hit(v[i].box, x, y);
+	if (!r)
+		r = hit(root, x, y);
+	for (; i < n && !r; i++)
+		r = stacking_context(v[i].box) ? hit_context(v[i].box, x, y) :
+			hit(v[i].box, x, y);
+	free(v);
+	return r;
+}
+
 soie_node *soie_hit_test(soie_node *doc, float x, float y)
 {
+	struct box *root;
+
 	if (doc->type != SOIE_DOCUMENT || !doc->u.doc.layout ||
-	    !doc->u.doc.layout->root)
+	    !(root = doc->u.doc.layout->root))
 		return NULL;
-	return hit(doc->u.doc.layout->root, x, y);
+	return hit_context(root, x, y);
 }
 
 static struct box *find_box(struct box *b, const soie_node *el)

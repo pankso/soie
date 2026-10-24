@@ -50,7 +50,9 @@ PROP(BORDER_SPACING, "border-spacing", 1, K_LEN, L_NONNEG | L_NOPCT, "",
 	"0")
 PROP(CAPTION_SIDE, "caption-side", 1, K_KW, 0, "top|bottom", "top")
 PROP(EMPTY_CELLS, "empty-cells", 1, K_KW, 0, "show|hide", "show")
-PROP(POINTER_EVENTS, "pointer-events", 1, K_RAW, 0, "", "auto")
+PROP(POINTER_EVENTS, "pointer-events", 1, K_KW, 0,
+	"auto|none|visiblepainted|visiblefill|visiblestroke|visible|painted|"
+	"fill|stroke|all|bounding-box", "auto")
 PROP(TEXT_UNDERLINE_OFFSET, "text-underline-offset", 1, K_LEN, 0, "auto",
 	"auto")
 

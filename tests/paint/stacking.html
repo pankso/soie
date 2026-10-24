@@ -13,3 +13,10 @@
  background:rgba(0,0,0,.5);z-index:11"></div>
 <div style="position:fixed;top:120px;left:100px;width:60px;height:60px;
  background:lime;z-index:13"></div>
+<!-- a stacking context: the relative box stays in its z-index 5 header,
+     over the z-index 4 veil -->
+<div style="position:fixed;top:210px;left:220px;width:100px;height:30px;
+ z-index:5"><div style="position:relative;width:40px;height:20px;
+ background:navy"></div></div>
+<div style="position:fixed;top:200px;left:210px;width:110px;height:40px;
+ background:rgba(255,255,0,.6);z-index:4"></div>
