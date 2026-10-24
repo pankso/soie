@@ -432,6 +432,7 @@ int soie_media_tick_rect(soie_node *doc, int *repaint, float *rect)
 		if ((st.width != p->last.width || st.height != p->last.height) &&
 		    !strcmp(p->el->name, "video")) {
 			doc->u.doc.gen++;	/* a new intrinsic size */
+			layout_touch(p->el);
 			full = 1;
 		}
 		if (st.duration != p->last.duration && st.duration > 0) {

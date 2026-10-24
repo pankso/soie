@@ -101,12 +101,53 @@ static struct {
 	struct layout *l;
 	struct box **abs;
 	int nabs, cap;
+	unsigned pass;		/* this layout_root(), for abs_pass */
+	int trial;		/* in a table's trial layouts (sizes) */
+	/* the static positions those met, as they were before */
+	struct saved {
+		struct box *b;
+		float sx, sy;
+	} *saved;
+	int nsaved, capsaved;
+	/* every abs_add(), twice when laid out twice: what a box held */
+	struct box **log;
+	int nlog, caplog;
 } g;
 
+static void abs_add(struct box *b);
+
+/* An absolute box's static position, the last one when its flow is
+ * laid out more than once (measures): it is laid out once, after */
 void abs_static(struct box *b, float x, float y)
 {
-	b->x = x;
-	b->y = y;
+	if (g.trial) {
+		/* a table measured: its real layout is another time, the
+		 * static position comes back after */
+		if (g.nsaved == g.capsaved) {
+			g.capsaved = g.capsaved ? g.capsaved * 2 : 16;
+			g.saved = xrealloc(g.saved, (size_t)g.capsaved *
+				sizeof(*g.saved));
+		}
+		g.saved[g.nsaved].b = b;
+		g.saved[g.nsaved].sx = b->sx;
+		g.saved[g.nsaved++].sy = b->sy;
+		return;
+	}
+	b->x = b->sx = x;
+	b->y = b->sy = y;
+	abs_add(b);
+}
+
+static void abs_add(struct box *b)
+{
+	if (g.nlog == g.caplog) {
+		g.caplog = g.caplog ? g.caplog * 2 : 16;
+		g.log = xrealloc(g.log, (size_t)g.caplog * sizeof(*g.log));
+	}
+	g.log[g.nlog++] = b;
+	if (b->abs_pass == g.pass)
+		return;
+	b->abs_pass = g.pass;
 	if (g.nabs == g.cap) {
 		g.cap = g.cap ? g.cap * 2 : 16;
 		g.abs = xrealloc(g.abs, (size_t)g.cap * sizeof(*g.abs));
@@ -114,13 +155,21 @@ void abs_static(struct box *b, float x, float y)
 	g.abs[g.nabs++] = b;
 }
 
-void translate(struct box *b, float dx, float dy)
+static void move(struct box *b, float dx, float dy, int root)
 {
 	struct box *c;
 	int i;
 
 	b->x += dx;
 	b->y += dy;
+	b->lx += dx;
+	b->ly += dy;
+	if (!root) {
+		/* a static position is in the parent's flow: the box
+		 * placed itself does not move it, its ancestors do */
+		b->sx += dx;
+		b->sy += dy;
+	}
 	for (i = 0; i < b->nlines; i++) {
 		b->lines[i].x += dx;
 		b->lines[i].y += dy;
@@ -134,7 +183,17 @@ void translate(struct box *b, float dx, float dy)
 	b->baseline += dy;
 	b->last_baseline += dy;
 	for (c = b->first; c; c = c->next)
-		translate(c, dx, dy);
+		move(c, dx, dy, 0);
+}
+
+void translate(struct box *b, float dx, float dy)
+{
+	move(b, dx, dy, 1);
+}
+
+void translate_flow(struct box *b, float dx, float dy)
+{
+	move(b, dx, dy, 0);
 }
 
 /* Margins, borders and paddings: percentages refer to the width. */
@@ -274,10 +333,27 @@ void content_sizes(struct box *b, float *mn, float *mx)
 	}
 	*mn = *mx = 0;
 	if (b->role == R_TABLE) {
+		int mark = g.nsaved;
+
+		g.trial++;
 		layout_table(b, 0);
 		*mn = b->w;
 		layout_table(b, 1e7f);
 		*mx = b->w;
+		g.trial--;
+		while (g.nsaved > mark) {
+			struct saved *v = &g.saved[--g.nsaved];
+
+			v->b->sx = v->sx;
+			v->b->sy = v->sy;
+		}
+		/* its geometry is the trials' now: whatever holds it is
+		 * laid out again, not moved */
+		for (c = b; c; c = c->parent)
+			c->lok = 0;
+		b->cmin = *mn;
+		b->cmax = *mx;
+		b->sized = 1;
 		return;
 	}
 	if (is_flexgrid(b)) {
@@ -847,6 +923,7 @@ static void layout_alone(struct box *b, float x, float y, float w,
 	struct bfc own;
 	struct strut s = { 0, 0 };
 	float h, hspec;
+	int first;
 
 	if (b->type == B_REPLACED) {
 		b->x = x;
@@ -858,18 +935,54 @@ static void layout_alone(struct box *b, float x, float y, float w,
 		translate(b, x, y);
 		return;
 	}
+	if (b->lok && b->lw == w && b->lcbh == cbh && !g.trial) {
+		/* laid out the same way before (incremental layout): its
+		 * subtree is where lx, ly say (abs_static() set x, y) */
+		int i;
+
+		translate(b, x - b->lx, y - b->ly);
+		b->x = x;
+		b->y = y;
+		b->w = w;	/* flex and grid may have set them since */
+		b->h = b->lh;
+		for (i = 0; i < b->nabsv; i++)
+			abs_add(b->absv[i]);
+		return;
+	}
 	b->x = x;
 	b->y = y;
 	b->w = w;
 	hspec = spec_height(b, P_HEIGHT, cbh);
 	memset(&own, 0, sizeof(own));
+	first = g.nlog;
 	h = layout_contents(b, &own, y, &s, 0, hspec);
+	/* the absolute boxes it holds, for the times it only moves */
+	free(b->absv);
+	b->absv = NULL;
+	b->nabsv = 0;
+	if (g.nlog > first) {
+		int i, k;
+
+		b->absv = xmalloc((size_t)(g.nlog - first) * sizeof(*b->absv));
+		for (i = first; i < g.nlog; i++) {
+			for (k = 0; k < b->nabsv && b->absv[k] != g.log[i]; k++)
+				;
+			if (k == b->nabsv)
+				b->absv[b->nabsv++] = g.log[i];
+		}
+	}
 	if (!(b->flags & BF_INLINE_KIDS))
 		h += strut_val(&s);
 	if (own.n && bfc_bottom(&own) - y > h)
 		h = bfc_bottom(&own) - y;
 	free(own.v);
 	b->h = clamp_h(b, hspec >= 0 ? hspec : h, cbh);
+	b->lok = !g.trial;	/* without its absolute boxes */
+	b->lw = w;
+	b->lcbh = cbh;
+	b->lh = b->h;
+	b->lx = b->x;
+	b->ly = b->y;
 }
 
 /* A table cell or caption: a block formatting context of width w. */
@@ -956,7 +1069,7 @@ static void layout_abs(struct box *b)
 	const struct style *st = b->style;
 	struct box *cb;
 	float cx = 0, cy = 0, cw = g.l->width, ch = g.l->height;
-	float sx = b->x, sy = b->y, w, x, y, l, r, t, bt, e, h;
+	float sx = b->sx, sy = b->sy, w, x, y, l, r, t, bt, e, h;
 	int fixed = kw(st, P_POSITION, "fixed");
 
 	for (cb = b->parent; cb && !fixed; cb = cb->parent)
@@ -1030,6 +1143,7 @@ void layout_root(struct layout *l)
 
 	g.l = l;
 	g.nabs = 0;
+	g.pass++;
 	memset(&f, 0, sizeof(f));
 	bottom = layout_block(root, &f, 0, l->width, l->height, 0, &s);
 	bottom += strut_val(&s);
@@ -1049,5 +1163,11 @@ void layout_root(struct layout *l)
 	free(g.abs);
 	g.abs = NULL;
 	g.nabs = g.cap = 0;
+	free(g.log);
+	g.log = NULL;
+	g.nlog = g.caplog = 0;
+	free(g.saved);
+	g.saved = NULL;
+	g.nsaved = g.capsaved = 0;
 	l->doc_height = bottom;
 }

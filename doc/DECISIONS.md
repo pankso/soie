@@ -267,6 +267,46 @@ reversed, edit the entry and say why; do not leave stale rules here.
   real one; Wikipedia's rotated navbox labels were wrong before and
   are wrong elsewhere after. Next steps: keep the box tree and lay out
   again only what a change reaches.
+- Incremental layout, steps 2 and 3: boxes live from one layout to
+  the next. Each node has a stamp (lchg) moved by layout_touch() on
+  what changes the boxes it gives: an attribute, text, an insertion
+  or a removal (the parent), a new computed style (styles are
+  interned: another pointer is another style), a video's size; the
+  stamp goes up to the root and stops at an ancestor already stamped
+  since the last layout. Building the new tree, an element whose
+  subtree has no stamp since keeps its box with everything below,
+  moved out of the old tree, when that box makes no part of what is
+  around it: block-level or atomic (its content starts lines of its
+  own), not a table part, not a list item (numbers count the ones
+  before), with images and videos of the same sizes. New rules (a
+  sheet came) keep nothing: boxes point to their styles.
+- A box laid out alone (floats, inline-blocks, flex and grid items,
+  absolute boxes, table cells: layout_alone()) again with the same
+  width and containing block height only moves (translate()). The
+  absolute boxes it held are laid out again, against their containing
+  block as it is now (a flex item may be stretched after). Content
+  moved after its box was laid out (a cell's vertical-align) loses
+  the cache.
+- Old bugs this found, fixed: an absolute box was laid out once for
+  each layout of its ancestors, each time from the last place (it
+  drifted: -1 px a time on Bootstrap, Wikipedia's rotated navbox
+  labels), now once per layout from its static position, kept apart
+  (sx, sy, moved with its ancestors, not when it places itself); a
+  table's trial layouts (its intrinsic widths) wrote over its real
+  geometry and its absolute boxes' static positions: they are
+  measured once now, the positions put back, what holds the table
+  laid out again.
+- Checked by a differential test (outside the tree): 60 random
+  changes (classes, style, hidden, insertions, removals, text) on six
+  pages (Bootstrap, Wikipedia, Le Monde, GitHub, two YouTube DOMs),
+  four seeds each, every incremental layout compared with a fresh
+  layout of a copy: no difference over 0.25 px. Sub-pixel ones
+  remain: text placement depends on the absolute position by a few
+  hundredths, and a table's fresh layout puts a cell's content 0.17 px
+  from its padding. The updates take 0.1 to 3 s where fresh layouts
+  take 7 to 68 s. On YouTube, no script task over 2.5 s left (5 to
+  25 s before), no script interrupted: the video starts as soon as
+  the ad is skipped.
 - Styles on YouTube after that: 315 full restyles in 90 s (17 s), all
   from a deep :has() at the root, `:has(>[role=dialog]:not([aria-
   hidden=true]) .ytwChannelBlocksViewModelHost) [dialog]`, seeing every

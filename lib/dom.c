@@ -381,6 +381,7 @@ int soie_element_set_attr(soie_node *n, const char *name, const char *value)
 	if (n->type != SOIE_ELEMENT)
 		return -1;
 	a = element_find_attr(n, name);
+	layout_touch(n);
 	if (a) {
 		char *old = a->value;
 
@@ -410,6 +411,7 @@ int soie_element_remove_attr(soie_node *n, const char *name)
 	memmove(a, a + 1, (n->u.el.nattrs - i - 1) * sizeof(*a));
 	n->u.el.nattrs--;
 	n->doc->u.doc.gen++;
+	layout_touch(n);
 	style_changed_attr(n, CH_ATTR, aname, old);
 	free(aname);
 	free(old);
@@ -442,6 +444,7 @@ int soie_node_set_data(soie_node *n, const char *s, size_t len)
 	n->u.text.len = 0;
 	text_append(n, s, len);
 	n->doc->u.doc.gen++;
+	layout_touch(n);
 	if (n->type == SOIE_TEXT)
 		style_changed(n, CH_INSERT);	/* :empty */
 	return 0;
@@ -597,6 +600,7 @@ void node_detach(struct soie_node *n)
 	if (!p)
 		return;
 	style_changed(n, CH_REMOVE);
+	layout_touch(p);
 	if (n->prev)
 		n->prev->next = n->next;
 	else
@@ -626,6 +630,7 @@ void node_insert(struct soie_node *parent, struct soie_node *child,
 	else
 		parent->last = child;
 	parent->doc->u.doc.gen++;
+	layout_touch(parent);
 	style_changed(child, CH_INSERT);
 }
 

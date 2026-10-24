@@ -80,16 +80,33 @@ struct box {
 	int nfrags, capfrags;
 	float baseline;		/* first baseline, for inline-blocks */
 	float last_baseline;
-	/* content_sizes(), computed once in a layout: flex and grid ask
-	 * again at each level */
+	/* content_sizes(), computed once while the box lives: flex and
+	 * grid ask again at each level */
 	float cmin, cmax;
 	unsigned char sized;
+	/* Incremental layout: a box whose element did not change since
+	 * the last layout is kept, with its subtree (kept: from the old
+	 * tree, fixed up); laid out alone again with the same width and
+	 * containing block height (lw, lcbh, lok), it only moves. */
+	unsigned char kept, lok;
+	float lw, lcbh, lh;
+	float lx, ly;		/* where its content was, translate() too */
+	unsigned abs_pass;	/* in the absolute boxes of that layout */
+	float sx, sy;		/* an absolute box's static position */
+	/* the absolute boxes found laying it out: when it only moves,
+	 * they are laid out again (their containing block may have a new
+	 * height, flex stretches after) */
+	struct box **absv;
+	int nabsv;
 };
 
 struct layout {
 	struct box *root;
 	float width, height;	/* viewport */
 	float doc_height;	/* bottom of everything laid out */
+	unsigned long serial;	/* this tree, for soie_node box_tree */
+	unsigned long built;	/* the document's lstamp when built */
+	unsigned long rules;	/* style_serial() of its styles */
 };
 
 /* boxes.c */
@@ -103,6 +120,8 @@ int kw(const struct style *st, int prop, const char *name);
 struct bfc;
 void layout_root(struct layout *l);
 void translate(struct box *b, float dx, float dy);
+/* The same for a box moved with the flow it is in (static positions) */
+void translate_flow(struct box *b, float dx, float dy);
 void box_sizes(struct box *b, float *min, float *max);
 void layout_atomic(struct box *b, float cbw, float cbh);
 void place_float(struct box *b, struct bfc *f, float y, float x0, float x1,

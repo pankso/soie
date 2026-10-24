@@ -59,6 +59,9 @@ struct soie_node {
 	unsigned char started;	/* <script>: already started */
 	unsigned char dirty;	/* its subtree needs restyling */
 	unsigned short tag;
+	/* when it or its subtree last changed what its boxes would be
+	 * (layout_touch()); a layout built later keeps them */
+	unsigned long lchg;
 	struct soie_node *doc;
 	struct soie_node *parent, *first, *last, *prev, *next;
 	/* Every node of a document, attached or not, so that freeing the
@@ -73,6 +76,8 @@ struct soie_node {
 			struct soie_node *content;	/* <template> */
 			const struct style *style;	/* computed */
 			const struct style *before, *after;
+			struct box *box;	/* its box in layout box_tree */
+			unsigned long box_tree;
 		} el;
 		struct {
 			char *data;
@@ -99,6 +104,8 @@ struct soie_node {
 			struct script *script;	/* soie_script_start() */
 			struct media *media;	/* audio and video players */
 			int lay_w, lay_h;
+			/* layout_touch() stamps, and the last layout's */
+			unsigned long lstamp, lbuilt;
 		} doc;
 	} u;
 };
@@ -114,6 +121,10 @@ void text_append(struct soie_node *t, const char *s, size_t len);
 void node_insert(struct soie_node *parent, struct soie_node *child,
 	struct soie_node *ref);
 void node_detach(struct soie_node *n);
+/* n or something below it changed what boxes it gives (boxes.c) */
+void layout_touch(struct soie_node *n);
+/* Which style rules doc has: boxes of other rules are not kept */
+unsigned long style_serial(const struct soie_node *doc);
 
 static inline int is_html(const struct soie_node *n, int tag)
 {

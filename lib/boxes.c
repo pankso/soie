@@ -83,6 +83,7 @@ void box_free(struct box *b)
 	free(b->text);
 	free(b->lines);
 	free(b->frags);
+	free(b->absv);
 	free(b);
 }
 
@@ -380,6 +381,89 @@ static void set_flags(struct box *b)
 static void gen_children(struct box *parent, soie_node *el);
 
 /*
+ * Incremental layout: the previous tree, while the new one is built.
+ * An element whose subtree did not change since keeps its box with
+ * everything below, when that box makes no part of what is around:
+ * a block-level or atomic box (its content starts lines of its own),
+ * not a table part (fixed up with its siblings) nor a list item (its
+ * number counts the ones before).
+ */
+static struct layout *old_tree, *new_tree;
+
+void layout_touch(soie_node *n)
+{
+	soie_node *doc = n->doc;
+	unsigned long built = doc->u.doc.lbuilt, s = ++doc->u.doc.lstamp;
+
+	/* an ancestor changed since the last layout: so did its own */
+	for (; n && n->lchg <= built; n = n->parent)
+		n->lchg = s;
+}
+
+static void intrinsic(struct box *b, const soie_node *n);
+
+/* The images and videos below came with the same sizes */
+static int replaced_same(const struct box *b)
+{
+	const struct box *c;
+	struct box t;
+
+	if (b->type == B_REPLACED && b->node) {
+		t = *b;
+		intrinsic(&t, b->node);
+		if (t.iw != b->iw || t.ih != b->ih)
+			return 0;
+	}
+	for (c = b->first; c; c = c->next)
+		if (!replaced_same(c))
+			return 0;
+	return 1;
+}
+
+/* The boxes below belong to the new tree now */
+static void retag(struct box *b)
+{
+	struct box *c;
+
+	if (b->node && b->node->type == SOIE_ELEMENT &&
+	    b->node->u.el.box == b)
+		b->node->u.el.box_tree = new_tree->serial;
+	for (c = b->first; c; c = c->next)
+		retag(c);
+}
+
+static struct box *kept_box(soie_node *n)
+{
+	struct box *b = n->u.el.box, *p, *c, *prev = NULL;
+
+	if (!old_tree || n->u.el.box_tree != old_tree->serial || !b ||
+	    b->node != n || b->style != n->u.el.style ||
+	    n->lchg > old_tree->built)
+		return NULL;
+	if ((b->type != B_BLOCK && b->type != B_ATOMIC) || b->role ||
+	    (b->flags & BF_PSEUDO) || kw(b->style, P_DISPLAY, "list-item") ||
+	    !replaced_same(b))
+		return NULL;
+	/* out of the old tree */
+	if ((p = b->parent)) {
+		for (c = p->first; c && c != b; c = c->next)
+			prev = c;
+		if (!c)
+			return NULL;
+		if (prev)
+			prev->next = b->next;
+		else
+			p->first = b->next;
+		if (p->last == b)
+			p->last = prev;
+	}
+	b->parent = b->next = NULL;
+	b->kept = 1;
+	retag(b);
+	return b;
+}
+
+/*
  * Box tree depth limit: layout is recursive. Deeper elements give their
  * content to the box at the limit, like display: contents (Blink caps
  * the DOM at 512 levels for the same reason).
@@ -456,8 +540,14 @@ static void gen_node(struct box *parent, soie_node *n)
 		box_append(parent, box_new(B_BREAK, st, n));
 		return;
 	}
+	if ((b = kept_box(n))) {
+		box_append(parent, b);
+		return;
+	}
 	if (is_replaced(n)) {
 		b = box_new(B_REPLACED, st, n);
+		n->u.el.box = b;
+		n->u.el.box_tree = new_tree->serial;
 		if (box_type(st) == B_BLOCK)
 			b->flags |= BF_BLOCKLEVEL;
 		set_flags(b);
@@ -466,6 +556,8 @@ static void gen_node(struct box *parent, soie_node *n)
 		return;
 	}
 	b = box_new(box_type(st), st, n);
+	n->u.el.box = b;
+	n->u.el.box_tree = new_tree->serial;
 	set_flags(b);
 	if (kw(st, P_DISPLAY, "list-item") && (m = marker(n, st)))
 		box_append(b, m);
@@ -596,6 +688,8 @@ static void fixup_inside(struct styledb *db, struct box *b)
 
 	for (c = b->first; c; c = c->next) {
 		c->parent = b;
+		if (c->kept)
+			continue;	/* fixed up in the old tree */
 		if (c->type == B_BLOCK || c->type == B_ATOMIC)
 			fixup(db, c);
 		else if (c->type == B_INLINE)
@@ -852,20 +946,29 @@ void layout_free(struct layout *l)
 
 int soie_layout_document(soie_node *doc, int width, int height)
 {
-	struct layout *l;
+	static unsigned long serials;
+	struct layout *l, *old = doc->u.doc.layout;
 
 	if (doc->type != SOIE_DOCUMENT || !doc->u.doc.styles)
 		return -1;
-	if (doc->u.doc.layout)
-		layout_free(doc->u.doc.layout);
 	l = xmalloc(sizeof(*l));
 	memset(l, 0, sizeof(*l));
 	l->width = width > 0 ? (float)width : 1024;
 	l->height = height > 0 ? (float)height : 768;
+	l->serial = ++serials;
+	l->built = doc->u.doc.lstamp;
+	l->rules = style_serial(doc);
 	/* the text widths stay: their styles live as long as the rules
 	 * (styledb_free() clears them), the fonts too (fonts_drop_*) */
 	font_doc = doc;
+	old_tree = old && old->rules == l->rules ? old : NULL;
+	new_tree = l;
 	l->root = build_boxes(doc);
+	old_tree = new_tree = NULL;
+	if (old)
+		layout_free(old);	/* what was not kept */
+	doc->u.doc.layout = NULL;
+	doc->u.doc.lbuilt = l->built;
 	if (l->root)
 		layout_root(l);
 	doc->u.doc.layout = l;

@@ -427,8 +427,9 @@ static void valign(struct box *c, float room)
 		dy = room;
 	if (!dy)
 		return;
+	c->lok = 0;	/* its content moved, not the cell */
 	for (k = c->first; k; k = k->next)
-		translate(k, 0, dy);
+		translate_flow(k, 0, dy);
 	{
 		int i;
 

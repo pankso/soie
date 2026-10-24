@@ -160,6 +160,7 @@ struct styledb {
 	int quirks;
 	/* What the rules were built from, to reuse them on a restyle */
 	unsigned sig;
+	unsigned long serial;	/* which rules: boxes keep their styles */
 	int sel_flags;		/* SF_*: what changes can reach */
 	int incomplete;		/* a sheet or font comes later: */
 	char **pending;		/* their URLs, asked again at a restyle */
@@ -2450,9 +2451,14 @@ static void style_one(struct styledb *db, soie_node *n)
 {
 	const struct style *ps = n->parent && n->parent->type ==
 		SOIE_ELEMENT ? n->parent->u.el.style : NULL;
+	const struct style *st = n->u.el.style, *b = n->u.el.before,
+		*a = n->u.el.after;
 
 	n->u.el.before = n->u.el.after = NULL;
 	style_element(db, n, ps, db->rem);
+	/* styles are interned: the same pointer is the same style */
+	if (st != n->u.el.style || b != n->u.el.before || a != n->u.el.after)
+		layout_touch(n);
 	if (n->parent && n->parent->type == SOIE_DOCUMENT)
 		db->rem = n->u.el.style->v[P_FONT_SIZE].u.len.px;
 }
@@ -2604,6 +2610,13 @@ static void save_options(struct styledb *db, const soie_style_options *o)
 	db->saved.user_css = css;
 }
 
+static unsigned long serials;
+
+unsigned long style_serial(const soie_node *doc)
+{
+	return doc->u.doc.styles ? doc->u.doc.styles->serial : 0;
+}
+
 int soie_style_document(soie_node *doc, const soie_style_options *opts)
 {
 	struct styledb *db;
@@ -2616,11 +2629,6 @@ int soie_style_document(soie_node *doc, const soie_style_options *opts)
 
 	if (doc->type != SOIE_DOCUMENT)
 		return -1;
-	if (doc->u.doc.layout) {
-		/* boxes point to the old styles */
-		layout_free(doc->u.doc.layout);
-		doc->u.doc.layout = NULL;
-	}
 	sig = sheet_signature(doc, opts);
 	db = doc->u.doc.styles;
 	if (db && db->sig == sig && env_of(db, opts, &env) &&
@@ -2640,10 +2648,17 @@ int soie_style_document(soie_node *doc, const soie_style_options *opts)
 		reuse = 1;
 		goto cascade;
 	}
+	if (doc->u.doc.layout) {
+		/* boxes point to the old styles; with the same rules they
+		 * stay for the next layout to keep */
+		layout_free(doc->u.doc.layout);
+		doc->u.doc.layout = NULL;
+	}
 	if (db)
 		styledb_free(db);
 	db = xmalloc(sizeof(*db));
 	memset(db, 0, sizeof(*db));
+	db->serial = ++serials;
 	doc->u.doc.styles = db;
 	db->sig = sig;
 	db->opts = opts;
