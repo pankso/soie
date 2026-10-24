@@ -132,3 +132,17 @@ width=200
 |         replaced <img> 0,0 100x100
 |         inline <span> 0,88 100x16
 |         inline-block <span> 100,50 20x50
+
+#data
+<!DOCTYPE html><body style="margin:0"><div style="position:relative;width:200px;height:100px"><div style="position:absolute;top:50%;left:50%;width:40px;height:20px;transform:translate(-50%,-50%)"></div><div style="width:30px;height:10px;transform:translateX(10px) translateY(5px)"></div><div style="width:30px;height:10px;transform:matrix(1,0,0,1,7,3) scale(2)"></div><div style="width:30px;height:10px;position:relative;top:4px;transform:translate3d(2em,0,0)"></div></div>
+#errors
+#layout
+width=400
+#document
+| block <html> 0,0 400x100
+|   block <body> 0,0 400x100
+|     block <div> 0,0 200x100
+|       block abs <div> 80,40 40x20
+|       block <div> 10,5 30x10
+|       block <div> 7,13 30x10
+|       block <div> 32,24 30x10

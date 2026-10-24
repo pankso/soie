@@ -395,7 +395,122 @@ static float layout_contents(struct box *b, struct bfc *f, float y,
 static void layout_alone(struct box *b, float x, float y, float w,
 	float cbh);
 
+static void rel_position(const struct box *b, float cbw, float *dx,
+	float *dy);
+
+/* A length of a transform function: px, em, rem, % of ref */
+static float tr_len(const char **sp, const struct box *b, float ref)
+{
+	char *e;
+	float v = strtof(*sp, &e);
+
+	if (e == *sp)
+		return 0;
+	if (*e == '%') {
+		v = v * ref / 100;
+		e++;
+	} else if (!strncmp(e, "px", 2)) {
+		e += 2;
+	} else if (!strncmp(e, "rem", 3)) {
+		v *= 16;
+		e += 3;
+	} else if (!strncmp(e, "em", 2)) {
+		v *= b->style->v[P_FONT_SIZE].u.len.px;
+		e += 2;
+	}
+	*sp = e;
+	return v;
+}
+
+/* The numbers of a matrix() or matrix3d(), n at most */
+static int tr_numbers(const char *s, float *v, int n)
+{
+	int k = 0;
+	char *e;
+
+	while (k < n && *s && *s != ')') {
+		while (*s == ' ' || *s == ',')
+			s++;
+		v[k] = strtof(s, &e);
+		if (e == s)
+			break;
+		s = e;
+		k++;
+	}
+	return k;
+}
+
+/*
+ * The translation transform gives b: translate(), translateX(),
+ * translateY(), translate3d(), and the translation of matrix() and
+ * matrix3d(); percentages of the border box. Scales and rotations are
+ * left out: the box keeps its size, moves only.
+ */
+static void transform_offset(const struct box *b, float *dx, float *dy)
+{
+	const char *s = b->style ? b->style->v[P_TRANSFORM].u.str : NULL;
+	float bw = b->w + hedges(b), bh = b->h + vedges(b), m[16];
+
+	*dx = *dy = 0;
+	if (!s || !strcmp(s, "none"))
+		return;
+	while (*s) {
+		const char *name = s, *a;
+		size_t n;
+
+		while (*s && *s != '(')
+			s++;
+		if (!*s)
+			break;
+		while (name < s && (*name == ' ' || *name == ','))
+			name++;
+		n = (size_t)(s - name);
+		a = ++s;
+		while (*a == ' ')
+			a++;
+		if ((n == 9 && !strncmp(name, "translate", 9)) ||
+		    (n == 11 && !strncmp(name, "translate3d", 11))) {
+			*dx += tr_len(&a, b, bw);
+			while (*a == ' ' || *a == ',')
+				a++;
+			if (*a != ')')
+				*dy += tr_len(&a, b, bh);
+		} else if (n == 10 && !strncmp(name, "translateX", 10)) {
+			*dx += tr_len(&a, b, bw);
+		} else if (n == 10 && !strncmp(name, "translateY", 10)) {
+			*dy += tr_len(&a, b, bh);
+		} else if (n == 6 && !strncmp(name, "matrix", 6)) {
+			if (tr_numbers(a, m, 6) == 6) {
+				*dx += m[4];
+				*dy += m[5];
+			}
+		} else if (n == 8 && !strncmp(name, "matrix3d", 8)) {
+			if (tr_numbers(a, m, 16) == 16) {
+				*dx += m[12];
+				*dy += m[13];
+			}
+		}
+		while (*s && *s != ')')
+			s++;
+		if (*s)
+			s++;
+	}
+}
+
+/* Where position: relative and transform move b */
 void rel_offset(const struct box *b, float cbw, float *dx, float *dy)
+{
+	float tx, ty;
+
+	transform_offset(b, &tx, &ty);
+	rel_position(b, cbw, dx, dy);
+	*dx += tx;
+	*dy += ty;
+}
+
+/* position: relative and sticky offsets alone */
+static void rel_position(const struct box *b, float cbw, float *dx,
+	float *dy)
 {
 	const struct style *st = b->style;
 
@@ -888,6 +1003,13 @@ static void layout_abs(struct box *b)
 	if (t <= -1e29f && bt > -1e29f)
 		translate(b, 0, cy + ch - bt - b->m[2] - h + b->b[0] + b->p[0] -
 			b->y);
+	{
+		float tx, ty;
+
+		transform_offset(b, &tx, &ty);
+		if (tx || ty)
+			translate(b, tx, ty);
+	}
 }
 
 void layout_root(struct layout *l)
