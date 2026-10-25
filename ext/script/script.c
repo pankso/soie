@@ -52,6 +52,9 @@ struct sctx {
 	JSValue received;	/* api.received(id, response) */
 	struct job *done;	/* answered, for tick() */
 	int inflight, next_id;
+	/* the heap measured last (every 10 s), in 32 MB steps logged */
+	double heap_at;
+	int heap_step;
 };
 
 static JSClassID node_class;
@@ -1928,12 +1931,36 @@ static int event(void *ctx, soie_node *target, const soie_event *ev)
 	return prevented;
 }
 
+/* A warning when the heap crosses a 32 MB step, up or down: what the
+ * MEMORY_LIMIT is near, and the wrappers and documents it holds */
+static void heap_watch(struct sctx *c)
+{
+	JSMemoryUsage u;
+	char line[160];
+	int step;
+
+	if (now_ms() - c->heap_at < 10000)
+		return;
+	c->heap_at = now_ms();
+	JS_ComputeMemoryUsage(c->rt, &u);
+	step = (int)(u.malloc_size >> 25);
+	if (step == c->heap_step)
+		return;
+	c->heap_step = step;
+	snprintf(line, sizeof(line), "js heap %lld MB of %d: %lld objects, "
+		"%zu nodes wrapped, %zu documents made",
+		(long long)(u.malloc_size >> 20), MEMORY_LIMIT >> 20,
+		(long long)u.obj_count, c->nwrapped, c->ndocs);
+	message(c, SOIE_MSG_WARN, line);
+}
+
 static int tick(void *ctx)
 {
 	struct sctx *c = ctx;
 	JSValue v;
 	double d = -1, f = -1;
 
+	heap_watch(c);
 	c->deadline = now_ms() + RUN_MS;
 	deliver(c);
 	v = JS_Call(c->js, c->tick, JS_UNDEFINED, 0, NULL);

@@ -337,6 +337,43 @@ static void test_resize(void)
 	soie_node_free(doc);
 }
 
+/* A resize skips the cascade when no computed value has viewport
+ * units; units met later, by a restyle of what a script changed, count
+ * as well. */
+static void test_resize_late_vw(void)
+{
+	static const char html[] = "<!DOCTYPE html><style>"
+		"p{width:200px}.v{width:calc(10px + 10vw)}</style><p id=p>t";
+	soie_style_options o;
+	soie_node *doc, *p;
+	char *v;
+	size_t n;
+	soie_node **q;
+
+	doc = soie_html_parse(html, sizeof(html) - 1, NULL);
+	q = soie_query(doc, "#p", 1, &n);
+	p = q && n ? q[0] : NULL;
+	free(q);
+	CHECK(p != NULL);
+	if (!p)
+		return;
+	memset(&o, 0, sizeof(o));
+	o.width = 1000;
+	o.height = 600;
+	CHECK(soie_style_document(doc, &o) == 0);
+	soie_element_set_attr(p, "class", "v");
+	CHECK(soie_style_document(doc, &o) == 0);
+	v = soie_computed_value(p, NULL, "width");
+	CHECK(v && !strcmp(v, "110px"));
+	free(v);
+	o.width = 500;
+	CHECK(soie_style_document(doc, &o) == 0);
+	v = soie_computed_value(p, NULL, "width");
+	CHECK(v && !strcmp(v, "60px"));
+	free(v);
+	soie_node_free(doc);
+}
+
 /* Invalid calc()s with a tree inside (min() of a percentage cannot
  * fold): parsing them failed freeing the tree twice (YouTube's CSS). */
 static void test_bad_calc(void)
@@ -450,6 +487,7 @@ int main(void)
 	test_url();
 	test_style_api();
 	test_resize();
+	test_resize_late_vw();
 	test_bad_calc();
 	test_script_api();
 	test_deep();

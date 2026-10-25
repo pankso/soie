@@ -698,6 +698,7 @@ static void node_free_one(soie_node *n)
 		media_free(n);
 		if (n->u.doc.layout)
 			layout_free(n->u.doc.layout);
+		damage_free(n);
 		if (n->u.doc.styles)
 			styledb_free(n->u.doc.styles);
 		fonts_drop_document(n);

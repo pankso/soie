@@ -216,6 +216,8 @@ struct ucontext {
 	float em, rem, vw, vh;
 	float ex, ch;
 };
+/* Set when a length was resolved with viewport units (vw, vh...) */
+extern int vp_units_used;
 
 int parse_color(struct cur *c, struct color *out);
 void serialize_color(struct buf *b, const struct color *col);

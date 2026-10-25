@@ -961,6 +961,7 @@ int soie_layout_document(soie_node *doc, int width, int height)
 	/* the text widths stay: their styles live as long as the rules
 	 * (styledb_free() clears them), the fonts too (fonts_drop_*) */
 	font_doc = doc;
+	damage_before(doc);
 	old_tree = old && old->rules == l->rules ? old : NULL;
 	new_tree = l;
 	l->root = build_boxes(doc);
@@ -974,6 +975,7 @@ int soie_layout_document(soie_node *doc, int width, int height)
 	doc->u.doc.layout = l;
 	doc->u.doc.lay_w = (int)l->width;
 	doc->u.doc.lay_h = (int)l->height;
+	damage_after(doc);
 	return 0;
 }
 
@@ -1327,6 +1329,11 @@ void soie_set_focus(soie_node *doc, soie_node *el, int caret)
 {
 	if (doc->type != SOIE_DOCUMENT)
 		return;
+	if (doc->u.doc.damage && (el != doc->u.doc.focus ||
+	    caret != doc->u.doc.caret)) {
+		damage_node(doc, doc->u.doc.focus);
+		damage_node(doc, el);
+	}
 	doc->u.doc.focus = el;
 	doc->u.doc.caret = caret;
 }

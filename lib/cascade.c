@@ -168,6 +168,7 @@ struct styledb {
 	struct sellist **anchors;	/* selectors with a deep :has() */
 	int nanchors, capanchors;
 	float rem;		/* the root's font size */
+	int vp_used;		/* a computed value has viewport units */
 	soie_style_options saved;	/* a copy, for soie_document_update */
 	/* The media queries the rules were chosen by, and their answers:
 	 * another viewport keeps the rules when none changes */
@@ -2454,8 +2455,14 @@ static void style_one(struct styledb *db, soie_node *n)
 	const struct style *st = n->u.el.style, *b = n->u.el.before,
 		*a = n->u.el.after;
 
+	int vp = vp_units_used;
+
 	n->u.el.before = n->u.el.after = NULL;
+	vp_units_used = 0;
 	style_element(db, n, ps, db->rem);
+	n->vp = (unsigned char)vp_units_used;
+	db->vp_used |= vp_units_used;
+	vp_units_used |= vp;
 	/* styles are interned: the same pointer is the same style */
 	if (st != n->u.el.style || b != n->u.el.before || a != n->u.el.after)
 		layout_touch(n);
@@ -2481,6 +2488,25 @@ static void style_tree(struct styledb *db, soie_node *top, int skip_top)
 		if (!n || n == top)
 			break;
 		n = n->next;
+	}
+}
+
+/* Elements whose style has viewport units, for another viewport */
+static void mark_viewport(soie_node *doc)
+{
+	soie_node *n = doc->first;
+
+	while (n) {
+		if (n->type == SOIE_ELEMENT && n->vp)
+			mark(n, SELF);
+		if (n->first && n->type == SOIE_ELEMENT) {
+			n = n->first;
+			continue;
+		}
+		while (n && !n->next)
+			n = n->parent;
+		if (n)
+			n = n->next;
 	}
 }
 
@@ -2709,6 +2735,15 @@ int soie_style_document(soie_node *doc, const soie_style_options *opts)
 	}
 
 cascade:
+	/* another size changes only the styles with viewport units: they
+	 * are restyled alone, their subtrees when their style changed (a
+	 * window resized lays the page out again, mostly without a
+	 * cascade) */
+	if (resized && !doc->u.doc.restyle_all) {
+		if (db->vp_used)
+			mark_viewport(doc);
+		resized = 0;
+	}
 	if (reuse && !resized && !doc->u.doc.restyle_all && doc->u.doc.ndirty &&
 	    !(soie_document_element(doc) &&
 	      soie_document_element(doc)->dirty == SUBTREE)) {

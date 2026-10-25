@@ -109,6 +109,11 @@ struct layout {
 	unsigned long rules;	/* style_serial() of its styles */
 };
 
+/* damage.c: around a layout, the focus moved, the document freed */
+void damage_before(soie_node *doc);
+void damage_after(soie_node *doc);
+void damage_node(soie_node *doc, const soie_node *el);
+
 /* boxes.c */
 struct box *box_new(int type, const struct style *st, soie_node *node);
 void box_append(struct box *parent, struct box *child);

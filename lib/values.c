@@ -1124,11 +1124,16 @@ void slen_free(struct slen *l)
 	}
 }
 
+int vp_units_used;
+
 static void lin_resolve(const struct lin *l, const struct ucontext *u,
 	float *px, float *pct)
 {
 	double vmin = u->vw < u->vh ? u->vw : u->vh;
 	double vmax = u->vw > u->vh ? u->vw : u->vh;
+
+	if (l->k[U_VW] || l->k[U_VH] || l->k[U_VMIN] || l->k[U_VMAX])
+		vp_units_used = 1;
 
 	*px = (float)(l->k[U_PX] + l->k[U_EM] * u->em + l->k[U_REM] * u->rem +
 		l->k[U_EX] * u->ex + l->k[U_CH] * u->ch +

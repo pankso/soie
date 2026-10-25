@@ -58,6 +58,7 @@ struct soie_node {
 	unsigned char html_ip;
 	unsigned char started;	/* <script>: already started */
 	unsigned char dirty;	/* its subtree needs restyling */
+	unsigned char vp;	/* its style has viewport units (vw...) */
 	unsigned short tag;
 	/* when it or its subtree last changed what its boxes would be
 	 * (layout_touch()); a layout built later keeps them */
@@ -106,6 +107,7 @@ struct soie_node {
 			int lay_w, lay_h;
 			/* layout_touch() stamps, and the last layout's */
 			unsigned long lstamp, lbuilt;
+			struct damage *damage;	/* soie_layout_damage() */
 		} doc;
 	} u;
 };
@@ -123,6 +125,8 @@ void node_insert(struct soie_node *parent, struct soie_node *child,
 void node_detach(struct soie_node *n);
 /* n or something below it changed what boxes it gives (boxes.c) */
 void layout_touch(struct soie_node *n);
+/* soie_layout_damage()'s tracking, freed with the document (damage.c) */
+void damage_free(struct soie_node *doc);
 /* Which style rules doc has: boxes of other rules are not kept */
 unsigned long style_serial(const struct soie_node *doc);
 

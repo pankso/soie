@@ -46,6 +46,17 @@ int soie_paint(soie_node *doc, unsigned char *rgba, int width, int height,
 int soie_paint_bgra(soie_node *doc, unsigned char *bgra, int width,
 	int height, int stride, int sx, int sy);
 
+/*
+ * What changed in the painting since the last call: up to max rects
+ * (x, y, w, h each, page coordinates) into rects, their number (more
+ * become their union); -1 when it may be all of it (a first layout,
+ * the viewport changed, the root's or body's style). The first call starts the tracking (and returns -1): each
+ * layout then compares the boxes it leaves with those it found, the
+ * focus and caret count too. Images and fonts that arrive later are
+ * not seen: a host paints all of it then. Since 1.3.
+ */
+int soie_layout_damage(soie_node *doc, float *rects, int max);
+
 /* Deepest element under page point (x, y), or NULL. */
 soie_node *soie_hit_test(soie_node *doc, float x, float y);
 
