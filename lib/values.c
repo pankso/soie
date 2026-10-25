@@ -1,5 +1,10 @@
 /*
  * CSS values: numbers, colors (CSS Color 4), lengths and calc(), An+B.
+ *
+ * Copyright (C) 2026 Christophe Lincoln <pankso@slitaz.org>
+ * Written with the assistance of Claude (Anthropic) and Opencode.
+ *
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 #include <math.h>
 #include <stdio.h>

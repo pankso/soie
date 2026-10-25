@@ -1,6 +1,11 @@
 /*
  * CSS properties: value parsing, shorthands, computed values and their
  * serialization.
+ *
+ * Copyright (C) 2026 Christophe Lincoln <pankso@slitaz.org>
+ * Written with the assistance of Claude (Anthropic) and Opencode.
+ *
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 #include <stdlib.h>
 #include <string.h>

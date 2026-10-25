@@ -2,6 +2,11 @@
  * Driver for the css-parsing-tests corpus (see tests/css-parsing.py).
  * Usage: csstest FUNCTION < inputs, where each input is its byte length
  * on a line, then the bytes. Prints one JSON result per line.
+ *
+ * Copyright (C) 2026 Christophe Lincoln <pankso@slitaz.org>
+ * Written with the assistance of Claude (Anthropic) and Opencode.
+ *
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 #include <stdio.h>
 #include <stdlib.h>

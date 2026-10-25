@@ -1,6 +1,11 @@
 /*
  * CSS internals: tokens, component values, rules, selectors, values
  * and computed styles. Never installed.
+ *
+ * Copyright (C) 2026 Christophe Lincoln <pankso@slitaz.org>
+ * Written with the assistance of Claude (Anthropic) and Opencode.
+ *
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 #ifndef SOIE_CSS_H
 #define SOIE_CSS_H

@@ -1,6 +1,11 @@
 /*
  * Block layout: normal flow with margin collapsing (CSS 2 8.3.1, 10.3,
  * 10.6), floats (9.5), relative and absolute positioning (9.3, 10.3.7).
+ *
+ * Copyright (C) 2026 Christophe Lincoln <pankso@slitaz.org>
+ * Written with the assistance of Claude (Anthropic) and Opencode.
+ *
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 #include <stdlib.h>
 #include <string.h>

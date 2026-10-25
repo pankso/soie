@@ -2,6 +2,11 @@
  * Character encodings: sniffing (BOM, transport hint, <meta> prescan)
  * and decoding to UTF-8 with normalized newlines, which is all the
  * tokenizer ever sees.
+ *
+ * Copyright (C) 2026 Christophe Lincoln <pankso@slitaz.org>
+ * Written with the assistance of Claude (Anthropic) and Opencode.
+ *
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 #include <string.h>
 #include "internal.h"

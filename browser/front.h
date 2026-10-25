@@ -6,6 +6,11 @@
  * toolkit part owns the window and its pixels, turns its events into
  * front_*() calls and defines the tk_*() ones (and the shell's
  * ui_title()). Coordinates are the window's, its top left corner at 0,0.
+ *
+ * Copyright (C) 2026 Christophe Lincoln <pankso@slitaz.org>
+ * Written with the assistance of Claude (Anthropic) and Opencode.
+ *
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 #ifndef SOIE_FRONT_H
 #define SOIE_FRONT_H

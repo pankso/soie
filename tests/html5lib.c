@@ -2,6 +2,11 @@
  * Run html5lib tree-construction tests (.dat files) against libsoie.
  * Usage: html5lib [-v] [-x KNOWN] FILE.dat...
  * KNOWN lists expected failures, one "file.dat number" per line.
+ *
+ * Copyright (C) 2026 Christophe Lincoln <pankso@slitaz.org>
+ * Written with the assistance of Claude (Anthropic) and Opencode.
+ *
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 #include <stdio.h>
 #include <stdlib.h>

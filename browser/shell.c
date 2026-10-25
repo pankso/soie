@@ -1,6 +1,11 @@
 /*
  * The browser's shell: a page, its resources, history, forms, scripts
  * and find, on libsoie, without a toolkit (shell.h).
+ *
+ * Copyright (C) 2026 Christophe Lincoln <pankso@slitaz.org>
+ * Written with the assistance of Claude (Anthropic) and Opencode.
+ *
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 #define _POSIX_C_SOURCE 200809L
 #include <math.h>

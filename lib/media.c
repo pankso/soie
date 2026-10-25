@@ -1,5 +1,10 @@
 /*
  * Media queries level 4 and @supports conditions.
+ *
+ * Copyright (C) 2026 Christophe Lincoln <pankso@slitaz.org>
+ * Written with the assistance of Claude (Anthropic) and Opencode.
+ *
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 #include <string.h>
 #include "css.h"

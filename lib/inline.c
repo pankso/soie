@@ -2,6 +2,11 @@
  * Inline layout: white-space processing (CSS Text 3 4.1), line breaking
  * at spaces, line boxes and vertical alignment (CSS 2 10.8), text-align,
  * floats and absolute boxes met in the text.
+ *
+ * Copyright (C) 2026 Christophe Lincoln <pankso@slitaz.org>
+ * Written with the assistance of Claude (Anthropic) and Opencode.
+ *
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 #include <stdlib.h>
 #include <string.h>

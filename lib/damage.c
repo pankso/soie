@@ -7,6 +7,11 @@
  * an element whose signature changed, came or went gives its rects, old
  * and new: its subtree's when its style changed (opacity, clipping and
  * stacking reach below). Asked once, the document keeps track.
+ *
+ * Copyright (C) 2026 Christophe Lincoln <pankso@slitaz.org>
+ * Written with the assistance of Claude (Anthropic) and Opencode.
+ *
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 #include <stdint.h>
 #include <stdlib.h>

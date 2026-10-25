@@ -1,6 +1,11 @@
 /*
  * WebP images, decoded by libwebp. Animated WebP needs the demuxer
  * library and is left out: the decoder refuses it.
+ *
+ * Copyright (C) 2026 Christophe Lincoln <pankso@slitaz.org>
+ * Written with the assistance of Claude (Anthropic) and Opencode.
+ *
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 #include <stdlib.h>
 #include <string.h>

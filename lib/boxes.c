@@ -2,6 +2,11 @@
  * The box tree: generation from the DOM and computed styles (CSS 2
  * chapter 9, CSS Display 3), anonymous boxes, generated content, list
  * markers. Also the layout dump used by tests.
+ *
+ * Copyright (C) 2026 Christophe Lincoln <pankso@slitaz.org>
+ * Written with the assistance of Claude (Anthropic) and Opencode.
+ *
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 #include <stdio.h>
 #include <stdlib.h>

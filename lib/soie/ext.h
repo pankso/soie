@@ -19,6 +19,11 @@
  * A module for soie_ext_load() exports "int soie_ext_init(void)",
  * which registers its hook sets with soie_ext_register() and returns
  * 0. Hook sets are kept by pointer: give static storage.
+ *
+ * Copyright (C) 2026 Christophe Lincoln <pankso@slitaz.org>
+ * Written with the assistance of Claude (Anthropic) and Opencode.
+ *
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 #ifndef SOIE_EXT_H
 #define SOIE_EXT_H

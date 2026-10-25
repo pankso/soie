@@ -3,6 +3,11 @@
  * scripts and find, without a toolkit. A front (front.h, xsoie on
  * Xlib) shows the page, its address and title, and feeds the input in. Coordinates
  * are the page view's, its top left corner at 0,0.
+ *
+ * Copyright (C) 2026 Christophe Lincoln <pankso@slitaz.org>
+ * Written with the assistance of Claude (Anthropic) and Opencode.
+ *
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 #ifndef SOIE_SHELL_H
 #define SOIE_SHELL_H

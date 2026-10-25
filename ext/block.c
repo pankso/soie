@@ -4,6 +4,11 @@
  * host per line, or hosts file lines ("0.0.0.0 ads.example.com"), '#'
  * starts a comment. A listed host blocks its subdomains too. Only the
  * resources of a page are blocked, never the page one asked for.
+ *
+ * Copyright (C) 2026 Christophe Lincoln <pankso@slitaz.org>
+ * Written with the assistance of Claude (Anthropic) and Opencode.
+ *
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 #define _POSIX_C_SOURCE 200809L
 #include <stdio.h>

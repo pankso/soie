@@ -1,5 +1,10 @@
 /*
  * The browser's networking: HTTP(S) and file:// fetches.
+ *
+ * Copyright (C) 2026 Christophe Lincoln <pankso@slitaz.org>
+ * Written with the assistance of Claude (Anthropic) and Opencode.
+ *
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 #ifndef SOIE_NET_H
 #define SOIE_NET_H

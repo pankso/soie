@@ -1,6 +1,11 @@
 /*
  * Images internals: decoders, the per-document cache, SVG. Never
  * installed.
+ *
+ * Copyright (C) 2026 Christophe Lincoln <pankso@slitaz.org>
+ * Written with the assistance of Claude (Anthropic) and Opencode.
+ *
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 #ifndef SOIE_IMAGE_H
 #define SOIE_IMAGE_H

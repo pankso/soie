@@ -5,6 +5,11 @@
  * selections, the cursors.
  *
  * Usage: xsoie [-s] [-w WIDTH] [-H HEIGHT] [-o out.png] [URL]
+ *
+ * Copyright (C) 2026 Christophe Lincoln <pankso@slitaz.org>
+ * Written with the assistance of Claude (Anthropic) and Opencode.
+ *
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 #define _XOPEN_SOURCE 700
 #include <stdio.h>

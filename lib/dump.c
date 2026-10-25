@@ -1,5 +1,10 @@
 /*
  * Tree dump in the html5lib tree-construction test format.
+ *
+ * Copyright (C) 2026 Christophe Lincoln <pankso@slitaz.org>
+ * Written with the assistance of Claude (Anthropic) and Opencode.
+ *
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 #include <stdlib.h>
 #include <string.h>

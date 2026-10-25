@@ -1,6 +1,11 @@
 /*
  * The browser's debugging: a trail of what happened, $SOIE_DEBUG, and
  * a crash report (~/.cache/soie/crash-PID.txt) on a fatal signal.
+ *
+ * Copyright (C) 2026 Christophe Lincoln <pankso@slitaz.org>
+ * Written with the assistance of Claude (Anthropic) and Opencode.
+ *
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 #ifndef SOIE_DEBUG_H
 #define SOIE_DEBUG_H

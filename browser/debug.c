@@ -3,6 +3,11 @@
  * once memory is broken, only the backtrace is sure to come out, so it
  * writes that first and asks gdb for the full one (with line numbers,
  * every thread) after.
+ *
+ * Copyright (C) 2026 Christophe Lincoln <pankso@slitaz.org>
+ * Written with the assistance of Claude (Anthropic) and Opencode.
+ *
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 #define _XOPEN_SOURCE 700
 #include <stdio.h>

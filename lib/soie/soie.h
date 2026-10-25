@@ -1,6 +1,11 @@
 /*
  * Soie, a lightweight HTML rendering engine.
  * Include this header only; it pulls in the others.
+ *
+ * Copyright (C) 2026 Christophe Lincoln <pankso@slitaz.org>
+ * Written with the assistance of Claude (Anthropic) and Opencode.
+ *
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 #ifndef SOIE_H
 #define SOIE_H

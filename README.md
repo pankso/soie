@@ -69,3 +69,8 @@ block list in `~/.config/soie/block.txt` turns content blocking on.
     tools/       soie-render, generators
     tests/       unit tests, html5lib test runner, local corpus
     doc/         DECISIONS.md
+
+## Licence
+
+BSD (2 clauses), as most SliTaz tools: see LICENSE. Authors and
+assistants: see AUTHORS.

@@ -2,6 +2,11 @@
  * Fonts: system font discovery with FreeType (no fontconfig), CSS font
  * matching (CSS Fonts 4, simplified), per-character fallback, web
  * fonts from @font-face, and text shaping for measurement and drawing.
+ *
+ * Copyright (C) 2026 Christophe Lincoln <pankso@slitaz.org>
+ * Written with the assistance of Claude (Anthropic) and Opencode.
+ *
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 #include <dirent.h>
 #include <stdlib.h>

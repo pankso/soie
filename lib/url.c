@@ -2,6 +2,11 @@
  * URL resolution: a reference against a base, after RFC 3986 section 5
  * with the WHATWG tolerances pages rely on (backslashes, whitespace).
  * No IDNA, no percent-encoding normalization.
+ *
+ * Copyright (C) 2026 Christophe Lincoln <pankso@slitaz.org>
+ * Written with the assistance of Claude (Anthropic) and Opencode.
+ *
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 #include <stdlib.h>
 #include <string.h>

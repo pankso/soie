@@ -1,6 +1,11 @@
 /*
  * Background fetches: a few threads run net_fetch() for queued jobs,
  * the main thread collects the finished ones.
+ *
+ * Copyright (C) 2026 Christophe Lincoln <pankso@slitaz.org>
+ * Written with the assistance of Claude (Anthropic) and Opencode.
+ *
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 #ifndef SOIE_FETCH_H
 #define SOIE_FETCH_H

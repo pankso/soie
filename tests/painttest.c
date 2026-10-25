@@ -5,6 +5,11 @@
  * pieces against itself whole. With -u, write the references instead
  * (check them by eye before committing).
  * Usage: painttest [-u] FILE.html...
+ *
+ * Copyright (C) 2026 Christophe Lincoln <pankso@slitaz.org>
+ * Written with the assistance of Claude (Anthropic) and Opencode.
+ *
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 #include <stdio.h>
 #include <stdlib.h>

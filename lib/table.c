@@ -2,6 +2,11 @@
  * Tables (CSS 2 chapter 17): anonymous table objects, the automatic and
  * fixed table layout algorithms, colspan and rowspan, border-spacing,
  * captions and the vertical alignment of cells.
+ *
+ * Copyright (C) 2026 Christophe Lincoln <pankso@slitaz.org>
+ * Written with the assistance of Claude (Anthropic) and Opencode.
+ *
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 #include <stdlib.h>
 #include <string.h>

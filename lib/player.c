@@ -6,6 +6,11 @@
  * autoplay when the host allows it), never just because the element
  * is on the page: on old machines a page full of videos stays a page.
  * A script that attaches a MediaSource opens one at once: it feeds it.
+ *
+ * Copyright (C) 2026 Christophe Lincoln <pankso@slitaz.org>
+ * Written with the assistance of Claude (Anthropic) and Opencode.
+ *
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 #include <stdlib.h>
 #include <string.h>

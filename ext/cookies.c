@@ -6,6 +6,11 @@
  *
  * Third-party cookies are neither sent nor stored: a request whose
  * site differs from the page's site gets no cookie jar at all.
+ *
+ * Copyright (C) 2026 Christophe Lincoln <pankso@slitaz.org>
+ * Written with the assistance of Claude (Anthropic) and Opencode.
+ *
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 #define _POSIX_C_SOURCE 200809L
 #include <stdio.h>

@@ -4,6 +4,11 @@
  * view is the shell's. A redraw paints only what changed: the toolbar
  * alone, a page scrolled moved and its new band painted, the bars over
  * the page with the page again under where they were.
+ *
+ * Copyright (C) 2026 Christophe Lincoln <pankso@slitaz.org>
+ * Written with the assistance of Claude (Anthropic) and Opencode.
+ *
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 #define _POSIX_C_SOURCE 200809L
 #include <stdio.h>

@@ -3,6 +3,11 @@
  * initial). Order matters: font-size, then color and line-height are
  * computed first, as others depend on them. Keywords are '|'-separated
  * and stored by index; initial values are CSS text.
+ *
+ * Copyright (C) 2026 Christophe Lincoln <pankso@slitaz.org>
+ * Written with the assistance of Claude (Anthropic) and Opencode.
+ *
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 PROP(FONT_SIZE, "font-size", 1, K_FSIZE, 0, "", "medium")
 PROP(COLOR, "color", 1, K_COLOR, 0, "", "canvastext")

@@ -4,6 +4,11 @@
  * scaled to the font size. Without fonts, or for tests, a stub: every
  * character is 0.5em wide, ascent 0.75em, descent 0.25em, normal
  * line-height 1.25em.
+ *
+ * Copyright (C) 2026 Christophe Lincoln <pankso@slitaz.org>
+ * Written with the assistance of Claude (Anthropic) and Opencode.
+ *
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 #include <stdlib.h>
 #include <string.h>

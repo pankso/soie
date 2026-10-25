@@ -3,6 +3,11 @@
  * stroke, viewBox. Rendered from a DOM (inline <svg>, or an SVG file
  * parsed by the HTML parser, which handles foreign content) with an
  * anti-aliased polygon filler (analytic in x, 4 sub-scanlines in y).
+ *
+ * Copyright (C) 2026 Christophe Lincoln <pankso@slitaz.org>
+ * Written with the assistance of Claude (Anthropic) and Opencode.
+ *
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 #include <math.h>
 #include <stdlib.h>

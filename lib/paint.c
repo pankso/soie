@@ -2,6 +2,11 @@
  * Painting into an RGBA buffer: a software rasterizer for backgrounds,
  * borders (with radii), text, decorations and images, in the CSS 2
  * painting order (Appendix E, simplified).
+ *
+ * Copyright (C) 2026 Christophe Lincoln <pankso@slitaz.org>
+ * Written with the assistance of Claude (Anthropic) and Opencode.
+ *
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 #include <math.h>
 #include <stdlib.h>

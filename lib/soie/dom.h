@@ -5,6 +5,11 @@
  * soie_node_free() on the document frees them all. A node taken out
  * of the tree with soie_node_remove() stays valid until then, so it
  * can be reinserted; soie_node_free() on it releases it earlier.
+ *
+ * Copyright (C) 2026 Christophe Lincoln <pankso@slitaz.org>
+ * Written with the assistance of Claude (Anthropic) and Opencode.
+ *
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 #ifndef SOIE_DOM_H
 #define SOIE_DOM_H

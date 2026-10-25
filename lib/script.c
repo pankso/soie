@@ -2,6 +2,11 @@
  * Running a document's scripts through the script extension: which
  * <script> elements run, in what order, fetched how. The engine
  * itself (QuickJS or another) lives in the extension.
+ *
+ * Copyright (C) 2026 Christophe Lincoln <pankso@slitaz.org>
+ * Written with the assistance of Claude (Anthropic) and Opencode.
+ *
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 #include <stdio.h>
 #include <stdlib.h>

@@ -2,6 +2,11 @@
  * HTML tokenizer, after the WHATWG state machine (section 13.2.5).
  * Input is valid UTF-8 with normalized newlines. Character references
  * are decoded by charref() instead of their own states.
+ *
+ * Copyright (C) 2026 Christophe Lincoln <pankso@slitaz.org>
+ * Written with the assistance of Claude (Anthropic) and Opencode.
+ *
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 #include <stdlib.h>
 #include <string.h>

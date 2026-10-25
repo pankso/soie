@@ -2,6 +2,11 @@
  * Flexbox (CSS Flexible Box Layout 1, section 9): order, flex base
  * sizes, lines, the flexible lengths with frozen violations, auto
  * margins, justify-content, align-items/self, align-content and gaps.
+ *
+ * Copyright (C) 2026 Christophe Lincoln <pankso@slitaz.org>
+ * Written with the assistance of Claude (Anthropic) and Opencode.
+ *
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 #include <stdlib.h>
 #include <string.h>

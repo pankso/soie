@@ -2,6 +2,11 @@
  * Atoms for the element names the engine handles specially.
  * Keep this list sorted (strcmp order): lookups are binary searches.
  * Names are the lowercase forms, as the tokenizer produces them.
+ *
+ * Copyright (C) 2026 Christophe Lincoln <pankso@slitaz.org>
+ * Written with the assistance of Claude (Anthropic) and Opencode.
+ *
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 TAG(A, "a")
 TAG(ADDRESS, "address")

@@ -2,6 +2,11 @@
  * Extension tests: the registry and its ABI checks, the image and
  * content hooks inside the engine, and the modules of ext/ (cookies,
  * block, webp when built), loaded the way hosts load them.
+ *
+ * Copyright (C) 2026 Christophe Lincoln <pankso@slitaz.org>
+ * Written with the assistance of Claude (Anthropic) and Opencode.
+ *
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 #define _POSIX_C_SOURCE 200809L
 #include <stdio.h>

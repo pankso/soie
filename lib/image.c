@@ -3,6 +3,11 @@
  * decoding, the per-document cache, drawing with bilinear scaling,
  * object-fit, and CSS backgrounds: url() images, linear and radial
  * gradients, background-size, -position and -repeat.
+ *
+ * Copyright (C) 2026 Christophe Lincoln <pankso@slitaz.org>
+ * Written with the assistance of Claude (Anthropic) and Opencode.
+ *
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 #include <png.h>		/* first: libpng 1.2 wants its own setjmp.h */
 #include <math.h>
