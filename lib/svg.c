@@ -70,7 +70,7 @@ static void poly_fill(struct canvas *c, struct poly *p, int evenodd,
 {
 	float ymin = 1e30f, ymax = -1e30f, *acc;
 	struct xing *xs;
-	int i, y, s, k, nx;
+	int i, y, s, k, nx, r = c->bgr ? 2 : 0;
 
 	if (!p->n || !rgba[3])
 		return;
@@ -157,12 +157,12 @@ static void poly_fill(struct canvas *c, struct poly *p, int evenodd,
 					a = (int)((float)a * c->alpha + 0.5f);
 					px = c->px + (size_t)y * (size_t)c->stride +
 						(size_t)i * 4;
-					px[0] = (unsigned char)((rgba[0] * a +
+					px[0] = (unsigned char)((rgba[r] * a +
 						px[0] * (255 - a)) / 255);
 					px[1] = (unsigned char)((rgba[1] * a +
 						px[1] * (255 - a)) / 255);
-					px[2] = (unsigned char)((rgba[2] * a +
-						px[2] * (255 - a)) / 255);
+					px[2] = (unsigned char)((rgba[2 - r] *
+						a + px[2] * (255 - a)) / 255);
 					px[3] = (unsigned char)(a + px[3] *
 						(255 - a) / 255);
 				}

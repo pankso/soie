@@ -33,7 +33,7 @@ static void blend(struct canvas *c, int x, int y, const unsigned char *rgba,
 	int cov)
 {
 	unsigned char *p;
-	int a;
+	int a, r = c->bgr ? 2 : 0;
 
 	if (x < c->cx0 || y < c->cy0 || x >= c->cx1 || y >= c->cy1)
 		return;
@@ -43,15 +43,15 @@ static void blend(struct canvas *c, int x, int y, const unsigned char *rgba,
 		return;
 	p = c->px + (size_t)y * (size_t)c->stride + (size_t)x * 4;
 	if (a >= 255) {
-		p[0] = rgba[0];
+		p[0] = rgba[r];
 		p[1] = rgba[1];
-		p[2] = rgba[2];
+		p[2] = rgba[2 - r];
 		p[3] = 255;
 		return;
 	}
-	p[0] = (unsigned char)((rgba[0] * a + p[0] * (255 - a)) / 255);
+	p[0] = (unsigned char)((rgba[r] * a + p[0] * (255 - a)) / 255);
 	p[1] = (unsigned char)((rgba[1] * a + p[1] * (255 - a)) / 255);
-	p[2] = (unsigned char)((rgba[2] * a + p[2] * (255 - a)) / 255);
+	p[2] = (unsigned char)((rgba[2 - r] * a + p[2] * (255 - a)) / 255);
 	p[3] = (unsigned char)(a + p[3] * (255 - a) / 255);
 }
 
@@ -95,6 +95,16 @@ static int rrect_cov(float px, float py, float x0, float y0, float x1,
 {
 	int n = 0, sx, sy;
 
+	/* a pixel inside away from the corners is covered, one outside is
+	 * not: the samples would all say so */
+	if (px + 1 <= x0 || px >= x1 || py + 1 <= y0 || py >= y1)
+		return 0;
+	if (px >= x0 && px + 1 <= x1 && py >= y0 && py + 1 <= y1 &&
+	    (px >= x0 + r[0] || py >= y0 + r[0]) &&
+	    (px + 1 <= x1 - r[1] || py >= y0 + r[1]) &&
+	    (px + 1 <= x1 - r[2] || py + 1 <= y1 - r[2]) &&
+	    (px >= x0 + r[3] || py + 1 <= y1 - r[3]))
+		return 255;
 	for (sy = 0; sy < 4; sy++)
 		for (sx = 0; sx < 4; sx++) {
 			float x = px + ((float)sx + 0.5f) / 4;
@@ -498,6 +508,14 @@ static void paint_lines(struct canvas *c, struct box *b)
 			if (f->kind == F_TEXT) {
 				const struct style *ds = decorating(f->box, b);
 				float jw = l->jspace;
+				float em = f->box->style->v[P_FONT_SIZE].u.len.px;
+
+				/* text out of the clip, its glyphs reaching
+				 * 2em up and 1em down, is not even shaped:
+				 * a band of a long page paints fast */
+				if (f->baseline + em < c->oy + (float)c->cy0 ||
+				    f->baseline - 2 * em > c->oy + (float)c->cy1)
+					continue;
 
 				draw_text(c, f->box->style, f->box->text +
 					f->start, f->len, f->x, f->baseline, jw);
@@ -755,8 +773,8 @@ static void canvas_background(struct canvas *c, struct box *root)
 	(void)src;
 }
 
-int soie_paint(soie_node *doc, unsigned char *rgba, int width, int height,
-	int stride, int sx, int sy)
+static int paint(soie_node *doc, unsigned char *rgba, int width, int height,
+	int stride, int sx, int sy, int bgr)
 {
 	struct canvas c;
 	struct box *root;
@@ -774,6 +792,7 @@ int soie_paint(soie_node *doc, unsigned char *rgba, int width, int height,
 	c.cx1 = width;
 	c.cy1 = height;
 	c.alpha = 1;
+	c.bgr = bgr;
 	font_doc = doc;
 	paint_doc = doc;
 	if (!root) {
@@ -789,3 +808,14 @@ int soie_paint(soie_node *doc, unsigned char *rgba, int width, int height,
 	return 0;
 }
 
+int soie_paint(soie_node *doc, unsigned char *rgba, int width, int height,
+	int stride, int sx, int sy)
+{
+	return paint(doc, rgba, width, height, stride, sx, sy, 0);
+}
+
+int soie_paint_bgra(soie_node *doc, unsigned char *bgra, int width,
+	int height, int stride, int sx, int sy)
+{
+	return paint(doc, bgra, width, height, stride, sx, sy, 1);
+}

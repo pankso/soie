@@ -1,8 +1,9 @@
 /*
  * Paint tests: render tests/paint/NAME.html at 320x240 with the stub
  * font and compare with NAME.png, pixel for pixel, within 2 levels per
- * channel (x87 and SSE floats round differently). With -u, write the
- * references instead (check them by eye before committing).
+ * channel (x87 and SSE floats round differently), and painted in
+ * pieces against itself whole. With -u, write the references instead
+ * (check them by eye before committing).
  * Usage: painttest [-u] FILE.html...
  */
 #include <stdio.h>
@@ -51,6 +52,43 @@ static int same(const unsigned char *a, const unsigned char *b)
 		if (a[i] - b[i] > 2 || b[i] - a[i] > 2)
 			return 0;
 	return 1;
+}
+
+/*
+ * What the browser's partial repaints rely on, against px (the page
+ * painted whole): soie_paint_bgra() swaps red and blue and nothing
+ * else; bands and rects painted alone, and the page painted scrolled,
+ * give the pixels of the whole. Returns what differs, or NULL.
+ */
+static const char *pieces(soie_node *doc, const unsigned char *px)
+{
+	static unsigned char q[W * H * 4], r[W * H * 4];
+	static const int bands[] = { 0, 70, 71, 170, H };
+	int i, x, y;
+
+	soie_paint_bgra(doc, q, W, H, W * 4, 0, 0);
+	for (i = 0; i < W * H * 4; i += 4)
+		if (q[i] != px[i + 2] || q[i + 1] != px[i + 1] ||
+		    q[i + 2] != px[i] || q[i + 3] != px[i + 3])
+			return "BGRA";
+	memset(r, 0, sizeof(r));
+	for (i = 0; i < 4; i++)
+		soie_paint_bgra(doc, r + bands[i] * W * 4, W, bands[i + 1] -
+			bands[i], W * 4, 0, bands[i]);
+	if (!same(q, r))
+		return "bands";
+	/* a rect, as a video frame is painted */
+	soie_paint_bgra(doc, r + (50 * W + 33) * 4, 101, 77, W * 4, 33, 50);
+	if (!same(q, r))
+		return "rect";
+	/* scrolled by 37: what was at y + 37 is at y */
+	soie_paint_bgra(doc, r, W, H, W * 4, 0, 37);
+	for (y = 0; y < H - 37; y++)
+		for (x = 0; x < W * 4; x++)
+			if (r[y * W * 4 + x] - q[(y + 37) * W * 4 + x] > 2 ||
+			    q[(y + 37) * W * 4 + x] - r[y * W * 4 + x] > 2)
+				return "scrolled";
+	return NULL;
 }
 
 static int write_png(const char *path, unsigned char *px)
@@ -122,6 +160,7 @@ int main(int argc, char **argv)
 		unsigned char *px, *want;
 		size_t len, n;
 		char *html;
+		const char *why;
 		soie_node *doc;
 
 		if (!strcmp(argv[i], "-u")) {
@@ -166,6 +205,11 @@ int main(int argc, char **argv)
 				printf("  first difference at pixel %d,%d\n",
 					k / 4 % W, k / 4 / W);
 			}
+			fail++;
+			free(want);
+		} else if ((why = pieces(doc, px))) {
+			printf("FAIL %s: painted in pieces (%s) it differs\n",
+				argv[i], why);
 			fail++;
 			free(want);
 		} else {

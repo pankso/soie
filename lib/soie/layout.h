@@ -40,6 +40,11 @@ char *soie_layout_dump(const soie_node *doc, size_t *len);
  */
 int soie_paint(soie_node *doc, unsigned char *rgba, int width, int height,
 	int stride, int sx, int sy);
+/* The same in B G R A bytes, the order of the 32-bit pixels of X and
+ * Wayland servers on little-endian machines: no conversion before they
+ * are sent. Since 1.3. */
+int soie_paint_bgra(soie_node *doc, unsigned char *bgra, int width,
+	int height, int stride, int sx, int sy);
 
 /* Deepest element under page point (x, y), or NULL. */
 soie_node *soie_hit_test(soie_node *doc, float x, float y);

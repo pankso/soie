@@ -7,11 +7,12 @@
 #include "layout.h"
 
 struct canvas {
-	unsigned char *px;	/* RGBA */
+	unsigned char *px;	/* RGBA, or BGRA when bgr */
 	int w, h, stride;
 	float ox, oy;		/* page coordinates of pixel (0, 0) */
 	int cx0, cy0, cx1, cy1;	/* clip, in pixels */
 	float alpha;		/* opacity of what is painted now */
+	int bgr;		/* red and blue swapped in px */
 };
 
 extern soie_node *paint_doc;

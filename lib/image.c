@@ -516,7 +516,7 @@ static void blend_px(struct canvas *c, int x, int y, const unsigned char *s,
 	float a)
 {
 	unsigned char *p;
-	int al;
+	int al, r = c->bgr ? 2 : 0;
 
 	if (x < c->cx0 || y < c->cy0 || x >= c->cx1 || y >= c->cy1)
 		return;
@@ -525,13 +525,15 @@ static void blend_px(struct canvas *c, int x, int y, const unsigned char *s,
 		return;
 	p = c->px + (size_t)y * (size_t)c->stride + (size_t)x * 4;
 	if (al >= 255) {
-		memcpy(p, s, 3);
+		p[0] = s[r];
+		p[1] = s[1];
+		p[2] = s[2 - r];
 		p[3] = 255;
 		return;
 	}
-	p[0] = (unsigned char)((s[0] * al + p[0] * (255 - al)) / 255);
+	p[0] = (unsigned char)((s[r] * al + p[0] * (255 - al)) / 255);
 	p[1] = (unsigned char)((s[1] * al + p[1] * (255 - al)) / 255);
-	p[2] = (unsigned char)((s[2] * al + p[2] * (255 - al)) / 255);
+	p[2] = (unsigned char)((s[2 - r] * al + p[2] * (255 - al)) / 255);
 	p[3] = (unsigned char)(al + p[3] * (255 - al) / 255);
 }
 
