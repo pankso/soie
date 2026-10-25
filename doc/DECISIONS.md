@@ -816,6 +816,12 @@ on the same frozen DOM.
   buffer keeping the rects it missed. A commit waits for the last
   frame callback: no frame painted that the compositor would drop,
   never a wait on the compositor's reading.
+- A configure is applied (acked, buffers made, the page laid out and
+  painted) only when no frame is on its way, the last one only: tisse
+  sends one per pointer move while a window is dragged bigger. On
+  Wikipedia, 30 moves 5 ms apart gave 31 relayouts and the last size
+  1.6 s late (1.65 s of CPU); now 4 relayouts, the last size in
+  0.17 s (0.22 s of CPU).
 - The shared file is a mkstemp() in $XDG_RUNTIME_DIR, unlinked at
   once: SliTaz's C library has no memfd_create().
 - Keys: the compositor's keymap through xkbcommon, dead keys through

@@ -44,7 +44,12 @@ static struct xdg_surface *xsurface;
 static struct xdg_toplevel *toplevel;
 static struct wl_data_device_manager *ddm;
 static struct wl_data_device *ddev;
-static int win_w = 1024, win_h = 768, configured;
+static int win_w = 1024, win_h = 768;
+/* The last configure, applied once its frame is shown: a window
+ * dragged bigger sends one per pointer move, a relayout each would
+ * fall behind the pointer */
+static int want_w, want_h, cfg_pending;
+static uint32_t cfg_serial;
 
 /* The front's pixels */
 static unsigned char *px;
@@ -802,10 +807,44 @@ static const struct xdg_wm_base_listener wm_listener = { wm_ping };
 static void xs_configure(void *data, struct xdg_surface *s, uint32_t serial)
 {
 	(void)data;
-	xdg_surface_ack_configure(s, serial);
-	if (configured && slots[0].buf)
+	(void)s;
+	cfg_serial = serial;
+	cfg_pending = 1;
+}
+
+static const struct xdg_surface_listener xs_listener = { xs_configure };
+
+/* The size the compositor wants (0: ours), for the configure that
+ * follows */
+static void tl_configure(void *data, struct xdg_toplevel *t, int32_t w,
+	int32_t h, struct wl_array *states)
+{
+	(void)data;
+	(void)t;
+	(void)states;
+	if (w <= 0 || h <= 0)
 		return;
-	configured = 1;
+	want_w = w < 100 ? 100 : w;
+	want_h = h < 84 ? 84 : h;
+}
+
+/* The last configure, when no frame is on its way: a new size gets
+ * new buffers and the page laid out again */
+static void configure(void)
+{
+	if (!cfg_pending || frame_cb)
+		return;
+	cfg_pending = 0;
+	xdg_surface_ack_configure(xsurface, cfg_serial);
+	if (slots[0].buf && (!want_w || (want_w == win_w &&
+	    want_h == win_h))) {
+		wl_surface_commit(surface);
+		return;
+	}
+	if (want_w) {
+		win_w = want_w;
+		win_h = want_h;
+	}
 	make_buffers();
 	free(px);
 	px = calloc((size_t)win_w * (size_t)win_h, 4);
@@ -813,23 +852,6 @@ static void xs_configure(void *data, struct xdg_surface *s, uint32_t serial)
 		abort();
 	front_buffer(px, win_w, win_h, win_w * 4, 1);
 	front_redraw();
-}
-
-static const struct xdg_surface_listener xs_listener = { xs_configure };
-
-/* The size the compositor wants: the buffers are made again at the
- * configure that follows. */
-static void tl_configure(void *data, struct xdg_toplevel *t, int32_t w,
-	int32_t h, struct wl_array *states)
-{
-	(void)data;
-	(void)t;
-	(void)states;
-	if (w <= 0 || h <= 0 || (w == win_w && h == win_h))
-		return;
-	win_w = w < 100 ? 100 : w;
-	win_h = h < 84 ? 84 : h;
-	drop_buffers();
 }
 
 static void tl_close(void *data, struct xdg_toplevel *t)
@@ -953,6 +975,7 @@ int main(int argc, char **argv)
 	xdg_toplevel_set_app_id(toplevel, "wsoie");
 	wl_surface_commit(surface);
 	wl_display_roundtrip(dpy);
+	configure();
 	front_load();
 	for (;;) {
 		struct pollfd p[4];
@@ -990,6 +1013,7 @@ int main(int argc, char **argv)
 		}
 		if (n == 4 && (p[3].revents & (POLLIN | POLLHUP)))
 			paste_read();
+		configure();
 		front_redraw();
 	}
 }
