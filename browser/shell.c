@@ -3,6 +3,7 @@
  * and find, on libsoie, without a toolkit (shell.h).
  */
 #define _POSIX_C_SOURCE 200809L
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -89,6 +90,9 @@ static int view_w = 1024, view_h = 734;
 static int bgra, painted_scroll;
 static soie_node *painted;
 static unsigned long painted_gen;
+/* Something changed that the engine's damage does not see: a page, a
+ * stage, a resource (images, fonts), another size */
+static int damage_full = 1;
 static int page_changed(void);
 static int scripts = 1;		/* 0: no JavaScript */
 static char *pending_nav;	/* a script's navigation, done after it */
@@ -905,6 +909,7 @@ static int apply_late(int *repaint)
 	}
 	page.restyle = page.relayout = 0;
 	*repaint = 1;
+	damage_full = 1;
 	return -1;
 }
 
@@ -1514,8 +1519,13 @@ int shell_tick(int *repaint)
 		t = mt;
 	/* a new page, a new stage, a resource: show it */
 	collect_jobs(0);
-	if (d != page.doc || l != page.loading || n != res_pending(-1))
+	if (d != page.doc || l != page.loading || n != res_pending(-1)) {
 		*repaint = 1;
+		damage_full = 1;
+		/* scripts may have started: their timers, asked above,
+		 * are asked again at once */
+		t = 0;
+	}
 	m = apply_late(repaint);
 	if (m >= 0 && (t < 0 || m < t))
 		t = m;
@@ -1524,8 +1534,13 @@ int shell_tick(int *repaint)
 		t = m;
 	refresh_due();
 	t1 = now_s();
-	if (after_scripts() || page_changed())
+	if (after_scripts()) {
 		*repaint = 1;
+	} else if (page_changed()) {
+		/* the scripts laid the page out: its height too */
+		layout_done();
+		*repaint = 1;
+	}
 	if (now_s() - t1 > 0.1)
 		debug(1, "busy %.2f s: the scripts' changes (restyle, layout)",
 			now_s() - t1);
@@ -1633,9 +1648,52 @@ void shell_paint_rect(unsigned char *rgba, int stride, int x, int y, int w,
 
 void shell_paint(unsigned char *rgba, int stride)
 {
+	float r[4];
+
 	painted = paint_view(rgba, stride, 0, 0, view_w, view_h);
 	painted_scroll = page.scroll;
 	painted_gen = painted ? soie_document_generation(painted) : 0;
+	/* what changed until now is painted (the first call starts the
+	 * engine's tracking) */
+	if (page.doc)
+		soie_layout_damage(page.doc, r, 0);
+	damage_full = 0;
+}
+
+int shell_paint_changed(unsigned char *rgba, int stride, int (*r)[4],
+	int max)
+{
+	float f[4 * 32];
+	int n, i, k = 0;
+
+	if (damage_full || !page.doc || painted != page.doc ||
+	    painted_scroll != page.scroll || max > 32 ||
+	    (n = soie_layout_damage(page.doc, f, max)) < 0) {
+		debug(3, "repaint all");
+		return -1;
+	}
+	for (i = 0; i < n; i++) {
+		int x0 = (int)floorf(f[i * 4]);
+		int y0 = (int)floorf(f[i * 4 + 1]) - page.scroll;
+		int x1 = (int)ceilf(f[i * 4] + f[i * 4 + 2]);
+		int y1 = (int)ceilf(f[i * 4 + 1] + f[i * 4 + 3]) - page.scroll;
+
+		x0 = x0 < 0 ? 0 : x0;
+		y0 = y0 < 0 ? 0 : y0;
+		x1 = x1 > view_w ? view_w : x1;
+		y1 = y1 > view_h ? view_h : y1;
+		if (x0 >= x1 || y0 >= y1)
+			continue;
+		paint_view(rgba, stride, x0, y0, x1 - x0, y1 - y0);
+		r[k][0] = x0;
+		r[k][1] = y0;
+		r[k][2] = x1 - x0;
+		r[k][3] = y1 - y0;
+		k++;
+	}
+	painted_gen = soie_document_generation(page.doc);
+	debug(3, "repaint %d rects", k);
+	return k;
 }
 
 /* The page shown changed since it was painted: a script's layout (its
@@ -1840,6 +1898,7 @@ void shell_resize(int w, int h)
 	debug(2, "resize %dx%d", w, h);
 	view_w = w;
 	view_h = h;
+	damage_full = 1;
 	if (page.doc) {
 		relayout();
 		clamp_scroll();

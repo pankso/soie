@@ -29,6 +29,12 @@ int shell_tick(int *repaint);
 void shell_bgra(int on);
 /* Paint the page view into rgba (stride bytes a row). */
 void shell_paint(unsigned char *rgba, int stride);
+/* After shell_tick() said repaint 1: paint only what changed in the
+ * page, when the shell knows (the engine's damage); returns how many
+ * rects of the view (x, y, w, h, at most max) it painted, -1 when it
+ * does not know: shell_paint() then. */
+int shell_paint_changed(unsigned char *rgba, int stride, int (*rects)[4],
+	int max);
 /* rgba holds the last shell_paint(): when the page only scrolled since,
  * move its pixels and paint what came into view, *dy the move (0: the
  * view is as it was). Returns 0 when it cannot: shell_paint() then. */

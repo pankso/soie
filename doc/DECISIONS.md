@@ -718,6 +718,12 @@ on the same frozen DOM.
 
 ## QuickJS 2026-06-04
 
+- With `SOIE_DEBUG=2`, the script engine says when its heap crosses a
+  32 MB step (measured every 10 s): its size against MEMORY_LIMIT
+  (256 MB), objects, nodes wrapped. YouTube: 141 MB 16 s after a
+  watch page, 410 000 objects, 11 000 nodes wrapped; steady while it
+  plays.
+
 - QuickJS 2026-06-04, the one release built and tested: no build path
   nor promise for others. YouTube's first scripts ran in 5.5 s with
   2024-01-13, 3.45 s with 2026-06-04 (its small block allocator and
@@ -743,6 +749,17 @@ on the same frozen DOM.
   the engine, so asked again and fetched again at every restyle, and
   the rules, never complete, were rebuilt each time. The response's
   type now decides: CSS and fonts are copied, never given.
+- Another size restyles only the elements whose style has viewport
+  units: the cascade notes them (vw, vh, vmin, vmax met while
+  resolving a length, calc() included; a node byte), and a resize
+  marks them SELF: each restyled alone, its subtree only when its
+  style changed, as for a script's change (past 512 marks, all of
+  it). A page without viewport units is not restyled at all. Wikipedia
+  (some vw in its skin): 45 ms of cascade a resize to 9-13 ms. Checked
+  by a differential test (notes/soie-difftests/vpdiff.c: resized
+  against fresh, computed values of 31 properties and the boxes) on a
+  trap page (vw font sizes inherited by em, ::before, grid, calc, a
+  media query crossed) and Wikipedia offline: the same styles.
 - xsoie keeps only the last of the ConfigureNotify events waiting: a
   window dragged bigger cost one relayout per event (40 for a short
   drag on YouTube, 10 s behind the mouse); now one per relayout time.
@@ -797,6 +814,33 @@ on the same frozen DOM.
   1, 30 keys in the address bar 235 to 15. YouTube while it plays does
   not move (1055): decoding and its scripts, which change the page
   all the time, take the CPU.
+- A page changed by its scripts paints only what changed: the engine
+  tracks damage (soie_layout_damage(), libsoie 1.3, lib/damage.c).
+  Around each layout it sums the old and the new box trees up per
+  element: a signature of what its boxes paint themselves (rects,
+  borders, style, the text of their fragments, the DOM stamp of
+  images, SVG and form controls; players always) and where, alone and
+  with their subtree. A signature that changed, an element that came
+  or went, gives its rects, old and new; a style that changed gives
+  its subtree's (opacity, clipping, stacking reach below); the root's
+  or body's style, a new viewport, the first layout give all. The
+  focus or caret moved damage both controls. Ancestors of a change
+  are rebuilt by the incremental layout, so "new boxes" would be all
+  the page: comparing is what finds the little that moved. The shell
+  paints those rects (shell_paint_changed()) unless something the
+  engine does not see happened (a page, a stage, a resource: an image
+  or a font that arrived, another size), then all. On a long page
+  with a clock and a progress bar updated every 100 ms: 2.57 s of CPU
+  in 10 s to 0.83 s; YouTube while it plays, about 70% of its
+  repaints are 1 to 6 rects.
+- Timers of a page's scripts waited for the first input event: the
+  tick where the page arrived asked the scripts' next timer before
+  they started. A tick where the page, its stage or its resources
+  changed is now followed by another at once.
+- The scripts' own layouts (getBoundingClientRect()) left the page
+  height of the last layout the shell made: Wikipedia with scripts
+  was one view high, no scroll bar until a resize. A generation that
+  moved without an update now takes the new height too.
 - `SOIE_DEBUG_PAINT=1` paints the window whole after each redraw into
   another buffer and reports where they differ (2 levels of rounding
   allowed), but in the players' rect: frames come from decoding

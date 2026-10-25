@@ -71,7 +71,8 @@ static int drag = -1;		/* scroll bar thumb grabbed, at that offset */
  * bar's content. The rest is found at the redraw: the page scrolled,
  * the thumb and the status line changed.
  */
-enum { D_CHROME = 1, D_PAGE = 2, D_FIND = 4, D_ALL = 7 };
+enum { D_CHROME = 1, D_PAGE = 2, D_FIND = 4, D_ALL = 7,
+	D_CHANGED = 8 };	/* the page changed: its damage, if known */
 static int dirty = D_ALL;
 /* Rects shown at the end of the redraw, rects of page painted during
  * it (the bars over them are painted again) */
@@ -426,15 +427,25 @@ static void overlays(void)
 /* Paint what changed into px, its rects in shown. */
 static void paint_frame(void)
 {
-	int dy, all = 1;
+	int dy, all = 1, n, i, r[NRECT][4];
 
 	nfresh = 0;
 	if (dirty & D_CHROME) {
 		paint(chrome, px, win_w, BAR);
 		add(shown, &nshown, 0, 0, win_w, BAR);
 	}
-	if ((dirty & D_PAGE) || !shell_paint_scroll(at(0, BAR), stride,
-	    &dy)) {
+	if (!(dirty & D_PAGE) && (dirty & D_CHANGED) &&
+	    (n = shell_paint_changed(at(0, BAR), stride, r, NRECT)) >= 0) {
+		/* what changed only, the bars over it after */
+		for (i = 0; i < n; i++) {
+			add(fresh, &nfresh, r[i][0], r[i][1] + BAR, r[i][2],
+				r[i][3]);
+			add(shown, &nshown, r[i][0], r[i][1] + BAR, r[i][2],
+				r[i][3]);
+		}
+		all = 0;
+	} else if ((dirty & (D_PAGE | D_CHANGED)) ||
+	    !shell_paint_scroll(at(0, BAR), stride, &dy)) {
 		shell_paint(at(0, BAR), stride);
 	} else if (dy) {
 		/* the bars moved with the page: the page under them */
@@ -538,7 +549,7 @@ void front_expose(void)
 {
 	if (!px)
 		return;
-	if (dirty & D_PAGE) {
+	if (dirty & (D_PAGE | D_CHANGED)) {
 		front_redraw();
 		return;
 	}
@@ -1007,7 +1018,7 @@ int front_tick(void)
 	} else if (repaint) {
 		if (find_on)
 			find_go(0);
-		dirty |= D_PAGE;
+		dirty |= D_CHANGED;
 	}
 	/* the loading line is kept current */
 	if (shell_loading(&text) && (t < 0 || t > 500))
