@@ -58,6 +58,13 @@ char *soie_computed_value(const soie_node *el, const char *pseudo,
 	const char *property);
 
 /*
+ * The style sheet of a <link>, as the last soie_style_document() found
+ * it: 1 when it came (or there is none to wait for), -1 when it could
+ * not be fetched, 0 while it is on its way or not looked at yet.
+ */
+int soie_link_sheet(const soie_node *el);
+
+/*
  * Like soie_node_dump(), with the computed values of the properties
  * named in props (comma separated) after each element's attributes.
  */

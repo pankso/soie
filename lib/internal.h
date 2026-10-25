@@ -64,6 +64,7 @@ struct soie_node {
 	unsigned char started;	/* <script>: already started */
 	unsigned char dirty;	/* its subtree needs restyling */
 	unsigned char vp;	/* its style has viewport units (vw...) */
+	unsigned char sheet;	/* <link>: its style sheet came (1), failed (2) */
 	unsigned short tag;
 	/* when it or its subtree last changed what its boxes would be
 	 * (layout_touch()); a layout built later keeps them */

@@ -1627,6 +1627,18 @@ static JSValue n_mse_supported(JSContext *js, JSValueConst this, int argc,
 	return JS_NewBool(js, r);
 }
 
+/* linkSheet(el, first): first runs the style pass that asks for it */
+static JSValue n_link_sheet(JSContext *js, JSValueConst this, int argc,
+	JSValueConst *argv)
+{
+	NODE(0, el);
+
+	(void)this;
+	if (argc > 1 && JS_ToBool(js, argv[1]) && !soie_link_sheet(el))
+		soie_document_update(ctx_of(js)->doc);
+	return JS_NewInt32(js, soie_link_sheet(el));
+}
+
 static JSValue n_mse_open(JSContext *js, JSValueConst this, int argc,
 	JSValueConst *argv)
 {
@@ -1830,6 +1842,7 @@ static const JSCFunctionListEntry natives[] = {
 	JS_CFUNC_DEF("matches", 2, n_matches),
 	JS_CFUNC_DEF("query", 3, n_query),
 	JS_CFUNC_DEF("rect", 1, n_rect),
+	JS_CFUNC_DEF("linkSheet", 2, n_link_sheet),
 	JS_CFUNC_DEF("style", 3, n_style),
 	JS_CFUNC_DEF("pageHeight", 0, n_page_height),
 	JS_CFUNC_DEF("viewport", 0, n_viewport),
@@ -2157,8 +2170,11 @@ static void heap_watch(struct sctx *c)
 		(long long)(u.malloc_size >> 20), MEMORY_LIMIT >> 20,
 		(long long)u.obj_count, c->nwrapped, c->ndocs);
 	message(c, SOIE_MSG_WARN, line);
-	if (getenv("SOIE_DEBUG_HEAP"))
+	if (getenv("SOIE_DEBUG_HEAP")) {
 		heap_trees(c);
+		/* what the heap is made of: objects, strings, bytecode... */
+		JS_DumpMemoryUsage(stderr, &u, c->rt);
+	}
 }
 
 /* $SOIE_DEBUG_HEAP: with each heap line, the trees out of the page its

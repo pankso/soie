@@ -622,25 +622,55 @@ function insert(parent, node, ref) {
 }
 
 /*
- * The load event of <link>: the engine fetches style sheets when it
- * styles the page and tells no one, so as for images a sheet is
- * "loaded" from a task once its link is in the document, those of the
- * parsed page just before the window's load. Loaders wait for it:
- * YouTube's player waits for the link of its CSS before it takes the
- * next video.
+ * The load event of <link>. A style sheet's comes when the engine has
+ * it (soie_link_sheet(), set by the style pass that fetched it, the
+ * first look runs one), error when it failed, looked at every 50 ms
+ * and said loaded after 30 s whatever happens; preloads are said
+ * loaded from a task (the engine does not fetch them). Links of the
+ * parsed page are looked at from the window's load. Loaders wait for it: YouTube's player inserts
+ * the link of its CSS and waits for it before it takes a video, and
+ * measures itself with that CSS.
  */
 const linksLoaded = new WeakSet();
+const linksWaiting = new Map();
+let linksTimer = 0;
 function linkLoad(el, now) {
 	if (api.type(el) !== S_EL || api.name(el) !== 'link' ||
-	    linksLoaded.has(el) || !el.isConnected || !el.getAttribute('href') ||
-	    !/(^|\s)(stylesheet|preload|modulepreload)(\s|$)/i.test(
-	    el.getAttribute('rel') || ''))
+	    linksLoaded.has(el) || !el.isConnected || !el.getAttribute('href'))
 		return;
-	linksLoaded.add(el);
-	if (now)
-		dispatch(el, new Event('load'));
-	else
-		addTimer(() => dispatch(el, new Event('load')), 0, [], false);
+	const rel = el.getAttribute('rel') || '';
+	if (/(^|\s)stylesheet(\s|$)/i.test(rel)) {
+		linksLoaded.add(el);
+		linksWaiting.set(el, -(api.now() + 30000));
+		if (now)
+			linksCheck();
+		if (linksWaiting.size && !linksTimer)
+			linksTimer = addTimer(linksCheck, 50, [], true);
+	} else if (/(^|\s)(preload|modulepreload)(\s|$)/i.test(rel)) {
+		linksLoaded.add(el);
+		if (now)
+			dispatch(el, new Event('load'));
+		else
+			addTimer(() => dispatch(el, new Event('load')), 0, [],
+				false);
+	}
+}
+function linksCheck() {
+	const t = api.now();
+	for (const [el, until] of linksWaiting) {
+		/* a negative deadline: not looked at yet */
+		const r = api.linkSheet(el, until < 0);
+		if (!r && t < Math.abs(until)) {
+			linksWaiting.set(el, Math.abs(until));
+			continue;
+		}
+		linksWaiting.delete(el);
+		dispatch(el, new Event(r < 0 ? 'error' : 'load'));
+	}
+	if (!linksWaiting.size && linksTimer) {
+		timers.delete(linksTimer);
+		linksTimer = 0;
+	}
 }
 
 /* Custom elements just inserted in the page: constructed if they were

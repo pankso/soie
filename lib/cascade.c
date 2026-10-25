@@ -710,7 +710,8 @@ static int pending_changed(const struct styledb *db,
 	return 0;
 }
 
-static void fetch_sheet(struct styledb *db, const char *url,
+/* 0 when the sheet is in, SOIE_FETCH_LATER, -1 on failure */
+static int fetch_sheet(struct styledb *db, const char *url,
 	const struct pctx *pc)
 {
 	const soie_style_options *o = db->opts;
@@ -721,12 +722,12 @@ static void fetch_sheet(struct styledb *db, const char *url,
 	int r;
 
 	if (!o || !o->fetch || pc->depth > 16)
-		return;
+		return -1;
 	r = o->fetch(o->fetch_data, url, &buf, &len);
 	if (r == SOIE_FETCH_LATER)
 		pending_add(db, url);
 	if (r || !buf)
-		return;
+		return r ? r : -1;
 	decode_css(db, buf, len, &text);
 	free(buf);
 	sub.base = url;
@@ -734,6 +735,7 @@ static void fetch_sheet(struct styledb *db, const char *url,
 	sub.parent = NULL;
 	load_sheet(db, text.s, text.len, &sub);
 	buf_free(&text);
+	return 0;
 }
 
 static void at_import(struct styledb *db, struct crule *r,
@@ -1101,9 +1103,13 @@ static void collect_sheets(struct styledb *db, soie_node *doc,
 				    "alternate") && !soie_element_get_attr(n,
 				    "disabled") && media_attr(db, n)) {
 					char *url = soie_url_resolve(base, href);
+					int r = fetch_sheet(db, url, &pc);
 
-					fetch_sheet(db, url, &pc);
+					n->sheet = r == SOIE_FETCH_LATER ? 0 :
+						r ? 2 : 1;
 					free(url);
+				} else {
+					n->sheet = 1;	/* nothing to wait for */
 				}
 			}
 		}
@@ -2867,6 +2873,13 @@ static int value_of(const struct style *st, const char *prop, struct buf *b)
 		return 0;
 	serialize_value(p, &st->v[p], b);
 	return 1;
+}
+
+int soie_link_sheet(const soie_node *el)
+{
+	if (!el || el->type != SOIE_ELEMENT || el->tag != TAG_LINK)
+		return 0;
+	return el->sheet == 2 ? -1 : el->sheet;
 }
 
 char *soie_computed_value(const soie_node *el, const char *pseudo,

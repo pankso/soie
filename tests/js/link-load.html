@@ -1,19 +1,26 @@
 <!DOCTYPE html>
-<link rel=stylesheet href="missing.css" onload="log('parsed sheet load')">
-<link rel=preload as=style href="missing2.css" onload="this.onload = null; this.rel = 'stylesheet'; log('preload load', this.rel)">
+<link rel=stylesheet href="link-load.css" onload="log('parsed sheet load')">
+<link rel=stylesheet href="missing.css" onload="log('never: missing load')" onerror="log('parsed sheet error')">
+<link rel=preload as=style href="link-load.css" onload="this.onload = null; this.rel = 'stylesheet'; log('preload load', this.rel)">
 <link rel=icon href="favicon.ico" onload="log('never: icon')">
+<p id=p>text</p>
 <script>
 var log = (...a) => console.log(a.map(String).join(' '));
 window.addEventListener('load', () => log('window load'));
 var l = document.createElement('link');
 l.rel = 'stylesheet';
-l.href = 'player.css';
+l.href = './link-load.css';
 l.addEventListener('load', () => log('dynamic sheet load', l.isConnected));
 log('created, not inserted');
 setTimeout(() => {
 	document.head.appendChild(l);
 	log('inserted');
 	document.head.appendChild(l);
+	var e = document.createElement('link');
+	e.rel = 'stylesheet';
+	e.href = 'missing2.css';
+	e.onerror = () => log('dynamic sheet error');
+	document.head.appendChild(e);
 	var f = document.createDocumentFragment(), m = document.createElement('link');
 	m.rel = 'modulepreload';
 	m.href = 'mod.js';

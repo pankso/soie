@@ -766,6 +766,18 @@ on the same frozen DOM.
   wrappers): what found the observers above. After them YouTube still
   keeps about 13 MB a video, its description renderers above all; who
   holds them is not known (QuickJS cannot say who refers to an object).
+- What YouTube's heap is made of (`SOIE_DEBUG_HEAP=1` now prints
+  QuickJS's own table too), October 25: after the first video 397 000
+  objects, 122 MB of 4 KB arenas 90 % full; each navigation adds
+  130 000 to 150 000 objects, 27 to 42 MB (149, then 191 MB after two).
+  Objects (72-byte blocks) and their property arrays (56) are most of
+  it, bytecode 26 MB. Not fragmentation (the arenas stay 88 % full),
+  and not something of ours: the timers, object URLs, observers and
+  requests the script engine holds stay the same from one video to
+  the next. The trees out of the page are YouTube's components of the
+  videos before (suggestion lockups, description renderers), held by
+  YouTube's own objects. A search page and a few videos reach 256 MB:
+  YouTube then shows its error.
 - Past half the limit the script engine runs the cycle collector at
   most every 10 s: QuickJS's own threshold grows with the heap and
   came too late for the trees dropped.
@@ -1054,11 +1066,16 @@ on the same frozen DOM.
 - Tests: `make check-js` runs the pages of `tests/js` and compares
   their console output; `soie-render -j` runs a page's scripts.
 - Cost: Wikipedia takes 0.3 s more CPU and 11 MB more with scripts.
-- `<link>` fires load (stylesheet, preload, modulepreload): from a task
-  once it is in the document, those of the parsed page just before the
-  window's load, once per element. The engine fetches sheets while
-  styling and tells no one, so like images they are said loaded, not
-  waited for. YouTube's navigation hung on it: its player inserts the
+- `<link>` fires load and error, once per element. A style sheet's
+  when the engine has it: the style pass that fetches it marks the
+  element, `soie_link_sheet()` tells (1 in, -1 failed, 0 on its way),
+  the script engine looks every 50 ms while some wait (the first look
+  runs a style pass, which asks for the sheet) and says loaded after
+  30 s whatever happens. Preloads are said loaded from a task (the
+  engine does not fetch them). Links of the parsed page are looked at
+  from the window's load. A first version said every link loaded at
+  once, as images are; but a loader that waits for a sheet means to
+  measure with it. YouTube's navigation hung on it: its player inserts the
   link of its CSS and waits for load before it takes a video, so a
   click on another video changed the page and the address while the
   player went on with the first one's ads and content, with no error
