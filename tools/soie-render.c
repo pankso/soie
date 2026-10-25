@@ -162,7 +162,7 @@ static void scroll(void *data, float x, float y)
 static void run_scripts(soie_node *doc, const char *url, int ms)
 {
 	static soie_script_host host = { NULL, request, navigate, message,
-		viewport, scroll };
+		viewport, scroll, NULL };
 	struct timespec t0, t;
 	int d, spent;
 

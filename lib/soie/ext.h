@@ -186,6 +186,10 @@ typedef struct {
 	/* viewport size and scroll position, CSS px; and scrolling */
 	void (*viewport)(void *data, int *w, int *h, float *sx, float *sy);
 	void (*scroll)(void *data, float x, float y);
+	/* the page's URL changed without a load (history.pushState(),
+	 * replaceState()): a new history entry when push, else the
+	 * current one's. Since 1.3; may be NULL. */
+	void (*url)(void *data, const char *url, int push);
 } soie_script_host;
 
 #define SOIE_MOD_SHIFT 1

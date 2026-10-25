@@ -1514,6 +1514,20 @@ static JSValue n_navigate(JSContext *js, JSValueConst this, int argc,
 	return JS_UNDEFINED;
 }
 
+static JSValue n_show_url(JSContext *js, JSValueConst this, int argc,
+	JSValueConst *argv)
+{
+	struct sctx *c = ctx_of(js);
+	STR(0, url);
+
+	(void)this;
+	if (c->host->url)
+		c->host->url(c->host->data, url,
+			argc > 1 && JS_ToBool(js, argv[1]));
+	JS_FreeCString(js, url);
+	return JS_UNDEFINED;
+}
+
 static JSValue n_message(JSContext *js, JSValueConst this, int argc,
 	JSValueConst *argv)
 {
@@ -1826,6 +1840,7 @@ static const JSCFunctionListEntry natives[] = {
 	JS_CFUNC_DEF("requestAsync", 5, n_request_async),
 	JS_CFUNC_DEF("cookie", 1, n_cookie),
 	JS_CFUNC_DEF("navigate", 2, n_navigate),
+	JS_CFUNC_DEF("showURL", 2, n_show_url),
 	JS_CFUNC_DEF("message", 2, n_message),
 	JS_CFUNC_DEF("now", 0, n_now),
 	JS_CFUNC_DEF("currentScript", 0, n_current),

@@ -561,6 +561,13 @@ reversed, edit the entry and say why; do not leave stale rules here.
   takes one window; tabs can come later in the shell.
 - The window has a class (`xsoie`, `Xsoie`) for window managers and
   an icon painted by Soie.
+- history.pushState() and replaceState() change the address the host
+  shows, with no load: the script host gained a url hook (libsoie 1.3,
+  NULL in older hosts), pushState a history entry of the shell's own
+  (Back then loads the URL before it), replaceState the current one's.
+  The page's URL is the new one, for links resolved from it, as in
+  browsers. A fragment link updates the address too. YouTube's address
+  followed none of its videos before.
 
 ## YouTube, the first round
 

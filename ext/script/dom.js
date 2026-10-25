@@ -3236,7 +3236,8 @@ function navigate(url, replace) {
 	api.navigate(to, replace);
 }
 
-/* History: pushState changes the URL scripts see, not the host's */
+/* History: pushState changes the URL scripts see and the host shows (a
+ * history entry of its own), with no load */
 const states = [{ state: null, url: href }];
 let stateIndex = 0;
 const history = {
@@ -3250,11 +3251,13 @@ const history = {
 		states.splice(stateIndex + 1);
 		states.push({ state, url: href });
 		stateIndex++;
+		api.showURL(href, true);
 	},
 	replaceState(state, title, url) {
 		if (url !== undefined && url !== null)
 			href = api.resolve(href, String(url)) || href;
 		states[stateIndex] = { state, url: href };
+		api.showURL(href, false);
 	},
 	go(n) {
 		n = n | 0;
@@ -3263,6 +3266,7 @@ const history = {
 			return;
 		stateIndex = to;
 		href = states[to].url;
+		api.showURL(href, false);
 		addTimer(() => dispatch(g, new PopStateEvent('popstate',
 			{ state: states[to].state })), 0, [], false);
 	},

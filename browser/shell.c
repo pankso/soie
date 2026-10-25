@@ -272,6 +272,47 @@ static void clamp_scroll(void);
 static void set_title(void);
 static void navigate_to(const char *href, int replace);
 
+/* page.url in the history: a new entry (push 1), the current one's
+ * (push 2), none (0) */
+static void hist_note(int push)
+{
+	int i;
+
+	if (push == 2 && hist.cur >= 0) {
+		free(hist.url[hist.cur]);
+		hist.url[hist.cur] = strdup(page.url);
+		hist.scroll[hist.cur] = 0;
+	} else if (push) {
+		for (i = hist.cur + 1; i < hist.n; i++)
+			free(hist.url[i]);
+		if (hist.cur + 1 >= 256) {
+			free(hist.url[0]);
+			memmove(hist.url, hist.url + 1, 255 * sizeof(char *));
+			memmove(hist.scroll, hist.scroll + 1, 255 * sizeof(int));
+			hist.cur--;
+		}
+		hist.cur++;
+		hist.url[hist.cur] = strdup(page.url);
+		hist.scroll[hist.cur] = 0;
+		hist.n = hist.cur + 1;
+	}
+}
+
+/* history.pushState(), replaceState(): the address only, no load */
+static void js_url(void *data, const char *url, int push)
+{
+	(void)data;
+	if (!strcmp(url, page.url))
+		return;
+	debug(2, "url %s%s", url, push ? "" : " (replaced)");
+	if (push && hist.cur >= 0)
+		hist.scroll[hist.cur] = page.scroll;
+	snprintf(page.url, sizeof(page.url), "%s", url);
+	hist_note(push ? 1 : 2);
+	debug_page(page.url);
+	ui_address(page.url);
+}
+
 static void js_navigate(void *data, const char *url, int replace)
 {
 	(void)data;
@@ -365,7 +406,7 @@ static int page_request(void *data, const soie_request *req,
 }
 
 static const soie_script_host js_host = { NULL, page_request, js_navigate,
-	js_message, js_viewport, js_scroll };
+	js_message, js_viewport, js_scroll, js_url };
 
 /* Send a DOM event to the page; 1 when a script cancelled it. */
 static int fire(soie_node *target, const char *type, float x, float y,
@@ -728,26 +769,7 @@ static void doc_arrived(struct job *j)
 	free(page.user_css);
 	page.user_css = soie_ext_user_css(NULL, page.url);
 	soie_ext_document(page.doc, page.url);
-	if (push == 2 && hist.cur >= 0) {
-		free(hist.url[hist.cur]);
-		hist.url[hist.cur] = strdup(page.url);
-		hist.scroll[hist.cur] = 0;
-	} else if (push) {
-		int i;
-
-		for (i = hist.cur + 1; i < hist.n; i++)
-			free(hist.url[i]);
-		if (hist.cur + 1 >= 256) {
-			free(hist.url[0]);
-			memmove(hist.url, hist.url + 1, 255 * sizeof(char *));
-			memmove(hist.scroll, hist.scroll + 1, 255 * sizeof(int));
-			hist.cur--;
-		}
-		hist.cur++;
-		hist.url[hist.cur] = strdup(page.url);
-		hist.scroll[hist.cur] = 0;
-		hist.n = hist.cur + 1;
-	}
+	hist_note(push);
 	page.scroll = 0;
 	prefetch();
 	page.loading = L_STYLE;
@@ -951,6 +973,8 @@ static void navigate_to(const char *href, int replace)
 			float x, y, w, hh;
 
 			snprintf(page.url, sizeof(page.url), "%s", abs);
+			hist_note(replace ? 2 : 1);
+			ui_address(page.url);
 			if (el && !soie_element_rect(el, &x, &y, &w, &hh)) {
 				page.scroll = (int)y;
 				clamp_scroll();
