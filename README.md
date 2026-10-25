@@ -5,7 +5,7 @@ reference browser. No toolkit, no JavaScript in the core, built to
 render modern pages on old machines. See `doc/DECISIONS.md` for what
 Soie is and is not, and how extensions plug in.
 
-Status: the eleven phases are in, version 1.2.0. Extensions
+Status: the eleven phases are in, version 1.3.0. Extensions
 (`lib/soie/ext.h`) bring cookies, content blocking, WebP, JavaScript
 (QuickJS) and audio/video (FFmpeg, ALSA, Media Source Extensions: YouTube plays). `browser/xsoie` browses the
 web (HTTPS, forms, history, cookies, scripts, video). The HTML parser follows the WHATWG algorithm and passes the
@@ -45,8 +45,9 @@ script extension.
 
 The browser: `browser/xsoie [URL]`, or `browser/xsoie -o out.png URL`
 to render a page without a display. It also needs Xlib, GnuTLS and
-zlib. Its shell (`browser/shell.c`) has no toolkit: xsoie is its Xlib
-front, a GTK one can follow. Ctrl+L address (or words to search for,
+zlib. Its shell (`browser/shell.c`) has no toolkit; what its fronts
+share (bars, keys, repainting only what changed) is `browser/front.c`,
+and xsoie is the Xlib part (MIT-SHM). Ctrl+L address (or words to search for,
 `$SOIE_SEARCH`), Ctrl+F find, Ctrl+C/Ctrl+V clipboard, Ctrl+N or the
 middle button on a link a new window, Alt+arrows history, F5 reload. It loads the installed extensions, or those of
 `$SOIE_EXT_DIR`: `SOIE_EXT_DIR=ext browser/xsoie` in the tree.
@@ -61,7 +62,7 @@ block list in `~/.config/soie/block.txt` turns content blocking on.
 ## Layout
 
     lib/         libsoie (public headers in lib/soie/)
-    browser/     the browser: shell, xsoie (Xlib), HTTP and TLS
+    browser/     the browser: shell, fronts' part, xsoie (Xlib), HTTP and TLS
     ext/         extensions (cookies, block, webp, script, media)
     tools/       soie-render, generators
     tests/       unit tests, html5lib test runner, local corpus

@@ -521,7 +521,9 @@ reversed, edit the entry and say why; do not leave stale rules here.
 
 ## Shell and fronts: xsoie
 
-- The browser is split in two: browser/shell.c keeps the page, its
+- The browser is split in two (three since: the fronts' common part
+  is browser/front.c, see "Repainting what changed"): browser/shell.c
+  keeps the page, its
   resources, history, forms, scripts, meta refresh, find and the
   offscreen PNG render, with no toolkit; a front shows it and feeds
   the input in (shell.h). The first front is `xsoie` (browser/xsoie.c,
@@ -744,6 +746,63 @@ on the same frozen DOM.
 - xsoie keeps only the last of the ConfigureNotify events waiting: a
   window dragged bigger cost one relayout per event (40 for a short
   drag on YouTube, 10 s behind the mouse); now one per relayout time.
+
+## Repainting what changed
+
+- A redraw used to paint the whole window: page, toolbar and bars, then
+  swap red and blue in every pixel and send them all down the X socket.
+  A wheel step on a long page with rounded boxes cost 127 ms of CPU, a
+  hover over a link that changed the status line 25 ms, a key typed in
+  the address bar 80 ms (the page painted again for nothing).
+- Pixel order: soie_paint_bgra() (libsoie 1.3.0, soname unchanged)
+  writes B G R A, what X and Wayland servers take on little-endian
+  machines. The three places that write pixels (colors, images, SVG)
+  swap their source, not the canvas: no pass over the pixels after.
+  The front picks the order from the visual (red mask 0xff0000, LSB
+  first) and tells the shell (shell_bgra()).
+- The fronts' common part, browser/front.c (front.h), knows what it
+  changed: the toolbar alone for a key in the address bar; the page
+  when the shell or the input changed it (a click, a key the page
+  took, a navigation, a find); the thumb and the bottom bar (find bar
+  or status line) by comparing them with what was painted, the page
+  painted again under where they were. The rects painted are what is
+  sent (tk_show()), merged to one when more than 8.
+- Scrolling alone moves pixels: shell_paint_scroll() moves the view's
+  rows and paints the band that came in. It holds because painting is
+  a translation of page coordinates (sticky is static, fixed boxes
+  stay where laid out: when they follow the view, they will need their
+  rects painted again). shell_key() returns 2 for a key that only
+  scrolled, so arrows and Page Down move pixels too.
+- What tells that the page changed: shell_tick()'s repaint, and the
+  document generation at the last full paint. Scripts lay out the page
+  themselves (getBoundingClientRect()), leaving no update for the
+  shell to see after them; YouTube's top bar stayed three grey circles
+  after its sign-in button came. A generation that moved means a full
+  paint, and no move of the old pixels.
+- xsoie sends the pixels through MIT-SHM (XShmPutImage, an XSync
+  before they are painted again) when the server is on this machine,
+  XPutImage otherwise. An expose sends the kept pixels again, without
+  painting.
+- Painting a band of a long page cost as much as half the page: every
+  text was shaped and every rounded box sampled 16 times a pixel, then
+  thrown away by the clip. Text fragments out of the clip (glyphs 2em
+  up, 1em down from the baseline) are skipped; a pixel inside a
+  rounded box away from its corners is covered, one outside is not,
+  without sampling. Pixels are byte for byte the same (checked on the
+  paint tests and a long page at 3 offsets against 1.2.0); a full
+  paint of the long test page went from 120 ms to 27 ms, a band from
+  13 ms to 2 ms.
+- Measured on a 60-card page (rounded borders, gradient, images, SVG),
+  CPU of xsoie in 1/100 s: 80 wheel steps 1017 to 58, 40 hovers 101 to
+  1, 30 keys in the address bar 235 to 15. YouTube while it plays does
+  not move (1055): decoding and its scripts, which change the page
+  all the time, take the CPU.
+- `SOIE_DEBUG_PAINT=1` paints the window whole after each redraw into
+  another buffer and reports where they differ (2 levels of rounding
+  allowed), but in the players' rect: frames come from decoding
+  threads. It found the generation case above. The paint test checks
+  the same at the engine's level: BGRA against RGBA, bands, a rect and
+  a scrolled page against the whole.
 
 ## Debugging the browser
 

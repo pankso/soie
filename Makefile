@@ -135,20 +135,21 @@ tests/html5lib: tests/html5lib.o lib/libsoie.a
 tests/unit: tests/unit.o lib/libsoie.a
 	$(CC) $(LDFLAGS) -o $@ tests/unit.o lib/libsoie.a $(LIBS)
 
-# The browser: the shell (pages, network: GnuTLS, zlib) and its fronts,
-# xsoie on Xlib.
+# The browser: the shell (pages, network: GnuTLS, zlib), the fronts'
+# common part (front.c) and their toolkits: xsoie on Xlib (MIT-SHM).
 SHELL_PKGS = gnutls zlib libpng
 SHELL_OBJS = browser/shell.o browser/net.o browser/fetch.o browser/debug.o
-browser/xsoie: browser/xsoie.o $(SHELL_OBJS) lib/libsoie.so.$(SOVERSION)
-	$(CC) $(LDFLAGS) $(RPATH) -o $@ browser/xsoie.o $(SHELL_OBJS) \
+FRONT_OBJS = browser/front.o $(SHELL_OBJS)
+browser/xsoie: browser/xsoie.o $(FRONT_OBJS) lib/libsoie.so.$(SOVERSION)
+	$(CC) $(LDFLAGS) $(RPATH) -o $@ browser/xsoie.o $(FRONT_OBJS) \
 		lib/libsoie.so.$(SOVERSION) $(LIBS) \
-		$(shell pkg-config --libs $(SHELL_PKGS) x11) -lpthread
+		$(shell pkg-config --libs $(SHELL_PKGS) x11 xext) -lpthread
 
-browser/xsoie.o $(SHELL_OBJS): browser/net.h browser/fetch.h \
-	browser/shell.h browser/debug.h $(HEADERS)
+browser/xsoie.o $(FRONT_OBJS): browser/net.h browser/fetch.h \
+	browser/shell.h browser/front.h browser/debug.h $(HEADERS)
 $(SHELL_OBJS): CPPFLAGS += $(shell pkg-config --cflags $(SHELL_PKGS)) \
 	-DSOIE_EXT_DIR='"$(EXTDIR)"'
-browser/xsoie.o: CPPFLAGS += $(shell pkg-config --cflags x11)
+browser/xsoie.o: CPPFLAGS += $(shell pkg-config --cflags x11 xext)
 tools/soie-render.o: CPPFLAGS += -DSOIE_EXT_DIR='"$(EXTDIR)"'
 
 tests/exttest: tests/exttest.o lib/libsoie.so.$(SOVERSION)

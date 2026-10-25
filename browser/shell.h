@@ -1,7 +1,7 @@
 /*
  * The browser's shell: pages and their resources, history, forms,
- * scripts and find, without a toolkit. A front (xsoie on Xlib) shows
- * the page, its address and title, and feeds the input in. Coordinates
+ * scripts and find, without a toolkit. A front (front.h, xsoie on
+ * Xlib) shows the page, its address and title, and feeds the input in. Coordinates
  * are the page view's, its top left corner at 0,0.
  */
 #ifndef SOIE_SHELL_H
@@ -25,8 +25,14 @@ void shell_resize(int w, int h);
  * changed, 2 when only the rectangle shell_dirty() gives did (video
  * frames). Returns ms until the next call is due, -1 without a timer. */
 int shell_tick(int *repaint);
+/* The front's pixels are B G R A, not R G B A (the default). */
+void shell_bgra(int on);
 /* Paint the page view into rgba (stride bytes a row). */
 void shell_paint(unsigned char *rgba, int stride);
+/* rgba holds the last shell_paint(): when the page only scrolled since,
+ * move its pixels and paint what came into view, *dy the move (0: the
+ * view is as it was). Returns 0 when it cannot: shell_paint() then. */
+int shell_paint_scroll(unsigned char *rgba, int stride, int *dy);
 /* After a repaint of 2: the view's rectangle to paint again; 0 when
  * it is out of view. */
 int shell_dirty(int *x, int *y, int *w, int *h);
@@ -49,7 +55,7 @@ int shell_loading(const char **text);
 /* Input. mods are SOIE_MOD_*. Keys are DOM key values ("Enter",
  * "ArrowLeft", "a"), text what the key typed, in UTF-8. */
 void shell_click(int x, int y, int mods);
-/* 1 when the page took the key */
+/* 1 when the page took the key, 2 when it only scrolled the page */
 int shell_key(const char *key, const char *text, int mods);
 /* The cursor for x,y; the link under it in link, or "". */
 int shell_hover(int x, int y, char *link, size_t size);

@@ -84,6 +84,12 @@ static struct {
 static soie_node *focus;	/* focused page control */
 static int caret;
 static int view_w = 1024, view_h = 734;
+/* The front's pixels are B G R A (shell_bgra()); what shell_paint()
+ * showed last, at which scroll and document generation */
+static int bgra, painted_scroll;
+static soie_node *painted;
+static unsigned long painted_gen;
+static int page_changed(void);
 static int scripts = 1;		/* 0: no JavaScript */
 static char *pending_nav;	/* a script's navigation, done after it */
 static int pending_replace;
@@ -1289,7 +1295,7 @@ int shell_edit(soie_node *el, int *cp, const char *key, const char *text)
 
 int shell_key(const char *key, const char *text, int mods)
 {
-	int r = 1;
+	int r = 2;
 
 	debug(2, "key %s%s%s%s", mods & SOIE_MOD_CTRL ? "Ctrl+" : "",
 		mods & SOIE_MOD_ALT ? "Alt+" : "", mods & SOIE_MOD_SHIFT ?
@@ -1332,11 +1338,14 @@ int shell_key(const char *key, const char *text, int mods)
 		page.scroll = 0;
 	else if (!strcmp(key, "End"))
 		page.scroll = (int)page.height;
-	else if (!strcmp(key, "Backspace"))
+	else if (!strcmp(key, "Backspace")) {
 		go_history(-1);
-	else
+		r = 1;
+	} else {
 		r = 0;
-	after_scripts();
+	}
+	if (after_scripts() && r)
+		r = 1;
 	clamp_scroll();
 	return r;
 }
@@ -1515,7 +1524,7 @@ int shell_tick(int *repaint)
 		t = m;
 	refresh_due();
 	t1 = now_s();
-	if (after_scripts())
+	if (after_scripts() || page_changed())
 		*repaint = 1;
 	if (now_s() - t1 > 0.1)
 		debug(1, "busy %.2f s: the scripts' changes (restyle, layout)",
@@ -1554,45 +1563,116 @@ int shell_dirty(int *x, int *y, int *w, int *h)
 	return 1;
 }
 
+void shell_bgra(int on)
+{
+	bgra = on;
+}
+
+static int paint_doc(soie_node *doc, unsigned char *px, int w, int h,
+	int stride, int sx, int sy)
+{
+	return bgra ? soie_paint_bgra(doc, px, w, h, stride, sx, sy) :
+		soie_paint(doc, px, w, h, stride, sx, sy);
+}
+
+/* The match found, an orange highlight, in the view's rect x, y, w, h */
+static void highlight(unsigned char *rgba, int stride, int x, int y, int w,
+	int h)
+{
+	int x0 = (int)found.x, y0 = (int)found.y - page.scroll;
+	int x1 = (int)(found.x + found.w + 1);
+	int y1 = (int)(found.y + found.h + 1) - page.scroll, i, j;
+	int r = bgra ? 2 : 0;
+
+	if (!found.n)
+		return;
+	x0 = x0 < x ? x : x0;
+	y0 = y0 < y ? y : y0;
+	x1 = x1 > x + w ? x + w : x1;
+	y1 = y1 > y + h ? y + h : y1;
+	for (j = y0; j < y1; j++)
+		for (i = x0; i < x1; i++) {
+			unsigned char *p = rgba + (size_t)j * (size_t)stride +
+				(size_t)i * 4;
+
+			p[r] = (unsigned char)((p[r] + 255) / 2);
+			p[1] = (unsigned char)((p[1] + 150) / 2);
+			p[2 - r] = (unsigned char)(p[2 - r] / 2);
+		}
+}
+
+/*
+ * Paint the view's rect x, y, w, h (rgba is the view's top left
+ * corner): the page, or until the new one is laid out the old one, or
+ * white. Returns the document shown.
+ */
+static soie_node *paint_view(unsigned char *rgba, int stride, int x, int y,
+	int w, int h)
+{
+	unsigned char *p = rgba + (size_t)y * (size_t)stride + (size_t)x * 4;
+	int j;
+
+	if (page.doc && !paint_doc(page.doc, p, w, h, stride, x,
+	    page.scroll + y)) {
+		highlight(rgba, stride, x, y, w, h);
+		return page.doc;
+	}
+	if (page.old && !paint_doc(page.old, p, w, h, stride, x,
+	    page.old_scroll + y))
+		return page.old;
+	for (j = 0; j < h; j++)
+		memset(p + (size_t)j * (size_t)stride, 255, (size_t)w * 4);
+	return NULL;
+}
+
 void shell_paint_rect(unsigned char *rgba, int stride, int x, int y, int w,
 	int h)
 {
-	if (page.doc)
-		soie_paint(page.doc, rgba + (size_t)y * (size_t)stride +
-			(size_t)x * 4, w, h, stride, x, page.scroll + y);
+	paint_view(rgba, stride, x, y, w, h);
 }
 
 void shell_paint(unsigned char *rgba, int stride)
 {
-	int y, x;
+	painted = paint_view(rgba, stride, 0, 0, view_w, view_h);
+	painted_scroll = page.scroll;
+	painted_gen = painted ? soie_document_generation(painted) : 0;
+}
 
-	/* until the new page is laid out, the old one stays */
-	if (page.doc && !soie_paint(page.doc, rgba, view_w, view_h, stride, 0,
-	    page.scroll)) {
-		int x0 = (int)found.x, y0 = (int)found.y - page.scroll;
-		int x1 = (int)(found.x + found.w + 1);
-		int y1 = (int)(found.y + found.h + 1) - page.scroll;
+/* The page shown changed since it was painted: a script's layout (its
+ * getBoundingClientRect()) leaves no update for after_scripts() to do */
+static int page_changed(void)
+{
+	return page.doc && painted == page.doc &&
+		soie_document_generation(page.doc) != painted_gen;
+}
 
-		/* the match found, an orange highlight */
-		if (!found.n)
-			return;
-		for (y = y0 < 0 ? 0 : y0; y < y1 && y < view_h; y++)
-			for (x = x0 < 0 ? 0 : x0; x < x1 && x < view_w; x++) {
-				unsigned char *p = rgba + (size_t)y * (size_t)stride +
-					(size_t)x * 4;
+int shell_paint_scroll(unsigned char *rgba, int stride, int *dy)
+{
+	int d = page.scroll - painted_scroll, y;
+	size_t row = (size_t)view_w * 4;
 
-				p[0] = (unsigned char)((p[0] + 255) / 2);
-				p[1] = (unsigned char)((p[1] + 150) / 2);
-				p[2] = (unsigned char)(p[2] / 2);
-			}
-		return;
+	*dy = 0;
+	if (page_changed())
+		return 0;
+	/* the old page shown stays until the new one is laid out */
+	if (!page.doc || painted != page.doc || !d)
+		return 1;
+	if (d >= view_h || -d >= view_h)
+		return 0;
+	if (d > 0) {
+		for (y = 0; y < view_h - d; y++)
+			memmove(rgba + (size_t)y * (size_t)stride, rgba +
+				(size_t)(y + d) * (size_t)stride, row);
+		paint_view(rgba, stride, 0, view_h - d, view_w, d);
+	} else {
+		for (y = view_h - 1; y >= -d; y--)
+			memmove(rgba + (size_t)y * (size_t)stride, rgba +
+				(size_t)(y + d) * (size_t)stride, row);
+		paint_view(rgba, stride, 0, 0, view_w, -d);
 	}
-	if (page.old && !soie_paint(page.old, rgba, view_w, view_h, stride, 0,
-	    page.old_scroll))
-		return;
-	for (y = 0; y < view_h; y++)
-		memset(rgba + (size_t)y * (size_t)stride, 255,
-			(size_t)view_w * 4);
+	painted_scroll = page.scroll;
+	*dy = d;
+	return 1;
 }
 
 static char *slurp(const char *path, size_t *len);
