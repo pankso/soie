@@ -5,8 +5,9 @@
  * attributes, mutation, queries, layout, the host's services) on an
  * internal object; dom.js, run first in every context, builds the web
  * platform (Node, Element, events, timers, fetch, XHR...) on them.
- * Each node a script touches gets one wrapper object, kept until the
- * page goes away, so expandos and listeners survive.
+ * Each node a script touches gets one wrapper object, alive as long as
+ * its tree can be reached (see Wrappers), so expandos and listeners
+ * survive.
  */
 #define _POSIX_C_SOURCE 200809L
 #include <stdio.h>
@@ -38,8 +39,11 @@ struct sctx {
 	char *url;
 	JSValue api;
 	JSValue proto_for, dispatch, tick, frame;
+	/* nodes with a wrapper (struct wref their user pointer) */
 	soie_node **wrapped;
 	size_t nwrapped, capwrapped;
+	double swept;		/* when wrappers were last put in their tree */
+	JSValue docw;		/* the page's document's wrapper, held */
 	double deadline;
 	soie_node *written;	/* document.write: the last inserted node */
 	char **map_from, **map_to;	/* the import map */
@@ -124,17 +128,166 @@ static int interrupt(JSRuntime *rt, void *opaque)
 	return c->deadline && now_ms() > c->deadline;
 }
 
-/* Wrappers */
+/*
+ * Wrappers. A node keeps its wrapper, the same object with what the
+ * page put on it, as long as its tree can be reached: the document,
+ * or a tree out of it that a script holds a node of (its root, or a
+ * node below whose root and siblings scripts reach through it). Each
+ * wrapper holds its tree root's wrapper (the anchor), the root holds
+ * the wrappers of its tree (members), and both are told to the
+ * collector (mark()): a tree no script reaches is a cycle it frees.
+ * The page's document is held for good. Kept forever instead, every
+ * node a page touched held its wrapper and all it reached: YouTube grew
+ * 60 MB a video, out of memory at the third.
+ */
+struct wref {
+	JSValue obj;		/* the wrapper, not a reference */
+	soie_node *n, *root;	/* its node, the root of its tree then */
+	JSValue anchor;		/* the root's wrapper, unless it is it */
+	size_t mi;		/* in the root's members */
+	JSValue *members;	/* a root's: its tree's wrappers */
+	size_t nm, cm;
+	size_t i;		/* in c->wrapped */
+};
+
+static struct wref *wref_of(JSValueConst val)
+{
+	soie_node *n = JS_GetOpaque(val, node_class);
+	struct wref *w = n ? soie_node_user(n) : NULL;
+
+	return w && JS_VALUE_GET_PTR(w->obj) == JS_VALUE_GET_PTR(val) ? w :
+		NULL;
+}
+
+/* What a wrapper holds, for the cycle collector */
+static void mark(JSRuntime *rt, JSValueConst val, JS_MarkFunc *mf)
+{
+	struct wref *w = wref_of(val);
+	size_t k;
+
+	if (!w)
+		return;
+	JS_MarkValue(rt, w->anchor, mf);
+	for (k = 0; k < w->nm; k++)
+		JS_MarkValue(rt, w->members[k], mf);
+}
+
+/* A wrapper freed: its node lets go of it, it of what it held */
+static void finalize(JSRuntime *rt, JSValue val)
+{
+	struct sctx *c = JS_GetRuntimeOpaque(rt);
+	struct wref *w = wref_of(val);
+	soie_node *last;
+	size_t k;
+
+	if (!c || !w)
+		return;
+	JS_FreeValueRT(rt, w->anchor);
+	for (k = 0; k < w->nm; k++)
+		JS_FreeValueRT(rt, w->members[k]);
+	free(w->members);
+	last = c->wrapped[--c->nwrapped];
+	c->wrapped[w->i] = last;
+	((struct wref *)soie_node_user(last))->i = w->i;
+	soie_node_set_user(w->n, NULL);
+	free(w);
+}
+
+static JSValue wrap(struct sctx *c, soie_node *n);
+
+/* w in the members of the root of its tree now, out of the old one's:
+ * the new hold first, w never goes in between; w is not touched once
+ * the old is let go (it may be freed then) */
+static void rehome(struct sctx *c, struct wref *w)
+{
+	soie_node *r = w->n, *old = w->root;
+	struct wref *rw, *ow = NULL, *moved;
+	JSValue anchor = JS_UNDEFINED, member = JS_UNDEFINED;
+	JSValue old_anchor = w->anchor;
+	size_t old_mi = w->mi;
+
+	while (soie_node_parent(r))
+		r = soie_node_parent(r);
+	if (r == old)
+		return;
+	if (old && old != w->n)
+		ow = soie_node_user(old);
+	if (r != w->n) {
+		anchor = wrap(c, r);
+		if (JS_IsException(anchor))
+			return;
+		rw = soie_node_user(r);
+		if (rw->nm == rw->cm) {
+			rw->cm = rw->cm ? rw->cm * 2 : 16;
+			rw->members = realloc(rw->members, rw->cm *
+				sizeof(*rw->members));
+			if (!rw->members)
+				abort();
+		}
+		w->mi = rw->nm;
+		rw->members[rw->nm++] = JS_DupValue(c->js, w->obj);
+	}
+	if (r == c->doc && JS_IsUndefined(c->docw))
+		c->docw = JS_DupValue(c->js, ((struct wref *)
+			soie_node_user(r))->obj);
+	w->anchor = anchor;
+	w->root = r;
+	if (ow) {
+		member = ow->members[old_mi];
+		ow->members[old_mi] = ow->members[--ow->nm];
+		if (old_mi < ow->nm && (moved = wref_of(
+		    ow->members[old_mi])))
+			moved->mi = old_mi;
+		JS_FreeValue(c->js, old_anchor);
+		JS_FreeValue(c->js, member);
+	}
+}
+
+/* Each wrapper in its tree's members, once a second (a node taken out
+ * stays held by the old tree until then). From the end: a wrapper
+ * freed takes the last one's place, already looked at. */
+static void sweep(struct sctx *c)
+{
+	size_t i;
+
+	if (now_ms() - c->swept < 1000)
+		return;
+	c->swept = now_ms();
+	for (i = c->nwrapped; i-- > 0;)
+		if (i < c->nwrapped)
+			rehome(c, soie_node_user(c->wrapped[i]));
+}
+
+/* Nodes inserted: their wrappers, and those below, in the new tree at
+ * once (left in the old one, they could go with it before the sweep) */
+static void strengthen(struct sctx *c, soie_node *top)
+{
+	soie_node *n = top;
+	struct wref *w;
+
+	while (n) {
+		if ((w = soie_node_user(n)))
+			rehome(c, w);
+		if (soie_node_first_child(n)) {
+			n = soie_node_first_child(n);
+			continue;
+		}
+		while (n != top && !soie_node_next_sibling(n))
+			n = soie_node_parent(n);
+		n = n == top ? NULL : soie_node_next_sibling(n);
+	}
+}
 
 static JSValue wrap(struct sctx *c, soie_node *n)
 {
-	JSValue *v, proto, obj, args[3];
+	JSValue proto, obj, args[3];
+	struct wref *w;
 	const char *name = "";
 
 	if (!n)
 		return JS_NULL;
-	if ((v = soie_node_user(n)))
-		return JS_DupValue(c->js, *v);
+	if ((w = soie_node_user(n)))
+		return JS_DupValue(c->js, w->obj);
 	if (soie_node_get_type(n) == SOIE_ELEMENT)
 		name = soie_element_name(n);
 	args[0] = JS_NewInt32(c->js, soie_node_get_type(n));
@@ -150,11 +303,14 @@ static JSValue wrap(struct sctx *c, soie_node *n)
 	if (JS_IsException(obj))
 		return obj;
 	JS_SetOpaque(obj, n);
-	v = malloc(sizeof(*v));
-	if (!v)
+	w = calloc(1, sizeof(*w));
+	if (!w)
 		abort();
-	*v = JS_DupValue(c->js, obj);
-	soie_node_set_user(n, v);
+	w->obj = obj;
+	w->n = n;
+	w->anchor = JS_UNDEFINED;
+	w->i = c->nwrapped;
+	soie_node_set_user(n, w);
 	if (c->nwrapped == c->capwrapped) {
 		c->capwrapped = c->capwrapped ? c->capwrapped * 2 : 256;
 		c->wrapped = realloc(c->wrapped, c->capwrapped *
@@ -163,6 +319,7 @@ static JSValue wrap(struct sctx *c, soie_node *n)
 			abort();
 	}
 	c->wrapped[c->nwrapped++] = n;
+	rehome(c, w);
 	return obj;
 }
 
@@ -485,8 +642,13 @@ static JSValue n_insert(JSContext *js, JSValueConst this, int argc,
 	if (soie_node_document(child) != soie_node_document(parent))
 		soie_node_adopt(soie_node_document(parent), child);
 	r = soie_node_insert_before(parent, child, ref);
-	if (!r)
+	if (!r) {
+		size_t i;
+
+		for (i = 0; i < nv; i++)
+			strengthen(ctx_of(js), v[i]);
 		run_inserted(ctx_of(js), v, nv, 0);
+	}
 	free(v);
 	return JS_NewBool(js, r == 0);
 }
@@ -1759,6 +1921,7 @@ static void *start(void *data, soie_node *doc, const char *url,
 	if (!c)
 		return NULL;
 	c->doc = doc;
+	c->docw = JS_UNDEFINED;
 	c->host = host;
 	c->url = strdup(url);
 	c->rt = JS_NewRuntime();
@@ -1782,9 +1945,10 @@ static void *start(void *data, soie_node *doc, const char *url,
 	if (!node_class)
 		JS_NewClassID(&node_class);
 	{
-		JSClassDef def = { "Node", NULL, NULL, NULL, NULL };
+		JSClassDef def = { "Node", finalize, mark, NULL, NULL };
 
 		JS_NewClass(c->rt, node_class, &def);
+		JS_SetRuntimeOpaque(c->rt, c);
 	}
 	c->js = JS_NewContext(c->rt);
 	JS_SetContextOpaque(c->js, c);
@@ -1832,17 +1996,29 @@ static void *start(void *data, soie_node *doc, const char *url,
 static void stop(void *ctx)
 {
 	struct sctx *c = ctx;
-	JSValue *v;
+	struct wref *w;
 	size_t i;
 
+	/* finalizers called from here on find no node, the collector no
+	 * edges: all wrappers first, then what they held */
+	JS_SetRuntimeOpaque(c->rt, NULL);
 	for (i = 0; i < c->nwrapped; i++) {
-		v = soie_node_user(c->wrapped[i]);
+		w = soie_node_user(c->wrapped[i]);
+		JS_SetOpaque(w->obj, NULL);
+	}
+	for (i = 0; i < c->nwrapped; i++) {
+		size_t k;
+
+		w = soie_node_user(c->wrapped[i]);
 		soie_node_set_user(c->wrapped[i], NULL);
-		JS_SetOpaque(*v, NULL);
-		JS_FreeValue(c->js, *v);
-		free(v);
+		JS_FreeValue(c->js, w->anchor);
+		for (k = 0; k < w->nm; k++)
+			JS_FreeValue(c->js, w->members[k]);
+		free(w->members);
+		free(w);
 	}
 	free(c->wrapped);
+	JS_FreeValue(c->js, c->docw);
 	while (c->nmap--) {
 		free(c->map_from[c->nmap]);
 		free(c->map_to[c->nmap]);
@@ -1932,7 +2108,10 @@ static int event(void *ctx, soie_node *target, const soie_event *ev)
 }
 
 /* A warning when the heap crosses a 32 MB step, up or down: what the
- * MEMORY_LIMIT is near, and the wrappers and documents it holds */
+ * MEMORY_LIMIT is near, and the wrappers and documents it holds; and a
+ * collection past half of it */
+static void heap_trees(struct sctx *c);
+
 static void heap_watch(struct sctx *c)
 {
 	JSMemoryUsage u;
@@ -1943,8 +2122,14 @@ static void heap_watch(struct sctx *c)
 		return;
 	c->heap_at = now_ms();
 	JS_ComputeMemoryUsage(c->rt, &u);
+	/* past half the limit, the cycles (trees dropped) collected now,
+	 * not when the threshold grown with the heap is reached */
+	if (u.malloc_size > MEMORY_LIMIT / 2) {
+		JS_RunGC(c->rt);
+		JS_ComputeMemoryUsage(c->rt, &u);
+	}
 	step = (int)(u.malloc_size >> 25);
-	if (step == c->heap_step)
+	if (step == c->heap_step && !getenv("SOIE_DEBUG_HEAP"))
 		return;
 	c->heap_step = step;
 	snprintf(line, sizeof(line), "js heap %lld MB of %d: %lld objects, "
@@ -1952,6 +2137,54 @@ static void heap_watch(struct sctx *c)
 		(long long)(u.malloc_size >> 20), MEMORY_LIMIT >> 20,
 		(long long)u.obj_count, c->nwrapped, c->ndocs);
 	message(c, SOIE_MSG_WARN, line);
+	if (getenv("SOIE_DEBUG_HEAP"))
+		heap_trees(c);
+}
+
+/* $SOIE_DEBUG_HEAP: with each heap line, the trees out of the page its
+ * wrappers still hold, the biggest first: what a page keeps that it
+ * dropped (a cache, an observer, a listener of ours) */
+static void heap_trees(struct sctx *c)
+{
+	struct { soie_node *root; size_t n; } top[8];
+	char line[300];
+	size_t i, k, nt = 0, out = 0;
+
+	memset(top, 0, sizeof(top));
+	for (i = 0; i < c->nwrapped; i++) {
+		struct wref *w = soie_node_user(c->wrapped[i]);
+
+		if (w->root == c->doc || w->root != w->n || !w->nm)
+			continue;
+		nt++;
+		out += w->nm;
+		for (k = 0; k < 8 && top[k].n >= w->nm; k++)
+			;
+		if (k < 8) {
+			memmove(top + k + 1, top + k, (7 - k) * sizeof(*top));
+			top[k].root = w->n;
+			top[k].n = w->nm;
+		}
+	}
+	snprintf(line, sizeof(line), "js heap: %zu trees out of the page "
+		"hold %zu wrappers", nt, out);
+	message(c, SOIE_MSG_WARN, line);
+	for (k = 0; k < 8 && top[k].root; k++) {
+		soie_node *r = top[k].root, *e = r;
+		const char *id, *cl;
+
+		/* a fragment: its first element tells what it was */
+		while (e && soie_node_get_type(e) != SOIE_ELEMENT)
+			e = soie_node_first_child(e);
+		id = e ? soie_element_get_attr(e, "id") : NULL;
+		cl = e ? soie_element_get_attr(e, "class") : NULL;
+		snprintf(line, sizeof(line), "  %zu wrappers: %s%s <%s> "
+			"id=%.40s class=%.80s", top[k].n,
+			soie_node_get_type(r) == SOIE_ELEMENT ? "" : "fragment ",
+			e ? soie_element_name(e) : "?", e ? "" : "", id ? id : "",
+			cl ? cl : "");
+		message(c, SOIE_MSG_WARN, line);
+	}
 }
 
 static int tick(void *ctx)
@@ -1962,6 +2195,7 @@ static int tick(void *ctx)
 
 	heap_watch(c);
 	c->deadline = now_ms() + RUN_MS;
+	sweep(c);
 	deliver(c);
 	v = JS_Call(c->js, c->tick, JS_UNDEFINED, 0, NULL);
 	if (!JS_IsException(v))

@@ -1,0 +1,12 @@
+<!DOCTYPE html><body><div id=t style="height:20px">target</div><script>
+// An observer whose target left the document rests, and wakes when the
+// target is back: still told about it.
+var t = document.getElementById("t"), seen = [];
+var io = new IntersectionObserver(function (es) {
+	es.forEach(function (e) { seen.push(e.isIntersecting); });
+});
+io.observe(t);
+setTimeout(function () { t.remove(); }, 100);
+setTimeout(function () { document.body.appendChild(t); }, 500);
+setTimeout(function () { console.log("seen " + seen.join(" ")); }, 900);
+</script>

@@ -723,6 +723,60 @@ on the same frozen DOM.
   (256 MB), objects, nodes wrapped. YouTube: 141 MB 16 s after a
   watch page, 410 000 objects, 11 000 nodes wrapped; steady while it
   plays.
+- Wrappers lived as long as the page: a node held its wrapper from
+  the first time a script touched it, and with it all the page hung
+  on it. YouTube replaces its components at each video: 62, 84, 148,
+  207, 227 MB and 29 000 wrapped nodes in 45 s, out of memory at the
+  third video (and QuickJS crashed building that error's backtrace,
+  see below). A wrapper now lives as long as its tree can be reached,
+  as browsers do: each wrapper holds its tree root's wrapper, the root
+  holds its tree's wrappers, and the class's gc_mark tells the cycle
+  collector both. The document's tree is held (the page's document);
+  a tree out of it lives while a script holds any node of it, root or
+  not, and goes as one cycle when none does. A node moved to another
+  tree is put in it at once when inserted, at the next second's sweep
+  when taken out (held by the old tree until then, never too early).
+  A page building and dropping 500-element subtrees, each element with
+  data and a listener closing over it, 20 times a second for 10 s:
+  226 MB to 65 MB of RSS (tests/js/wrapper-identity.html checks the
+  wrappers kept: in, out and back, held while out).
+- IntersectionObserver and ResizeObserver held every observer (and so
+  its targets, and the component its callback closes over) in a set of
+  the page until disconnect(), which YouTube does not always call. As
+  in browsers, the page holds an observer only while a target is in
+  the document; a node holds its observers; targets out of the
+  document, once told so, are kept by a WeakRef, and an observer with
+  all its targets out rests (a WeakRef too), woken when one is back
+  (tests/js/observer-rest.html).
+- MutationObserver kept its targets in a set and the registrations in
+  a WeakMap whose values held the keys back: no tree a mutation
+  observer watched was ever freed (a page dropping 200-element trees
+  observed: 195 MB in 20 s, 11 MB now). As in browsers, a node holds
+  its registrations (a property of its wrapper), the observer its
+  nodes by WeakRef.
+- `SOIE_DEBUG_HEAP=1`: the heap line every 10 s, with the biggest trees
+  out of the page still held (their root's tag, id and class, how many
+  wrappers): what found the observers above. After them YouTube still
+  keeps about 13 MB a video, its description renderers above all; who
+  holds them is not known (QuickJS cannot say who refers to an object).
+- Past half the limit the script engine runs the cycle collector at
+  most every 10 s: QuickJS's own threshold grows with the heap and
+  came too late for the trees dropped.
+- YouTube, a video every 40 s (a suggestion clicked by a start script):
+  before, 62 to 227 MB and the crash at the third; with the wrappers
+  alone, the crash at the fifth; with all three, 141 MB on the first
+  video, 160 to 192 MB for the next ones, 215 MB at the sixth, no
+  crash in 4 minutes. About 10 MB a video is still kept (YouTube's own
+  history, or something of ours: not found yet).
+- The crash at out of memory is QuickJS's: at a bytecode exception it
+  builds the backtrace on rt->current_exception without holding it; an
+  allocation failing in there throws again, JS_Throw() frees the old
+  exception, and the "stack" property is written into freed memory.
+  Read in its code (2026-06-04), not reproduced on purpose. Holding
+  the exception around build_backtrace() fixes it (the patch is in
+  notes/quickjs-2026-06-04-backtrace.patch, for the wok's receipt and
+  upstream): with a 150 MB limit YouTube then gives 17 "out of memory"
+  errors and goes on, where it crashed.
 
 - QuickJS 2026-06-04, the one release built and tested: no build path
   nor promise for others. YouTube's first scripts ran in 5.5 s with

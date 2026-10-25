@@ -4384,14 +4384,19 @@ class MutationRecord {
 	}
 }
 
-const observing = new WeakMap();	/* node: [{ observer, options }] */
+/* A node holds its registrations ([{ observer, options }]), an observer
+ * its nodes weakly: a tree dropped goes with its observers. Kept the
+ * other way (a WeakMap of nodes, a set of them in the observer, the
+ * value holding the key), no tree a MutationObserver watched was ever
+ * freed: YouTube's components, one copy a video. */
+const MO_REGS = Symbol('registrations');
 let nobserving = 0;			/* registrations, all nodes */
 const pendingObservers = new Set();
 
 function observedMutation(type, target, o) {
 	const seen = new Set();
 	for (let n = target; n; n = api.parent(n)) {
-		const regs = observing.get(n);
+		const regs = n[MO_REGS];
 		if (!regs)
 			continue;
 		for (const { observer, options: op } of regs) {
@@ -4435,7 +4440,7 @@ class MutationObserver {
 			throw new TypeError('MutationObserver: not a function');
 		this._cb = cb;
 		this._records = [];
-		this._nodes = new Set();
+		this._nodes = [];	/* WeakRefs */
 	}
 	observe(target, options = {}) {
 		check(target);
@@ -4448,28 +4453,30 @@ class MutationObserver {
 			throw new TypeError('MutationObserver: nothing to observe');
 		if (op.attributeFilter)
 			op.attributeFilter = Array.from(op.attributeFilter, String);
-		let regs = observing.get(target);
+		let regs = target[MO_REGS];
 		if (!regs)
-			observing.set(target, regs = []);
+			target[MO_REGS] = regs = [];
 		const r = regs.find((x) => x.observer === this);
 		if (r) {
 			r.options = op;
 		} else {
 			regs.push({ observer: this, options: op });
 			nobserving++;
-			this._nodes.add(target);
+			this._nodes = this._nodes.filter((w) => w.deref());
+			this._nodes.push(new WeakRef(target));
 		}
 	}
 	disconnect() {
-		for (const n of this._nodes) {
-			const regs = observing.get(n) || [];
+		for (const w of this._nodes) {
+			const n = w.deref();
+			const regs = n && n[MO_REGS] || [];
 			const i = regs.findIndex((x) => x.observer === this);
 			if (i >= 0) {
 				regs.splice(i, 1);
 				nobserving--;
 			}
 		}
-		this._nodes.clear();
+		this._nodes = [];
 		this._records = [];
 	}
 	takeRecords() {
@@ -4532,6 +4539,97 @@ class MutationObserver {
  */
 const intersectionObservers = new Set();
 
+/*
+ * Observers are held by the page while one of their targets is in the
+ * document. With all their targets out, only by those targets (a node
+ * holds its observers) and by scripts: they rest, a weak reference
+ * here, their targets weak in them, and wake when a target is back.
+ * Held for good, they kept every component YouTube dropped, their
+ * callbacks closing over it.
+ */
+const OBSERVERS = Symbol('observers');
+const resting = new Set();	/* WeakRefs of observers whose targets are out */
+
+function observedBy(el, o, on) {
+	let s = el[OBSERVERS];
+	if (on) {
+		if (!s)
+			el[OBSERVERS] = s = new Set();
+		s.add(o);
+	} else if (s) {
+		s.delete(o);
+	}
+}
+
+/* After a check: targets out of the document, already told so, rest
+ * weakly; the observer too when none is left in */
+function rest(o, active) {
+	for (const [el, last] of o._targets)
+		if (!el.isConnected && last !== undefined && o._out(last)) {
+			o._targets.delete(el);
+			o._away.push([new WeakRef(el), last]);
+		}
+	if (!o._targets.size && active.has(o)) {
+		active.delete(o);
+		if (o._away.length)
+			resting.add(new WeakRef(o));
+	}
+}
+
+/* Resting observers with a target back in the document: active again */
+function wake() {
+	for (const r of [...resting]) {
+		const o = r.deref();
+		let back = false;
+		if (o)
+			o._away = o._away.filter(([w, last]) => {
+				const el = w.deref();
+				if (!el)
+					return false;
+				if (!el.isConnected)
+					return true;
+				o._targets.set(el, last);
+				back = true;
+				return false;
+			});
+		if (!o || back || !o._away.length)
+			resting.delete(r);
+		if (o && back)
+			o._active.add(o);
+	}
+}
+
+/* An observer's targets: observe, unobserve, disconnect */
+function watch(o, el) {
+	check(el);
+	o._away = o._away.filter(([w]) => w.deref() !== el);
+	observedBy(el, o, true);
+	if (o._targets.has(el))
+		return;
+	o._targets.set(el, undefined);
+	o._active.add(o);
+	observersNew = true;
+}
+function unwatch(o, el) {
+	o._targets.delete(el);
+	o._away = o._away.filter(([w]) => w.deref() !== el);
+	observedBy(el, o, false);
+	if (!o._targets.size)
+		o._active.delete(o);
+}
+function unwatchAll(o) {
+	for (const el of o._targets.keys())
+		observedBy(el, o, false);
+	for (const [w] of o._away) {
+		const el = w.deref();
+		if (el)
+			observedBy(el, o, false);
+	}
+	o._targets.clear();
+	o._away = [];
+	o._active.delete(o);
+}
+
 /* Entries with their fields on the prototype, as browsers have them:
  * the intersection-observer polyfill (YouTube loads it) replaces an
  * IntersectionObserver whose entries lack intersectionRatio there */
@@ -4575,7 +4673,8 @@ let frameIds = 0, lastFrame = -1e9, observersNew = false;
 function frameWanted() {
 	if (frameCallbacks.size || observersNew)
 		return true;
-	if (!intersectionObservers.size && !resizeObservers.size)
+	if (!intersectionObservers.size && !resizeObservers.size &&
+	    !resting.size)
 		return false;
 	return api.viewport().join() + ',' + api.gen() !== ioLast;
 }
@@ -4584,7 +4683,7 @@ api.frame = function () {
 	const now = api.now();
 	if (!frameWanted())
 		return frameCallbacks.size || intersectionObservers.size ||
-			resizeObservers.size ? 100 : -1;
+			resizeObservers.size || resting.size ? 100 : -1;
 	if (now - lastFrame < 16)
 		return 16 - (now - lastFrame);
 	lastFrame = now;
@@ -4599,6 +4698,7 @@ api.frame = function () {
 		api.drain();	/* each callback, its microtasks */
 	}
 	observersNew = false;
+	wake();
 	for (let round = 0; round < 4; round++) {
 		let moved = false;
 		for (const ro of [...resizeObservers])
@@ -4606,12 +4706,16 @@ api.frame = function () {
 		if (!moved)
 			break;
 	}
+	for (const ro of [...resizeObservers])
+		rest(ro, resizeObservers);
 	const v = api.viewport();
-	for (const io of [...intersectionObservers])
+	for (const io of [...intersectionObservers]) {
 		io._check(v);
+		rest(io, intersectionObservers);
+	}
 	ioLast = v.join() + ',' + api.gen();
 	return frameWanted() ? 16 : intersectionObservers.size ||
-		resizeObservers.size ? 100 : -1;
+		resizeObservers.size || resting.size ? 100 : -1;
 };
 
 class IntersectionObserver {
@@ -4627,24 +4731,13 @@ class IntersectionObserver {
 		this.delay = opts.delay || 0;
 		this.trackVisibility = !!opts.trackVisibility;
 		this._targets = new Map();	/* element: last threshold index */
+		this._away = [];		/* [WeakRef, last] of those out */
+		this._active = intersectionObservers;
 	}
-	observe(el) {
-		check(el);
-		if (this._targets.has(el))
-			return;
-		this._targets.set(el, undefined);
-		intersectionObservers.add(this);
-		observersNew = true;
-	}
-	unobserve(el) {
-		this._targets.delete(el);
-		if (!this._targets.size)
-			intersectionObservers.delete(this);
-	}
-	disconnect() {
-		this._targets.clear();
-		intersectionObservers.delete(this);
-	}
+	observe(el) { watch(this, el); }
+	unobserve(el) { unwatch(this, el); }
+	disconnect() { unwatchAll(this); }
+	_out(last) { return last === -1; }
 	takeRecords() { return []; }
 	_check(v) {
 		const root = this.root && this.root !== document ?
@@ -4701,24 +4794,13 @@ class ResizeObserver {
 			throw new TypeError('ResizeObserver: not a function');
 		this._cb = cb;
 		this._targets = new Map();	/* element: last "w h" */
+		this._away = [];		/* [WeakRef, last] of those out */
+		this._active = resizeObservers;
 	}
-	observe(el) {
-		check(el);
-		if (this._targets.has(el))
-			return;
-		this._targets.set(el, undefined);
-		resizeObservers.add(this);
-		observersNew = true;
-	}
-	unobserve(el) {
-		this._targets.delete(el);
-		if (!this._targets.size)
-			resizeObservers.delete(this);
-	}
-	disconnect() {
-		this._targets.clear();
-		resizeObservers.delete(this);
-	}
+	observe(el) { watch(this, el); }
+	unobserve(el) { unwatch(this, el); }
+	disconnect() { unwatchAll(this); }
+	_out(last) { return last === '0 0'; }
 	takeRecords() { return []; }
 	_check() {
 		const entries = [];

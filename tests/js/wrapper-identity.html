@@ -1,0 +1,24 @@
+<!DOCTYPE html><body><div id=a></div><script>
+// A node keeps its wrapper, and what the page put on it, while it is in
+// the document, out of it and back in.
+var d = document.createElement("div");
+d.mark = "kept";
+document.body.appendChild(d);
+d = null;
+console.log("in the document: " + document.body.lastElementChild.mark);
+var e = document.body.lastElementChild;
+e.remove();
+document.body.appendChild(e);
+e = null;
+console.log("out and back: " + document.body.lastElementChild.mark);
+document.getElementById("a").mark = 7;
+setTimeout(function () {
+	console.log("later: " + document.getElementById("a").mark + " " +
+		document.body.lastElementChild.mark);
+	var f = document.createElement("p");
+	f.mark = "detached";
+	var g = f;
+	f = null;
+	console.log("held while out: " + g.mark);
+}, 1200);
+</script>
