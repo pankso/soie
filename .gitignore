@@ -14,6 +14,7 @@ tests/paint/*.out.png
 browser/xsoie
 browser/wsoie
 browser/xdg-shell.[ch]
+browser/xdg-decoration.[ch]
 tests/exttest
 ext/*.so
 ext/script/dom-js.c

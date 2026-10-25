@@ -31,6 +31,7 @@
 #include <xkbcommon/xkbcommon-compose.h>
 #include <soie/soie.h>
 #include "xdg-shell.h"
+#include "xdg-decoration.h"
 #include "shell.h"
 #include "front.h"
 
@@ -47,6 +48,7 @@ static struct xdg_wm_base *wm;
 static struct wl_surface *surface;
 static struct xdg_surface *xsurface;
 static struct xdg_toplevel *toplevel;
+static struct zxdg_decoration_manager_v1 *deco_manager;
 static struct wl_data_device_manager *ddm;
 static struct wl_data_device *ddev;
 static int win_w = 1024, win_h = 768;
@@ -885,6 +887,9 @@ static void global(void *data, struct wl_registry *r, uint32_t name,
 	} else if (!strcmp(iface, xdg_wm_base_interface.name)) {
 		wm = wl_registry_bind(r, name, &xdg_wm_base_interface, 1);
 		xdg_wm_base_add_listener(wm, &wm_listener, NULL);
+	} else if (!strcmp(iface, zxdg_decoration_manager_v1_interface.name)) {
+		deco_manager = wl_registry_bind(r, name,
+			&zxdg_decoration_manager_v1_interface, 1);
 	} else if (!strcmp(iface, wl_data_device_manager_interface.name)) {
 		/* version 1: the clipboard, without drag and drop */
 		ddm = wl_registry_bind(r, name,
@@ -978,6 +983,14 @@ int main(int argc, char **argv)
 	xdg_toplevel_add_listener(toplevel, &tl_listener, NULL);
 	xdg_toplevel_set_title(toplevel, "Soie");
 	xdg_toplevel_set_app_id(toplevel, "wsoie");
+	/* The compositor's title bar: wsoie draws none of its own. Its
+	 * answer needs no listener, a client side one leaves the window
+	 * bare as without the protocol. */
+	if (deco_manager)
+		zxdg_toplevel_decoration_v1_set_mode(
+			zxdg_decoration_manager_v1_get_toplevel_decoration(
+			deco_manager, toplevel),
+			ZXDG_TOPLEVEL_DECORATION_V1_MODE_SERVER_SIDE);
 	wl_surface_commit(surface);
 	wl_display_roundtrip(dpy);
 	configure();
