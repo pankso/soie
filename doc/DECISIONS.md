@@ -1054,6 +1054,19 @@ on the same frozen DOM.
 - Tests: `make check-js` runs the pages of `tests/js` and compares
   their console output; `soie-render -j` runs a page's scripts.
 - Cost: Wikipedia takes 0.3 s more CPU and 11 MB more with scripts.
+- `<link>` fires load (stylesheet, preload, modulepreload): from a task
+  once it is in the document, those of the parsed page just before the
+  window's load, once per element. The engine fetches sheets while
+  styling and tells no one, so like images they are said loaded, not
+  waited for. YouTube's navigation hung on it: its player inserts the
+  link of its CSS and waits for load before it takes a video, so a
+  click on another video changed the page and the address while the
+  player went on with the first one's ads and content, with no error
+  anywhere. Found with a log of every thrown exception in a scratch
+  QuickJS (none: the wait was a promise that never resolved), then by
+  wrapping YouTube's player objects from `SOIE_DEBUG_JS_START`. The
+  loadCSS pattern (`rel=preload onload="this.rel='stylesheet'"`), on
+  many sites, needed it too. Test: `tests/js/link-load.html`.
 
 ## Audio and video (phase 11)
 

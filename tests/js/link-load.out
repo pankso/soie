@@ -1,0 +1,7 @@
+log: created, not inserted
+log: parsed sheet load
+log: preload load stylesheet
+log: window load
+log: inserted
+log: dynamic sheet load true
+log: fragment link load

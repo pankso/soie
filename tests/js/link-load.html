@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<link rel=stylesheet href="missing.css" onload="log('parsed sheet load')">
+<link rel=preload as=style href="missing2.css" onload="this.onload = null; this.rel = 'stylesheet'; log('preload load', this.rel)">
+<link rel=icon href="favicon.ico" onload="log('never: icon')">
+<script>
+var log = (...a) => console.log(a.map(String).join(' '));
+window.addEventListener('load', () => log('window load'));
+var l = document.createElement('link');
+l.rel = 'stylesheet';
+l.href = 'player.css';
+l.addEventListener('load', () => log('dynamic sheet load', l.isConnected));
+log('created, not inserted');
+setTimeout(() => {
+	document.head.appendChild(l);
+	log('inserted');
+	document.head.appendChild(l);
+	var f = document.createDocumentFragment(), m = document.createElement('link');
+	m.rel = 'modulepreload';
+	m.href = 'mod.js';
+	m.onload = () => log('fragment link load');
+	f.appendChild(m);
+	document.head.appendChild(f);
+}, 0);
+</script>

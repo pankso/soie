@@ -466,6 +466,8 @@ api.dispatch = function (target, type, init) {
 	if (type === 'readystatechange' && t === document) {
 		readyState = 'interactive';
 	} else if (type === 'load' && !target) {
+		for (const el of query(document, 'link', 0))
+			linkLoad(el, true);
 		readyState = 'complete';
 		dispatch(document, new Event('readystatechange'));
 	}
@@ -607,14 +609,38 @@ function insert(parent, node, ref) {
 	if (ref !== null && ref !== undefined && (!(ref instanceof Node) ||
 	    api.parent(ref) !== parent))
 		throw new DOMException('reference is not a child', 'NotFoundError');
-	const moved = customs.size ? (api.type(node) === S_FRAG ?
-		api.children(node, true) : [node]) : null;
+	const nodes = api.type(node) === S_FRAG ? api.children(node, true) :
+		[node];
 	if (!api.insert(parent, node, ref || null))
 		throw new DOMException('cannot insert there',
 			'HierarchyRequestError');
-	if (moved)
-		connected(moved);
+	if (customs.size)
+		connected(nodes);
+	for (const n of nodes)
+		linkLoad(n, false);
 	return node;
+}
+
+/*
+ * The load event of <link>: the engine fetches style sheets when it
+ * styles the page and tells no one, so as for images a sheet is
+ * "loaded" from a task once its link is in the document, those of the
+ * parsed page just before the window's load. Loaders wait for it:
+ * YouTube's player waits for the link of its CSS before it takes the
+ * next video.
+ */
+const linksLoaded = new WeakSet();
+function linkLoad(el, now) {
+	if (api.type(el) !== S_EL || api.name(el) !== 'link' ||
+	    linksLoaded.has(el) || !el.isConnected || !el.getAttribute('href') ||
+	    !/(^|\s)(stylesheet|preload|modulepreload)(\s|$)/i.test(
+	    el.getAttribute('rel') || ''))
+		return;
+	linksLoaded.add(el);
+	if (now)
+		dispatch(el, new Event('load'));
+	else
+		addTimer(() => dispatch(el, new Event('load')), 0, [], false);
 }
 
 /* Custom elements just inserted in the page: constructed if they were
