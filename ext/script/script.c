@@ -19,6 +19,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <unistd.h>
 #include <sys/resource.h>
 #include <pthread.h>
 #include <quickjs.h>
@@ -27,7 +28,9 @@
 #include <soie/ext.h>
 
 #define RUN_MS 5000		/* longest a script may run at once */
-#define MEMORY_LIMIT (256 << 20)
+/* JavaScript heap per page: a quarter of the RAM, 256 MB to 1 GB */
+#define MEMORY_MIN (256UL << 20)
+#define MEMORY_MAX (1024UL << 20)
 /* C stack for scripts: a JS call takes 800 bytes of it, a few KB for
  * big compiled functions. QuickJS's 1 MB is 1300 calls deep, 4 MB
  * 5200 (browsers allow 10000 or more). At most half the thread's
@@ -35,6 +38,22 @@
 #define STACK_SIZE (4 << 20)
 
 extern const char dom_js[];
+
+static size_t memory_limit(void)
+{
+	static size_t limit;
+	long pages, size;
+	unsigned long long ram;
+
+	if (limit)
+		return limit;
+	pages = sysconf(_SC_PHYS_PAGES);
+	size = sysconf(_SC_PAGESIZE);
+	ram = pages > 0 && size > 0 ? (unsigned long long)pages * size : 0;
+	limit = ram / 4 < MEMORY_MIN ? MEMORY_MIN : ram / 4 > MEMORY_MAX ?
+		MEMORY_MAX : (size_t)(ram / 4);
+	return limit;
+}
 
 struct sctx {
 	JSRuntime *rt;
@@ -1963,7 +1982,7 @@ static void *start(void *data, soie_node *doc, const char *url,
 		free(c);
 		return NULL;
 	}
-	JS_SetMemoryLimit(c->rt, MEMORY_LIMIT);
+	JS_SetMemoryLimit(c->rt, memory_limit());
 	{
 		struct rlimit rl;
 		size_t st = STACK_SIZE;
@@ -2141,7 +2160,7 @@ static int event(void *ctx, soie_node *target, const soie_event *ev)
 }
 
 /* A warning when the heap crosses a 32 MB step, up or down: what the
- * MEMORY_LIMIT is near, and the wrappers and documents it holds; and a
+ * memory limit is near, and the wrappers and documents it holds; and a
  * collection past half of it */
 static void heap_trees(struct sctx *c);
 
@@ -2157,7 +2176,7 @@ static void heap_watch(struct sctx *c)
 	JS_ComputeMemoryUsage(c->rt, &u);
 	/* past half the limit, the cycles (trees dropped) collected now,
 	 * not when the threshold grown with the heap is reached */
-	if (u.malloc_size > MEMORY_LIMIT / 2) {
+	if ((size_t)u.malloc_size > memory_limit() / 2) {
 		JS_RunGC(c->rt);
 		JS_ComputeMemoryUsage(c->rt, &u);
 	}
@@ -2167,7 +2186,7 @@ static void heap_watch(struct sctx *c)
 	c->heap_step = step;
 	snprintf(line, sizeof(line), "js heap %lld MB of %d: %lld objects, "
 		"%zu nodes wrapped, %zu documents made",
-		(long long)(u.malloc_size >> 20), MEMORY_LIMIT >> 20,
+		(long long)(u.malloc_size >> 20), (int)(memory_limit() >> 20),
 		(long long)u.obj_count, c->nwrapped, c->ndocs);
 	message(c, SOIE_MSG_WARN, line);
 	if (getenv("SOIE_DEBUG_HEAP")) {

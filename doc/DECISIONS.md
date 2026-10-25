@@ -726,8 +726,8 @@ on the same frozen DOM.
 ## QuickJS 2026-06-04
 
 - With `SOIE_DEBUG=2`, the script engine says when its heap crosses a
-  32 MB step (measured every 10 s): its size against MEMORY_LIMIT
-  (256 MB), objects, nodes wrapped. YouTube: 141 MB 16 s after a
+  32 MB step (measured every 10 s): its size against the limit
+  (256 MB then), objects, nodes wrapped. YouTube: 141 MB 16 s after a
   watch page, 410 000 objects, 11 000 nodes wrapped; steady while it
   plays.
 - Wrappers lived as long as the page: a node held its wrapper from
@@ -776,8 +776,13 @@ on the same frozen DOM.
   requests the script engine holds stay the same from one video to
   the next. The trees out of the page are YouTube's components of the
   videos before (suggestion lockups, description renderers), held by
-  YouTube's own objects. A search page and a few videos reach 256 MB:
-  YouTube then shows its error.
+  YouTube's own objects. A search page and a few videos reached 256 MB:
+  YouTube then showed its error.
+- So the heap limit follows the machine: a quarter of the RAM, never
+  under the 256 MB it was (a 1 GB machine keeps it) nor over 1 GB.
+  16 GB here gives 1 GB. A fixed 512 MB was turned down for the old
+  1 GB machines. Who holds YouTube's old components is still to find
+  (a path from the collector's roots, in a scratch QuickJS).
 - Past half the limit the script engine runs the cycle collector at
   most every 10 s: QuickJS's own threshold grows with the heap and
   came too late for the trees dropped.
@@ -1060,8 +1065,9 @@ on the same frozen DOM.
   workers, localStorage lasts as long as the page, crypto has
   getRandomValues and randomUUID (from /dev/urandom) but no subtle.
   ES modules with import maps (imports, not scopes).
-- Limits: 5 s of running per entry (then an exception), 256 MB of
-  JavaScript heap per page. Errors go to the host (`SOIE_DEBUG=1`
+- Limits: 5 s of running per entry (then an exception), a quarter of
+  the RAM of JavaScript heap per page, 256 MB to 1 GB (see QuickJS
+  2026-06-04). Errors go to the host (`SOIE_DEBUG=1`
   prints them in the browser).
 - Tests: `make check-js` runs the pages of `tests/js` and compares
   their console output; `soie-render -j` runs a page's scripts.
