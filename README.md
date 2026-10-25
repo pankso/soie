@@ -47,7 +47,8 @@ The browser: `browser/xsoie [URL]`, or `browser/xsoie -o out.png URL`
 to render a page without a display. It also needs Xlib, GnuTLS and
 zlib. Its shell (`browser/shell.c`) has no toolkit; what its fronts
 share (bars, keys, repainting only what changed) is `browser/front.c`,
-and xsoie is the Xlib part (MIT-SHM). Ctrl+L address (or words to search for,
+xsoie is the Xlib part (MIT-SHM), `browser/wsoie` the Wayland one
+(built when wayland-client, wayland-cursor and xkbcommon are there). Ctrl+L address (or words to search for,
 `$SOIE_SEARCH`), Ctrl+F find, Ctrl+C/Ctrl+V clipboard, Ctrl+N or the
 middle button on a link a new window, Alt+arrows history, F5 reload. It loads the installed extensions, or those of
 `$SOIE_EXT_DIR`: `SOIE_EXT_DIR=ext browser/xsoie` in the tree.
@@ -62,7 +63,8 @@ block list in `~/.config/soie/block.txt` turns content blocking on.
 ## Layout
 
     lib/         libsoie (public headers in lib/soie/)
-    browser/     the browser: shell, fronts' part, xsoie (Xlib), HTTP and TLS
+    browser/     the browser: shell, fronts' part, xsoie (Xlib), wsoie (Wayland),
+                 HTTP and TLS
     ext/         extensions (cookies, block, webp, script, media)
     tools/       soie-render, generators
     tests/       unit tests, html5lib test runner, local corpus

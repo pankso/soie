@@ -12,6 +12,8 @@ lib/ua-css.c
 tests/painttest
 tests/paint/*.out.png
 browser/xsoie
+browser/wsoie
+browser/xdg-shell.[ch]
 tests/exttest
 ext/*.so
 ext/script/dom-js.c

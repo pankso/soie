@@ -804,6 +804,35 @@ on the same frozen DOM.
   the same at the engine's level: BGRA against RGBA, bands, a rect and
   a scrolled page against the whole.
 
+## wsoie: the Wayland front
+
+- `browser/wsoie` is the second toolkit part on front.h, built when
+  wayland-client, wayland-cursor, xkbcommon, wayland-protocols and
+  wayland-scanner are there (xdg-shell's code is generated). Shared
+  memory and the pixel order are what Soie paints: XRGB8888 is B G R A
+  in memory, soie_paint_bgra() fills it with no conversion.
+- The front keeps its own pixels; what it shows is copied, rect by
+  rect, into one of two wl_buffers the compositor has released, each
+  buffer keeping the rects it missed. A commit waits for the last
+  frame callback: no frame painted that the compositor would drop,
+  never a wait on the compositor's reading.
+- The shared file is a mkstemp() in $XDG_RUNTIME_DIR, unlinked at
+  once: SliTaz's C library has no memfd_create().
+- Keys: the compositor's keymap through xkbcommon, dead keys through
+  its compose table (from the locale), repeat by a timerfd at the
+  compositor's rate and delay. A character key's DOM name is its
+  keysym's character, so shortcuts are the same as in xsoie.
+- The wheel: 4 pixels per axis unit (a notch is 15: 60 pixels, as in
+  xsoie); touchpads scroll smoothly through the same path.
+- Clipboard through wl_data_device version 1 (no drag and drop): Ctrl+C
+  offers UTF-8 text, Ctrl+V reads the offer through a pipe in the main
+  loop. No primary selection, no window icon, no fractional scale:
+  tisse, the compositor it is made on, has none of these protocols.
+  Server-side decorations are tisse's policy: wsoie draws none.
+- Tested in a headless tisse of its own (own XDG_RUNTIME_DIR: tisse
+  writes the workspace file a panel reads), grim for screenshots;
+  input by hand until tisse has virtual pointer and keyboard.
+
 ## Debugging the browser
 
 - A fatal signal (SEGV, BUS, FPE, ILL, ABRT) writes a crash report,

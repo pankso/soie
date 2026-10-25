@@ -41,6 +41,12 @@ EXTDIR = $(PREFIX)/lib/soie/ext
 INTERNAL = lib/internal.h lib/parser.h lib/tags.h lib/css.h lib/props.h \
 	lib/layout.h lib/font.h lib/paint.h lib/image.h
 
+# The Wayland browser when its libraries and protocols are there
+ifeq ($(shell pkg-config --exists wayland-client wayland-cursor xkbcommon \
+	wayland-protocols && command -v wayland-scanner >/dev/null && echo y),y)
+WSOIE = browser/wsoie
+endif
+
 # Extensions: those without dependencies always, the others when
 # their libraries are there (or list them: make EXTS="ext/cookies.so").
 EXTS = ext/cookies.so ext/block.so
@@ -69,7 +75,7 @@ QJS_OBJS = $(QUICKJS)/lib/quickjs/libquickjs.a
 endif
 
 all: lib/libsoie.a lib/libsoie.so.$(SOVERSION) tools/soie-render browser/xsoie \
-	$(EXTS)
+	$(WSOIE) $(EXTS)
 
 lib/libsoie.a: $(LIB_OBJS)
 	rm -f $@
@@ -150,6 +156,24 @@ browser/xsoie.o $(FRONT_OBJS): browser/net.h browser/fetch.h \
 $(SHELL_OBJS): CPPFLAGS += $(shell pkg-config --cflags $(SHELL_PKGS)) \
 	-DSOIE_EXT_DIR='"$(EXTDIR)"'
 browser/xsoie.o: CPPFLAGS += $(shell pkg-config --cflags x11 xext)
+
+# wsoie on Wayland, when its libraries are there; xdg-shell's code is
+# made from the protocol by wayland-scanner.
+WL_PKGS = wayland-client wayland-cursor xkbcommon
+WL_PROTO = $(shell pkg-config --variable=pkgdatadir wayland-protocols)
+browser/wsoie: browser/wsoie.o browser/xdg-shell.o $(FRONT_OBJS) \
+	lib/libsoie.so.$(SOVERSION)
+	$(CC) $(LDFLAGS) $(RPATH) -o $@ browser/wsoie.o browser/xdg-shell.o \
+		$(FRONT_OBJS) lib/libsoie.so.$(SOVERSION) $(LIBS) \
+		$(shell pkg-config --libs $(SHELL_PKGS) $(WL_PKGS)) -lpthread
+browser/xdg-shell.h: $(WL_PROTO)/stable/xdg-shell/xdg-shell.xml
+	wayland-scanner client-header $< $@
+browser/xdg-shell.c: $(WL_PROTO)/stable/xdg-shell/xdg-shell.xml
+	wayland-scanner private-code $< $@
+browser/wsoie.o: browser/xdg-shell.h browser/shell.h browser/front.h \
+	$(HEADERS)
+browser/wsoie.o browser/xdg-shell.o: CPPFLAGS += \
+	$(shell pkg-config --cflags $(WL_PKGS))
 tools/soie-render.o: CPPFLAGS += -DSOIE_EXT_DIR='"$(EXTDIR)"'
 
 tests/exttest: tests/exttest.o lib/libsoie.so.$(SOVERSION)
@@ -221,13 +245,14 @@ install: all
 	cp lib/libsoie.so.$(SOVERSION) $(DESTDIR)$(PREFIX)/lib/
 	ln -sf libsoie.so.$(SOVERSION) $(DESTDIR)$(PREFIX)/lib/libsoie.so
 	cp $(HEADERS) $(DESTDIR)$(PREFIX)/include/soie/
-	cp tools/soie-render browser/xsoie $(DESTDIR)$(PREFIX)/bin/
+	cp tools/soie-render browser/xsoie $(WSOIE) $(DESTDIR)$(PREFIX)/bin/
 	mkdir -p $(DESTDIR)$(EXTDIR)
 	cp $(EXTS) $(DESTDIR)$(EXTDIR)/
 
 clean:
 	rm -f lib/*.o lib/libsoie.a lib/libsoie.so.* tools/*.o \
-		tools/soie-render browser/*.o browser/xsoie tests/*.o tests/html5lib tests/unit \
+		tools/soie-render browser/*.o browser/xsoie browser/wsoie \
+		browser/xdg-shell.[ch] tests/*.o tests/html5lib tests/unit \
 		tests/csstest tests/cssvalue tests/painttest tests/exttest lib/ua-css.c \
 		tests/paint/*.out.png ext/*.so \
 		ext/script/*.o ext/script/dom-js.c
