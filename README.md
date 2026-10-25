@@ -5,7 +5,7 @@ reference browser. No toolkit, no JavaScript in the core, built to
 render modern pages on old machines. See `doc/DECISIONS.md` for what
 Soie is and is not, and how extensions plug in.
 
-Status: the eleven phases are in, version 1.3.0. Extensions
+Status: the eleven phases are in, version 0.1.0 (not released yet). Extensions
 (`lib/soie/ext.h`) bring cookies, content blocking, WebP, JavaScript
 (QuickJS) and audio/video (FFmpeg, ALSA, Media Source Extensions: YouTube plays). `browser/xsoie` browses the
 web (HTTPS, forms, history, cookies, scripts, video). The HTML parser follows the WHATWG algorithm and passes the

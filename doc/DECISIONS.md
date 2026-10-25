@@ -92,15 +92,15 @@ reversed, edit the entry and say why; do not leave stale rules here.
 - Prefix `soie_` for functions, `SOIE_` for constants. Strings are
   UTF-8, NUL-terminated, owned by the library unless a function says
   otherwise.
-- Version 1.0.0 since the eleven phases are in, soname `libsoie.so.1`
-  (0.x before). From now on: new functions and appended hooks are
-  minor versions, any change to an existing signature or struct a
-  major one.
+- Version 0.1.0, soname `libsoie.so.0`, until the first public
+  release is ready (see "Version and repository"). From 1.0 on: new
+  functions and appended hooks are minor versions, any change to an
+  existing signature or struct a major one.
 - A few structs are public because callers fill them: the option
   structs (`soie_html_options`, `soie_style_options`), requests and
   responses, events, the script host, media states. Their layouts are
-  part of the 1.0 ABI; new options will come as new functions, not as
-  new fields.
+  part of the ABI once 1.0 is out; new options will then come as new
+  functions, not as new fields.
 
 ## Memory and ownership
 
@@ -1275,6 +1275,21 @@ checked one by one in the code and fixed; what came out of it:
   glibc `mtrace()` through an `LD_PRELOAD` shim, crashes with a random
   tag-soup fuzzer under `MALLOC_CHECK_=3`. Both live outside the repo
   for now.
+
+## Version and repository
+
+- Back to 0.1.0 (soname `libsoie.so.0`, extension ABI 0.1) on
+  2026-10-25: nothing was released yet, and 1.x promised a stable ABI
+  to no one. The entries above that cite libsoie 1.0 to 1.3 or ABI
+  1.1 are those internal numbers, kept as they were written. The
+  headers no longer say "since" a version: the history starts at the
+  first release.
+- The version stays 0.x until a first public release, with its own
+  site (soie.slitaz.org). That release is tagged in the repository.
+- Mercurial, like the other SliTaz tools, hosted on the SliTaz
+  servers, not on a forge. The git history (106 commits, from
+  2026-10-22) was converted with `hg convert`, dates and messages as
+  they were.
 
 ## Build
 

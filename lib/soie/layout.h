@@ -47,7 +47,7 @@ int soie_paint(soie_node *doc, unsigned char *rgba, int width, int height,
 	int stride, int sx, int sy);
 /* The same in B G R A bytes, the order of the 32-bit pixels of X and
  * Wayland servers on little-endian machines: no conversion before they
- * are sent. Since 1.3. */
+ * are sent. */
 int soie_paint_bgra(soie_node *doc, unsigned char *bgra, int width,
 	int height, int stride, int sx, int sy);
 
@@ -58,7 +58,7 @@ int soie_paint_bgra(soie_node *doc, unsigned char *bgra, int width,
  * the viewport changed, the root's or body's style). The first call starts the tracking (and returns -1): each
  * layout then compares the boxes it leaves with those it found, the
  * focus and caret count too. Images and fonts that arrive later are
- * not seen: a host paints all of it then. Since 1.3.
+ * not seen: a host paints all of it then.
  */
 int soie_layout_damage(soie_node *doc, float *rects, int max);
 
@@ -76,7 +76,6 @@ int soie_element_rect(const soie_node *el, float *x, float *y, float *w,
  * Find text in the laid out page (ASCII case folded; a match does not
  * span two elements or lines). Returns the number of matches and puts
  * the rect of match n (from 0), in page coordinates, in x, y, w, h.
- * Since 1.1.
  */
 int soie_find(soie_node *doc, const char *text, int n, float *x, float *y,
 	float *w, float *h);
@@ -87,7 +86,7 @@ int soie_find(soie_node *doc, const char *text, int n, float *x, float *y,
  */
 void soie_set_focus(soie_node *doc, soie_node *el, int caret);
 /* The focused control (set by the host or a script's focus()) and its
- * caret. Since 1.1. */
+ * caret. */
 soie_node *soie_get_focus(const soie_node *doc, int *caret);
 
 /*

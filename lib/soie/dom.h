@@ -105,7 +105,7 @@ soie_node *soie_node_clone(const soie_node *n, int deep);
  * Move n, out of its tree, with its subtree to document doc (DOM
  * adoptNode): from then on doc owns it and frees it. Its computed
  * styles are dropped, a player of a media element in it stops.
- * Returns -1 for a document. Since 1.1.
+ * Returns -1 for a document.
  */
 int soie_node_adopt(soie_node *doc, soie_node *n);
 

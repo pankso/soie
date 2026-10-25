@@ -12,9 +12,9 @@
  * - any hook may be NULL;
  * - strings returned by hooks are malloc()ed and freed by the caller.
  *
- * This is ABI 1.1 (1.0 was frozen with the library's 1.0, 1.1 came
- * with its 1.2: Media Source Extensions): later versions only append
- * hooks to the hook sets and add kinds.
+ * This is ABI 0.1: until 1.0 it may still change, extensions are
+ * built with the engine they run in. From 1.0 on, minor versions
+ * only append hooks to the hook sets and add kinds.
  *
  * A module for soie_ext_load() exports "int soie_ext_init(void)",
  * which registers its hook sets with soie_ext_register() and returns
@@ -31,7 +31,7 @@
 #include <stddef.h>
 #include "dom.h"
 
-#define SOIE_EXT_ABI_MAJOR 1
+#define SOIE_EXT_ABI_MAJOR 0
 #define SOIE_EXT_ABI_MINOR 1
 #define SOIE_EXT_ABI (SOIE_EXT_ABI_MAJOR << 16 | SOIE_EXT_ABI_MINOR)
 
@@ -175,10 +175,10 @@ enum {
 typedef struct {
 	void *data;
 	/* blocking: the engine calls it for scripts, fetch(), XHR.
-	 * Since 1.1 the script engine may call it from threads of its
-	 * own (fetch, asynchronous XHR), even after stop for requests
-	 * still out: it must be thread-safe, and request and data stay
-	 * valid as long as the host runs. */
+	 * The script engine may call it from threads of its own (fetch,
+	 * asynchronous XHR), even after stop for requests still out: it
+	 * must be thread-safe, and request and data stay valid as long as
+	 * the host runs. */
 	soie_request_fn request;
 	/* location changes: the host loads url once the script returns */
 	void (*navigate)(void *data, const char *url, int replace);
@@ -188,7 +188,7 @@ typedef struct {
 	void (*scroll)(void *data, float x, float y);
 	/* the page's URL changed without a load (history.pushState(),
 	 * replaceState()): a new history entry when push, else the
-	 * current one's. Since 1.3; may be NULL. */
+	 * current one's. May be NULL. */
 	void (*url)(void *data, const char *url, int push);
 } soie_script_host;
 
@@ -258,7 +258,7 @@ typedef struct {
 	int width, height;	/* video size, 0 for sound only */
 	int error;		/* nonzero: cannot play */
 	int changes;		/* bumped at each new frame or state */
-	/* since ABI 1.1 (the engine zeroes them for older extensions) */
+	/* the engine zeroes the fields after changes for older extensions */
 	int waiting;		/* playing, but the data is not there */
 	int seeks;		/* seeks done, for the seeked event */
 	int decoded, dropped;	/* video frames decoded, and never shown */
@@ -282,8 +282,8 @@ struct soie_ext_media {
 	 * call; NULL when there is none (yet). */
 	const unsigned char *(*frame)(void *player, int *w, int *h);
 
-	/* Since ABI 1.1: Media Source Extensions, a player whose bytes
-	 * a script appends to SourceBuffers. */
+	/* Media Source Extensions, a player whose bytes a script
+	 * appends to SourceBuffers. */
 	/* Nonzero when a SourceBuffer of this MIME type (with its codecs
 	 * and the width, height, framerate parameters) can play. */
 	int (*can_source)(void *data, const char *type);
@@ -322,7 +322,7 @@ enum {
 	SOIE_MEDIA_SEEK,	/* value: seconds */
 	SOIE_MEDIA_VOLUME,	/* value: 0 to 1 */
 	SOIE_MEDIA_MUTE,	/* value: 0 or 1 */
-	SOIE_MEDIA_CLOSE	/* the player goes (since 1.2) */
+	SOIE_MEDIA_CLOSE	/* the player goes */
 };
 
 /* Control the player of a <video> or <audio> element, opening it
@@ -339,13 +339,13 @@ int soie_media_click(soie_node *el, float x, float y);
 int soie_media_tick(soie_node *doc, int *repaint);
 /* The same, *repaint 2 when only the players' boxes need painting
  * again (new frames, their controls): rect gets their union, x, y, w,
- * h in page coordinates. 1: the whole page. Since 1.2. */
+ * h in page coordinates. 1: the whole page. */
 int soie_media_tick_rect(soie_node *doc, int *repaint, float *rect);
 /* Nonzero when a media extension says it can play type. */
 int soie_media_can_play(const char *type);
 
 /*
- * Media Source Extensions, for script engines (since 1.2): el's player
+ * Media Source Extensions, for script engines: el's player
  * is fed by a script, through the hooks above, with el as handle.
  */
 /* Nonzero when MediaSource.isTypeSupported(type). */
