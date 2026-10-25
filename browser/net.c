@@ -842,6 +842,10 @@ static int request(const char *url, const soie_request *rq,
 		snprintf(line, sizeof(line), "Content-Length: %zu\r\n",
 			body_len);
 		adds(&req, line);
+	} else if (!strcmp(method, "POST") || !strcmp(method, "PUT") ||
+		   !strcmp(method, "PATCH")) {
+		/* an empty body still says so: servers answer 411 */
+		adds(&req, "Content-Length: 0\r\n");
 	}
 	adds(&req, "\r\n");
 	if (body_in)

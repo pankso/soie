@@ -1215,6 +1215,7 @@ static JSValue response_object(JSContext *js, soie_response *res,
  * exception): valid while v lives. */
 static const uint8_t *bytes_of(JSContext *js, JSValueConst v, size_t *len)
 {
+	static JSClassID ab_class;
 	size_t off, n, bpe;
 	JSValue b;
 	uint8_t *p;
@@ -1222,11 +1223,20 @@ static const uint8_t *bytes_of(JSContext *js, JSValueConst v, size_t *len)
 	*len = 0;
 	if (!JS_IsObject(v))
 		return NULL;
-	if ((p = JS_GetArrayBuffer(js, &n, v))) {
-		*len = n;
+	if (!ab_class) {
+		/* QuickJS keeps its class ids to itself: ask an empty one */
+		b = JS_NewArrayBufferCopy(js, NULL, 0);
+		ab_class = JS_GetClassID(b);
+		JS_FreeValue(js, b);
+	}
+	/* the wrong guess throws, with a backtrace: thousands a minute
+	 * for a video's segments, all typed arrays */
+	if (JS_GetClassID(v) == ab_class) {
+		if (!(p = JS_GetArrayBuffer(js, &n, v)))
+			JS_FreeValue(js, JS_GetException(js));	/* detached */
+		*len = p ? n : 0;
 		return p;
 	}
-	JS_FreeValue(js, JS_GetException(js));
 	b = JS_GetTypedArrayBuffer(js, v, &off, &n, &bpe);
 	if (JS_IsException(b)) {
 		JS_FreeValue(js, JS_GetException(js));

@@ -1221,6 +1221,22 @@ MSE, not through an HLS/DASH loader of our own.
   ad and the video), and QuickJS compiles base.js in O(n^2) of its
   variables (`find_var()`, linear). The 5 s limit per script entry
   stays: one of YouTube's ad callbacks hits it, the video plays.
+- YouTube may stop sending media to a session: its SABR answers stay
+  HTTP 200 but carry 107 bytes and no segment, the buffer runs out and
+  the player says "an error occurred, refresh the page" about a minute
+  into the video. Read in its own statistics (api/stats/qoe: bwm 107
+  bytes per answer, then vps ER). Each answer has a
+  STREAM_PROTECTION_STATUS part (UMP part 58: 1 fine, 2 attestation
+  pending, 3 required): the attestation BotGuard makes in the page is
+  not always trusted. Same cookies and User-Agent on the test bench
+  played whole videos with status 1; pankso's sessions were cut. Not
+  solved: what BotGuard finds odd in Soie is not known.
+- Bodies of fetch and XHR given as typed arrays (every segment) were
+  first tried as an ArrayBuffer: QuickJS threw, with a backtrace, and
+  the typed array path came next. About 30 000 exceptions a minute on
+  YouTube, 260 now: the class is looked at first.
+- A POST, PUT or PATCH without a body says Content-Length: 0. Some of
+  YouTube's video servers answered 411 without it.
 - Not done: `changeType()` to another container, sequence mode
   (timestamps are always those of the segments), live seekable ranges
   beyond what is stored, EME (no DRM: such videos do not play),
