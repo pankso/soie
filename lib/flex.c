@@ -441,6 +441,11 @@ float layout_flex(struct box *f, float cbh)
 				if (!row) {
 					/* a new width: lay out again */
 					layout_item(b, 0, 0, cross, it->main);
+				} else if (H >= 0 && !wrap &&
+				    cross != it->cross) {
+					/* a definite height (CSS Flexbox 9.8):
+					 * its percentages resolve against it */
+					layout_item(b, 0, 0, it->main, cross);
 				}
 			} else if (it->auto_cs && it->auto_ce) {
 				cpos = (lcross[i] - cross - it->cbefore -

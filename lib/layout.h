@@ -92,9 +92,9 @@ struct box {
 	/* Incremental layout: a box whose element did not change since
 	 * the last layout is kept, with its subtree (kept: from the old
 	 * tree, fixed up); laid out alone again with the same width and
-	 * containing block height (lw, lcbh, lok), it only moves. */
+	 * containing block height (lw, lcbh, ldefh, lok), it only moves. */
 	unsigned char kept, lok;
-	float lw, lcbh, lh;
+	float lw, lcbh, ldefh, lh;
 	float lx, ly;		/* where its content was, translate() too */
 	unsigned abs_pass;	/* in the absolute boxes of that layout */
 	float sx, sy;		/* an absolute box's static position */

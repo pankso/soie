@@ -373,6 +373,19 @@ reversed, edit the entry and say why; do not leave stale rules here.
 - Box tree depth is capped at 512 levels (layout is recursive).
   Deeper content is kept as plain text flowing in the box at the
   limit, collected without recursion. Blink caps its DOM at 512 too.
+- An absolute box with top and bottom and an auto height is as high
+  as they leave: that height is definite for its children's
+  percentages (CSS Sizing 3), as browsers do. It was set after its
+  contents were laid out, so a height: 100% inside it was auto.
+  YouTube's player sits in such a box (#player-container, top 0 and
+  bottom 0 in a padding-top: 56.25% ratio box): everything under it
+  that is 100% high was 0 px, its ad layer drew the skip button above
+  the video, out of sight, and its controls, spinner and ad card fell
+  out of place as well (and the player came as a 153 px strip from
+  the search page). The same for a stretched flex item (CSS Flexbox
+  9.8): laid out again at its stretched height when the container's
+  height is definite, single line, and the height changed, so that
+  not every row of cards is laid out twice. Checked against Firefox.
 
 ## Fonts and text (phase 4)
 

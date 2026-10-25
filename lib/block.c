@@ -482,7 +482,7 @@ static float layout_contents(struct box *b, struct bfc *f, float y,
 
 /* Lay out a box laid out alone at (x, y): floats, inline-blocks, abs. */
 static void layout_alone(struct box *b, float x, float y, float w,
-	float cbh);
+	float cbh, float defh);
 
 static void rel_position(const struct box *b, float cbw, float *dx,
 	float *dy);
@@ -871,7 +871,7 @@ void place_float(struct box *b, struct bfc *f, float y, float x0, float x1,
 		w = clamp_w(b, w, cbw);
 	}
 	mw = w + hedges(b) + b->m[1] + b->m[3];
-	layout_alone(b, 0, 0, w, -1);
+	layout_alone(b, 0, 0, w, -1, -1);
 	mh = b->h + vedges(b) + b->m[0] + b->m[2];
 	if (side && (cy = bfc_clear(f, side)) > y)
 		y = cy;
@@ -920,10 +920,13 @@ void place_float(struct box *b, struct bfc *f, float y, float x0, float x1,
 
 /*
  * A box that starts a new formatting context, at content position
- * (x, y) with content width w: floats, inline-blocks, abs boxes.
+ * (x, y) with content width w: floats, inline-blocks, abs boxes. defh,
+ * when not -1, is its height when height is auto but set from outside
+ * (an abs box between its top and bottom, a stretched flex or grid
+ * item): definite for its children.
  */
 static void layout_alone(struct box *b, float x, float y, float w,
-	float cbh)
+	float cbh, float defh)
 {
 	struct bfc own;
 	struct strut s = { 0, 0 };
@@ -940,7 +943,8 @@ static void layout_alone(struct box *b, float x, float y, float w,
 		translate(b, x, y);
 		return;
 	}
-	if (b->lok && b->lw == w && b->lcbh == cbh && !g.trial) {
+	if (b->lok && b->lw == w && b->lcbh == cbh && b->ldefh == defh &&
+	    !g.trial) {
 		/* laid out the same way before (incremental layout): its
 		 * subtree is where lx, ly say (abs_static() set x, y) */
 		int i;
@@ -958,6 +962,8 @@ static void layout_alone(struct box *b, float x, float y, float w,
 	b->y = y;
 	b->w = w;
 	hspec = spec_height(b, P_HEIGHT, cbh);
+	if (hspec < 0)
+		hspec = defh;
 	memset(&own, 0, sizeof(own));
 	first = g.nlog;
 	h = layout_contents(b, &own, y, &s, 0, hspec);
@@ -985,6 +991,7 @@ static void layout_alone(struct box *b, float x, float y, float w,
 	b->lok = !g.trial;	/* without its absolute boxes */
 	b->lw = w;
 	b->lcbh = cbh;
+	b->ldefh = defh;
 	b->lh = b->h;
 	b->lx = b->x;
 	b->ly = b->y;
@@ -998,13 +1005,14 @@ void layout_cell(struct box *c, float x, float y, float w)
 		float cw = w - c->m[1] - c->m[3] - hedges(c);
 
 		layout_alone(c, x + c->m[3] + c->b[3] + c->p[3],
-			y + c->m[0] + c->b[0] + c->p[0], cw < 0 ? 0 : cw, -1);
+			y + c->m[0] + c->b[0] + c->p[0], cw < 0 ? 0 : cw, -1,
+			-1);
 		return;
 	}
 	c->m[0] = c->m[1] = c->m[2] = c->m[3] = 0;
 	w -= hedges(c);
 	layout_alone(c, x + c->b[3] + c->p[3], y + c->b[0] + c->p[0],
-		w < 0 ? 0 : w, -1);
+		w < 0 ? 0 : w, -1, -1);
 }
 
 /* For flex and grid */
@@ -1043,7 +1051,7 @@ void layout_item(struct box *b, float x, float y, float w, float h)
 			b->h = h;
 		return;
 	}
-	layout_alone(b, x, y, w < 0 ? 0 : w, -1);
+	layout_alone(b, x, y, w < 0 ? 0 : w, -1, h);
 	if (h >= 0)
 		b->h = h;
 }
@@ -1065,7 +1073,7 @@ void layout_atomic(struct box *b, float cbw, float cbh)
 		w = shrink_to_fit(b, cbw - b->m[1] - b->m[3] - hedges(b));
 	w = clamp_w(b, w, cbw);
 	layout_alone(b, b->m[3] + b->b[3] + b->p[3],
-		b->m[0] + b->b[0] + b->p[0], w, cbh);
+		b->m[0] + b->b[0] + b->p[0], w, cbh, -1);
 }
 
 /* Absolute positioning (CSS 2 10.3.7, 10.6.4, simplified). */
@@ -1121,7 +1129,7 @@ static void layout_abs(struct box *b)
 
 		if (hspec < 0 && t > -1e29f && bt > -1e29f)
 			hspec = ch - t - bt - vedges(b) - b->m[0] - b->m[2];
-		layout_alone(b, x, y, w, ch);
+		layout_alone(b, x, y, w, ch, hspec >= 0 ? hspec : -1);
 		if (hspec >= 0)
 			b->h = clamp_h(b, hspec, ch);
 	}

@@ -146,3 +146,16 @@ width=400
 |       block <div> 10,5 30x10
 |       block <div> 7,13 30x10
 |       block <div> 32,24 30x10
+
+#data
+<!DOCTYPE html><body style="margin:0"><div style="position:relative;padding-top:50%"><div style="position:absolute;top:0;bottom:0;left:0;right:0"><div style="height:100%"><div style="height:50%"></div></div></div></div>
+#errors
+#layout
+width=100
+#document
+| block <html> 0,0 100x50
+|   block <body> 0,0 100x50
+|     block <div> 0,0 100x50
+|       block abs <div> 0,0 100x50
+|         block <div> 0,0 100x50
+|           block <div> 0,0 100x25
