@@ -226,7 +226,18 @@ static void ui_alert(void *data, const char *text)
 	snprintf(status, sizeof(status), "%s", text);
 }
 
-static const struct shell_ui ui = { ui_title, ui_address, ui_alert };
+static void spawn(const char *url);
+
+/* A new window: another process, as Ctrl+N */
+static void ui_open(void *data, const char *url)
+{
+	(void)data;
+	spawn(url);
+}
+
+/* Downloads go to ~/Downloads, said on the status line (alert) */
+static const struct shell_ui ui = { ui_title, ui_address, ui_alert,
+	ui_open, NULL };
 
 /* Drawing */
 
@@ -827,6 +838,16 @@ void front_key(const char *k, const char *text, int mods)
 		e = escape_html(path);
 		ui_alert(NULL, e);
 		free(e);
+		return;
+	}
+	/* zoom: Ctrl+plus (or =), Ctrl+minus, Ctrl+0 */
+	if (ctrl && (!strcmp(k, "+") || !strcmp(k, "=") || !strcmp(k, "-") ||
+	    !strcmp(k, "0"))) {
+		float z = shell_get_zoom(sh);
+
+		shell_zoom(sh, *k == '0' ? 1 : *k == '-' ? z / 1.1f :
+			z * 1.1f);
+		dirty |= D_PAGE;
 		return;
 	}
 	if (!strcmp(k, "F5") || (ctrl && is(k, 'r'))) {

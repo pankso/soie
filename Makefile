@@ -52,6 +52,12 @@ ifeq ($(shell pkg-config --exists gtk+-3.0 && echo y),y)
 GTK = gtk/libsoie-gtk.so.$(SOVERSION) gtk/gsoie
 endif
 
+# pkg-config files (their rules with the GTK widget's below)
+PCS = soie.pc soie-uninstalled.pc
+ifneq ($(GTK),)
+PCS += soie-gtk.pc soie-gtk-uninstalled.pc
+endif
+
 # Extensions: those without dependencies always, the others when
 # their libraries are there (or list them: make EXTS="ext/cookies.so").
 EXTS = ext/cookies.so ext/block.so
@@ -80,7 +86,7 @@ QJS_OBJS = $(QUICKJS)/lib/quickjs/libquickjs.a
 endif
 
 all: lib/libsoie.a lib/libsoie.so.$(SOVERSION) tools/soie-render browser/xsoie \
-	$(WSOIE) $(GTK) $(EXTS)
+	$(WSOIE) $(GTK) $(EXTS) $(PCS)
 
 lib/libsoie.a: $(LIB_OBJS)
 	rm -f $@
@@ -197,6 +203,36 @@ browser/wsoie.o $(WL_OBJS): CPPFLAGS += \
 	$(shell pkg-config --cflags $(WL_PKGS))
 tools/soie-render.o: CPPFLAGS += -DSOIE_EXT_DIR='"$(EXTDIR)"'
 
+# pkg-config: soie and soie-gtk installed, and their -uninstalled
+# twins for programs built on this tree (PKG_CONFIG_PATH=<the tree>:
+# pkg-config takes them first, rpath included). Headers: <soie/soie.h>,
+# <soie-view.h>.
+soie.pc: Makefile
+	printf '%s\n' 'prefix=$(PREFIX)' 'libdir=$${prefix}/lib' \
+		'includedir=$${prefix}/include' '' 'Name: soie' \
+		'Description: Soie, a lightweight HTML and CSS engine' \
+		'Version: $(VERSION)' 'Libs: -L$${libdir} -lsoie' \
+		'Cflags: -I$${includedir}' > $@
+soie-uninstalled.pc: Makefile
+	printf '%s\n' 'Name: soie' \
+		'Description: Soie, a lightweight HTML and CSS engine' \
+		'Version: $(VERSION)' \
+		'Libs: $(CURDIR)/lib/libsoie.so.$(SOVERSION) -Wl,-rpath,$(CURDIR)/lib' \
+		'Cflags: -I$(CURDIR)/lib' > $@
+soie-gtk.pc: Makefile
+	printf '%s\n' 'prefix=$(PREFIX)' 'libdir=$${prefix}/lib' \
+		'includedir=$${prefix}/include' '' 'Name: soie-gtk' \
+		'Description: SoieView, a GTK 3 widget showing web pages' \
+		'Version: $(VERSION)' 'Requires: gtk+-3.0' \
+		'Libs: -L$${libdir} -lsoie-gtk -lsoie' \
+		'Cflags: -I$${includedir} -I$${includedir}/soie' > $@
+soie-gtk-uninstalled.pc: Makefile
+	printf '%s\n' 'Name: soie-gtk' \
+		'Description: SoieView, a GTK 3 widget showing web pages' \
+		'Version: $(VERSION)' 'Requires: gtk+-3.0' \
+		'Libs: $(CURDIR)/gtk/libsoie-gtk.so.$(SOVERSION) $(CURDIR)/lib/libsoie.so.$(SOVERSION) -Wl,-rpath,$(CURDIR)/gtk:$(CURDIR)/lib' \
+		'Cflags: -I$(CURDIR)/lib -I$(CURDIR)/gtk' > $@
+
 # SoieView, the GTK 3 widget: the shell in a library of its own for
 # the browsers built on it (Toile), and gsoie, a little one to try it.
 GTK_CFLAGS = $(shell pkg-config --cflags gtk+-3.0)
@@ -294,6 +330,8 @@ install: all
 	cp lib/libsoie.so.$(SOVERSION) $(DESTDIR)$(PREFIX)/lib/
 	ln -sf libsoie.so.$(SOVERSION) $(DESTDIR)$(PREFIX)/lib/libsoie.so
 	cp $(HEADERS) $(DESTDIR)$(PREFIX)/include/soie/
+	mkdir -p $(DESTDIR)$(PREFIX)/lib/pkgconfig
+	cp soie.pc $(DESTDIR)$(PREFIX)/lib/pkgconfig/
 	cp tools/soie-render browser/xsoie $(WSOIE) $(DESTDIR)$(PREFIX)/bin/
 ifneq ($(GTK),)
 	cp gtk/libsoie-gtk.so.$(SOVERSION) $(DESTDIR)$(PREFIX)/lib/
@@ -301,6 +339,7 @@ ifneq ($(GTK),)
 		$(DESTDIR)$(PREFIX)/lib/libsoie-gtk.so
 	cp gtk/soie-view.h $(DESTDIR)$(PREFIX)/include/soie/
 	cp gtk/gsoie $(DESTDIR)$(PREFIX)/bin/
+	cp soie-gtk.pc $(DESTDIR)$(PREFIX)/lib/pkgconfig/
 endif
 	mkdir -p $(DESTDIR)$(EXTDIR)
 	cp $(EXTS) $(DESTDIR)$(EXTDIR)/
@@ -308,7 +347,7 @@ endif
 clean:
 	rm -f lib/*.o lib/libsoie.a lib/libsoie.so.* tools/*.o \
 		tools/soie-render shell/*.o browser/*.o browser/xsoie browser/wsoie \
-		gtk/*.o gtk/libsoie-gtk.so.* gtk/gsoie \
+		gtk/*.o gtk/libsoie-gtk.so.* gtk/gsoie *.pc \
 		browser/xdg-shell.[ch] browser/xdg-decoration.[ch] \
 		tests/*.o tests/html5lib tests/unit \
 		tests/csstest tests/cssvalue tests/painttest tests/exttest lib/ua-css.c \

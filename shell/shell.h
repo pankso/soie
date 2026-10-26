@@ -33,6 +33,16 @@ struct shell_ui {
 	void (*address)(void *data, const char *url);
 	/* a script's alert */
 	void (*alert)(void *data, const char *text);
+	/* a new window (tab) on url: a link of target _blank, a script's
+	 * window.open() for the user's click or key; NULL: the link
+	 * opens here, the script's window not at all */
+	void (*open)(void *data, const char *url);
+	/* a download (id, from url, of type, total bytes or -1) starts:
+	 * dest holds where it goes (~/Downloads/its name, a free one),
+	 * which the front may change, "" not at all; NULL: there, said
+	 * through alert. It is then the process's (shell_downloads()). */
+	void (*download)(void *data, unsigned id, const char *url,
+		const char *type, long long total, char *dest, size_t size);
 };
 
 /* Load the extensions, start the fetch threads, once; returns the
@@ -43,13 +53,46 @@ int shell_init(void);
  * rest dropped; shell_tick() does it, a front without a shell (all
  * closed) calls it instead. */
 void shell_route(void);
+/*
+ * Downloads are the process's, not their shell's: freeing it does not
+ * stop them. progress: how far one is, every quarter of a second while
+ * it grows (any shell's tick); done: it ended, error NULL when the file
+ * is at its destination. Without done, its shell's alert says it.
+ */
+void shell_downloads(void (*progress)(void *data, unsigned id,
+	long long got, long long total), void (*done)(void *data,
+	unsigned id, const char *error), void *data);
+/* Stop download id (a ui download() call gave it) */
+void shell_download_cancel(unsigned id);
+/*
+ * A URL scheme of the front's own ("toile"): fn answers url (with its
+ * query) in the shells' thread, *body a malloc()ed page of *len bytes,
+ * its Content-Type in type (size bytes; "" is text/html); nonzero when
+ * there is none. The front's pages, what the user types and history
+ * reach it, other pages cannot (no link, resource or script request
+ * from the web). Up to 8 schemes; again with the same name replaces.
+ */
+typedef int (*shell_scheme_fn)(void *data, const char *url, char **body,
+	size_t *len, char *type, size_t size);
+void shell_scheme(const char *name, shell_scheme_fn fn, void *data);
+/* May the page of s lead to url (a link the front opens itself, the
+ * middle button's)? Not to a front's scheme from the web. */
+int shell_may_open(shell *s, const char *url);
 /* A new page view, empty until a load; scripts: 0 turns them off. ui
  * is copied. */
 shell *shell_new(const struct shell_ui *ui, void *data, int scripts);
 /* Its page and scripts stop; not from inside its own ui calls. */
 void shell_free(shell *s);
+/* A private window's view, before its first load: its requests and
+ * scripts use the private cookie jar (in memory only, shared by the
+ * private views, empty at start). */
+void shell_private(shell *s);
 /* The size of the page view. */
 void shell_resize(shell *s, int w, int h);
+/* The page's zoom: device px a CSS px, 1 by default, 0.1 to 10; a
+ * screen's scale times the user's zoom. */
+void shell_zoom(shell *s, float zoom);
+float shell_get_zoom(shell *s);
 /* Run what is due: arrived resources, late layouts, timers, media, a
  * meta refresh, scripts' navigations. *repaint is 1 when the page
  * changed, 2 when only the rectangle shell_dirty() gives did (video
@@ -79,6 +122,9 @@ void shell_paint_rect(shell *s, unsigned char *rgba, int stride, int x,
 
 /* Navigation */
 void shell_load(shell *s, const char *url);
+/* Show html as the page at url (its base; "about:blank" for NULL),
+ * a new history entry. */
+void shell_load_html(shell *s, const char *html, const char *url);
 /* What was typed in an address bar: a URL, a path, a host, or words
  * to search for ($SOIE_SEARCH, a URL with %s, or DuckDuckGo Lite). */
 void shell_go(shell *s, const char *typed);
@@ -99,6 +145,10 @@ void shell_click(shell *s, int x, int y, int mods);
 int shell_key(shell *s, const char *key, const char *text, int mods);
 /* The cursor for x,y; the link under it in link, or "". */
 int shell_hover(shell *s, int x, int y, char *link, size_t size);
+/* What is at x,y, for a context menu: the link and the image there
+ * (absolute URLs, "" for none), 1 when it is a text field. */
+int shell_hit(shell *s, int x, int y, char *link, char *image,
+	size_t size);
 void shell_scroll(shell *s, int dy);
 void shell_scroll_to(shell *s, int y);
 /* The scroll position, the page height and the view's. */

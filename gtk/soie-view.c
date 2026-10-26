@@ -11,6 +11,7 @@
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
+#include <stdlib.h>
 #include <string.h>
 #include <glib-unix.h>
 #include <soie/soie.h>
@@ -18,14 +19,20 @@
 #include "soie-view.h"
 
 #define WHEEL 60		/* pixels a wheel step scrolls */
+/* The page is painted in device pixels: the screen's scale (HiDPI)
+ * times the user's zoom. A widget coordinate to the page view's. */
+#define DEV(v, c) ((int)((c) * (v)->scale))
 #define NRECT 8			/* rects of a partial repaint */
 
 struct _SoieView {
 	GtkWidget parent;
 	shell *sh;
 	gboolean scripts;
+	gboolean private;	/* construct only */
 	cairo_surface_t *surf;	/* the page view's pixels */
-	int w, h;
+	int w, h;		/* widget size; the surface's is times scale */
+	int scale;		/* gtk_widget_get_scale_factor() */
+	double zoom;		/* the user's: "zoom-level" */
 	gboolean full, changed;	/* repaint all of it, what changed */
 	guint timer;		/* the shell's next tick */
 	guint idle;		/* a tick after input */
@@ -36,6 +43,8 @@ struct _SoieView {
 	double smooth;		/* touchpad scrolling below a pixel */
 	char *title, *link;
 	char *alert;		/* told after the shell's call */
+	char *open;		/* a new window asked for, the same */
+	gboolean started;	/* a load started or a page came */
 	int cursor;
 	gboolean loading;
 	/* what changed during the shell's calls, notified after them */
@@ -45,12 +54,13 @@ struct _SoieView {
 
 enum {
 	PROP_0, PROP_URI, PROP_TITLE, PROP_LOADING, PROP_CAN_GO_BACK,
-	PROP_CAN_GO_FORWARD, PROP_SCRIPTS, N_PROPS,
+	PROP_CAN_GO_FORWARD, PROP_SCRIPTS, PROP_ZOOM, PROP_PRIVATE, N_PROPS,
 	PROP_HADJ = N_PROPS, PROP_VADJ, PROP_HPOLICY, PROP_VPOLICY
 };
 static GParamSpec *props[N_PROPS];
 
-enum { SIG_LINK_HOVERED, SIG_ALERT, N_SIGS };
+enum { SIG_LINK_HOVERED, SIG_ALERT, SIG_CREATE, SIG_CONTEXT_MENU,
+	SIG_DOWNLOAD_STARTED, N_SIGS };
 static guint sigs[N_SIGS];
 
 static void scrollable_init(GtkScrollableInterface *iface)
@@ -60,6 +70,199 @@ static void scrollable_init(GtkScrollableInterface *iface)
 
 G_DEFINE_TYPE_WITH_CODE(SoieView, soie_view, GTK_TYPE_WIDGET,
 	G_IMPLEMENT_INTERFACE(GTK_TYPE_SCROLLABLE, scrollable_init))
+
+/* Downloads */
+
+struct _SoieDownload {
+	GObject parent;
+	unsigned id;
+	char *uri, *mime, *dest;
+	char *dest_buf;		/* the shell's, in "download-started" */
+	size_t dest_size;
+	gint64 total;
+	guint64 got;
+};
+
+G_DEFINE_TYPE(SoieDownload, soie_download, G_TYPE_OBJECT)
+
+enum { DL_PROGRESS, DL_FINISHED, DL_FAILED, N_DL_SIGS };
+static guint dl_sigs[N_DL_SIGS];
+
+static void soie_download_finalize(GObject *o)
+{
+	SoieDownload *d = SOIE_DOWNLOAD(o);
+
+	g_free(d->uri);
+	g_free(d->mime);
+	g_free(d->dest);
+	G_OBJECT_CLASS(soie_download_parent_class)->finalize(o);
+}
+
+static void soie_download_class_init(SoieDownloadClass *c)
+{
+	G_OBJECT_CLASS(c)->finalize = soie_download_finalize;
+	dl_sigs[DL_PROGRESS] = g_signal_new("progress", G_TYPE_FROM_CLASS(c),
+		G_SIGNAL_RUN_LAST, 0, NULL, NULL, NULL, G_TYPE_NONE, 0);
+	dl_sigs[DL_FINISHED] = g_signal_new("finished", G_TYPE_FROM_CLASS(c),
+		G_SIGNAL_RUN_LAST, 0, NULL, NULL, NULL, G_TYPE_NONE, 0);
+	dl_sigs[DL_FAILED] = g_signal_new("failed", G_TYPE_FROM_CLASS(c),
+		G_SIGNAL_RUN_LAST, 0, NULL, NULL, NULL, G_TYPE_NONE, 1,
+		G_TYPE_STRING);
+}
+
+static void soie_download_init(SoieDownload *d)
+{
+	d->total = -1;
+}
+
+const char *soie_download_get_uri(SoieDownload *d)
+{
+	g_return_val_if_fail(SOIE_IS_DOWNLOAD(d), NULL);
+	return d->uri;
+}
+
+const char *soie_download_get_mime_type(SoieDownload *d)
+{
+	g_return_val_if_fail(SOIE_IS_DOWNLOAD(d), NULL);
+	return d->mime;
+}
+
+const char *soie_download_get_destination(SoieDownload *d)
+{
+	g_return_val_if_fail(SOIE_IS_DOWNLOAD(d), NULL);
+	return d->dest_buf ? d->dest_buf : d->dest;
+}
+
+void soie_download_set_destination(SoieDownload *d, const char *path)
+{
+	g_return_if_fail(SOIE_IS_DOWNLOAD(d));
+	if (!d->dest_buf) {
+		g_warning("soie_download_set_destination() outside "
+			"\"download-started\"");
+		return;
+	}
+	g_snprintf(d->dest_buf, d->dest_size, "%s", path ? path : "");
+}
+
+guint64 soie_download_get_received_data_length(SoieDownload *d)
+{
+	g_return_val_if_fail(SOIE_IS_DOWNLOAD(d), 0);
+	return d->got;
+}
+
+gint64 soie_download_get_content_length(SoieDownload *d)
+{
+	g_return_val_if_fail(SOIE_IS_DOWNLOAD(d), -1);
+	return d->total;
+}
+
+void soie_download_cancel(SoieDownload *d)
+{
+	g_return_if_fail(SOIE_IS_DOWNLOAD(d));
+	shell_download_cancel(d->id);
+}
+
+/* The downloads on their way (id -> SoieDownload), the process's as
+ * the shell's: a view closed does not stop them */
+static GHashTable *downloads;
+
+/* News of a download, told from an idle: outside the shell's calls */
+struct dl_event {
+	SoieDownload *d;
+	int sig;
+	char *error;
+};
+static GList *dl_events;
+static guint dl_idle;
+
+static gboolean tell_downloads(gpointer data);
+
+static void dl_event(SoieDownload *d, int sig, const char *error)
+{
+	struct dl_event *e;
+	GList *l;
+
+	/* one progress waiting is enough */
+	for (l = dl_events; sig == DL_PROGRESS && l; l = l->next)
+		if (((struct dl_event *)l->data)->d == d &&
+		    ((struct dl_event *)l->data)->sig == DL_PROGRESS)
+			return;
+	e = g_new0(struct dl_event, 1);
+	e->d = g_object_ref(d);
+	e->sig = sig;
+	e->error = g_strdup(error);
+	dl_events = g_list_append(dl_events, e);
+	if (!dl_idle)
+		dl_idle = g_idle_add(tell_downloads, NULL);
+}
+
+static void ui_download(void *data, unsigned id, const char *url,
+	const char *type, long long total, char *dest, size_t size)
+{
+	SoieView *v = data;
+	SoieDownload *d = g_object_new(SOIE_TYPE_DOWNLOAD, NULL);
+
+	d->id = id;
+	d->uri = g_strdup(url);
+	d->mime = g_strdup(type);
+	d->total = total;
+	d->dest_buf = dest;
+	d->dest_size = size;
+	g_signal_emit(v, sigs[SIG_DOWNLOAD_STARTED], 0, d);
+	d->dest_buf = NULL;
+	d->dest = g_strdup(dest);
+	g_hash_table_insert(downloads, GUINT_TO_POINTER(id), d);
+}
+
+static void download_progress(void *data, unsigned id, long long got,
+	long long total)
+{
+	SoieDownload *d = g_hash_table_lookup(downloads,
+		GUINT_TO_POINTER(id));
+
+	(void)data;
+	if (!d)
+		return;
+	d->got = (guint64)got;
+	d->total = total;
+	dl_event(d, DL_PROGRESS, NULL);
+}
+
+static void download_done(void *data, unsigned id, const char *error)
+{
+	SoieDownload *d = g_hash_table_lookup(downloads,
+		GUINT_TO_POINTER(id));
+
+	(void)data;
+	if (!d)
+		return;
+	if (!error)
+		d->got = d->total >= 0 ? (guint64)d->total : d->got;
+	dl_event(d, error ? DL_FAILED : DL_FINISHED, error);
+	g_hash_table_remove(downloads, GUINT_TO_POINTER(id));
+}
+
+/* Tell the downloads' news */
+static gboolean tell_downloads(gpointer data)
+{
+	GList *l = dl_events;
+
+	(void)data;
+	dl_idle = 0;
+	dl_events = NULL;
+	for (; l; l = g_list_delete_link(l, l)) {
+		struct dl_event *e = l->data;
+
+		if (e->sig == DL_FAILED)
+			g_signal_emit(e->d, dl_sigs[DL_FAILED], 0, e->error);
+		else
+			g_signal_emit(e->d, dl_sigs[e->sig], 0);
+		g_object_unref(e->d);
+		g_free(e->error);
+		g_free(e);
+	}
+	return G_SOURCE_REMOVE;
+}
 
 /* All views: the shells' descriptor is theirs */
 static GList *views;
@@ -84,6 +287,7 @@ static void ui_address(void *data, const char *url)
 
 	(void)url;
 	v->uri_changed = TRUE;
+	v->started = TRUE;
 }
 
 static void ui_alert(void *data, const char *text)
@@ -94,7 +298,36 @@ static void ui_alert(void *data, const char *text)
 	v->alert = g_strdup(text);
 }
 
-static const struct shell_ui ui = { ui_title, ui_address, ui_alert };
+static void ui_open(void *data, const char *url)
+{
+	SoieView *v = data;
+
+	g_free(v->open);
+	v->open = g_strdup(url);
+}
+
+static const struct shell_ui ui = { ui_title, ui_address, ui_alert,
+	ui_open, ui_download };
+
+/*
+ * A new window on uri: the handlers of "create" give the view, which
+ * then loads it; without a handler it loads here, with one that gives
+ * none it does not at all (the browser said no).
+ */
+static void open_new(SoieView *v, const char *uri)
+{
+	GtkWidget *w = NULL;
+
+	if (!shell_may_open(v->sh, uri))
+		return;
+	if (!g_signal_has_handler_pending(v, sigs[SIG_CREATE], 0, FALSE)) {
+		soie_view_load_uri(v, uri);
+		return;
+	}
+	g_signal_emit(v, sigs[SIG_CREATE], 0, uri, &w);
+	if (w && SOIE_IS_VIEW(w))
+		soie_view_load_uri(SOIE_VIEW(w), uri);
+}
 
 /*
  * What the shell's calls changed, told once they returned: a handler
@@ -106,9 +339,16 @@ static void tell(SoieView *v)
 	gboolean loading = shell_loading(v->sh, &text) > 0;
 	gboolean back = shell_can_go(v->sh, -1) != 0;
 	gboolean fwd = shell_can_go(v->sh, 1) != 0;
-	char *alert = v->alert;
+	char *alert = v->alert, *open = v->open;
 
 	g_object_ref(v);
+	/* a load that came at once was a load all the same: loading goes
+	 * TRUE then FALSE, as WebKit's load-changed */
+	if (v->started && !v->loading) {
+		v->loading = TRUE;
+		g_object_notify_by_pspec(G_OBJECT(v), props[PROP_LOADING]);
+	}
+	v->started = FALSE;
 	g_object_freeze_notify(G_OBJECT(v));
 	if (v->uri_changed)
 		g_object_notify_by_pspec(G_OBJECT(v), props[PROP_URI]);
@@ -130,10 +370,13 @@ static void tell(SoieView *v)
 			props[PROP_CAN_GO_FORWARD]);
 	}
 	g_object_thaw_notify(G_OBJECT(v));
-	v->alert = NULL;
+	v->alert = v->open = NULL;
 	if (alert)
 		g_signal_emit(v, sigs[SIG_ALERT], 0, alert);
+	if (open && v->sh)
+		open_new(v, open);
 	g_free(alert);
+	g_free(open);
 	g_object_unref(v);
 }
 
@@ -147,11 +390,27 @@ static void sync_adjustment(SoieView *v)
 	if (!v->vadj || !v->sh)
 		return;
 	shell_view(v->sh, &scroll, &height, &view);
+	/* the adjustments are in widget pixels */
+	scroll /= v->scale;
+	height /= v->scale;
+	view /= v->scale;
 	v->syncing = TRUE;
+	/* no horizontal scrolling: the range is the view's width */
+	if (v->hadj)
+		gtk_adjustment_configure(v->hadj, 0, 0, v->w, 10, v->w, v->w);
 	gtk_adjustment_configure(v->vadj, scroll, 0,
 		height > view ? height : view, 40, view > 80 ? view - 40 : view,
 		view);
 	v->syncing = FALSE;
+}
+
+/* A rect of the page view shown again: in widget pixels */
+static void show_rect(SoieView *v, int x, int y, int w, int h)
+{
+	int s = v->scale;
+
+	gtk_widget_queue_draw_area(GTK_WIDGET(v), x / s, y / s,
+		(x + w + s - 1) / s - x / s, (y + h + s - 1) / s - y / s);
 }
 
 /* Paint what changed and ask GTK to show it. */
@@ -169,8 +428,7 @@ static void redraw(SoieView *v)
 	if (v->changed && !v->full &&
 	    (n = shell_paint_changed(v->sh, px, stride, r, NRECT)) >= 0) {
 		for (i = 0; i < n; i++)
-			gtk_widget_queue_draw_area(w, r[i][0], r[i][1],
-				r[i][2], r[i][3]);
+			show_rect(v, r[i][0], r[i][1], r[i][2], r[i][3]);
 	} else if (v->full || v->changed ||
 	    !shell_paint_scroll(v->sh, px, stride, &dy)) {
 		shell_paint(v->sh, px, stride);
@@ -201,15 +459,26 @@ static void size_allocate(GtkWidget *w, GtkAllocation *a)
 {
 	SoieView *v = SOIE_VIEW(w);
 
+	int s = gtk_widget_get_scale_factor(w);
+
 	GTK_WIDGET_CLASS(soie_view_parent_class)->size_allocate(w, a);
-	if (a->width == v->w && a->height == v->h && v->surf)
+	if (s < 1)
+		s = 1;
+	if (a->width == v->w && a->height == v->h && s == v->scale && v->surf)
 		return;
 	v->w = a->width > 1 ? a->width : 1;
 	v->h = a->height > 1 ? a->height : 1;
+	if (s != v->scale) {
+		/* another screen: the page in its pixels */
+		v->scale = s;
+		shell_zoom(v->sh, (float)(v->zoom * s));
+	}
 	if (v->surf)
 		cairo_surface_destroy(v->surf);
-	v->surf = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, v->w, v->h);
-	shell_resize(v->sh, v->w, v->h);
+	v->surf = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, v->w * s,
+		v->h * s);
+	cairo_surface_set_device_scale(v->surf, s, s);
+	shell_resize(v->sh, v->w * s, v->h * s);
 	v->full = TRUE;
 	redraw(v);
 	tell(v);
@@ -307,7 +576,7 @@ static void tick(SoieView *v)
 		shell_paint_rect(v->sh, cairo_image_surface_get_data(v->surf),
 			cairo_image_surface_get_stride(v->surf), x, y, w, h);
 		cairo_surface_mark_dirty(v->surf);
-		gtk_widget_queue_draw_area(GTK_WIDGET(v), x, y, w, h);
+		show_rect(v, x, y, w, h);
 	} else if (repaint) {
 		v->changed = TRUE;
 	}
@@ -513,7 +782,7 @@ static gboolean motion(GtkWidget *w, GdkEventMotion *e)
 	SoieView *v = SOIE_VIEW(w);
 	char link[4096];
 
-	set_cursor(v, shell_hover(v->sh, (int)e->x, (int)e->y, link,
+	set_cursor(v, shell_hover(v->sh, DEV(v, e->x), DEV(v, e->y), link,
 		sizeof(link)));
 	hovered(v, link);
 	return TRUE;
@@ -526,25 +795,148 @@ static gboolean leave(GtkWidget *w, GdkEventCrossing *e)
 	return FALSE;
 }
 
+/* The context menu */
+
+static void copy_text(GtkMenuItem *item, gpointer data)
+{
+	(void)data;
+	gtk_clipboard_set_text(gtk_clipboard_get(GDK_SELECTION_CLIPBOARD),
+		g_object_get_data(G_OBJECT(item), "text"), -1);
+}
+
+static void menu_back(GtkMenuItem *item, gpointer v)
+{
+	(void)item;
+	soie_view_go_back(v);
+}
+
+static void menu_forward(GtkMenuItem *item, gpointer v)
+{
+	(void)item;
+	soie_view_go_forward(v);
+}
+
+static void menu_reload(GtkMenuItem *item, gpointer v)
+{
+	(void)item;
+	soie_view_reload(v);
+}
+
+static void menu_paste(GtkMenuItem *item, gpointer v)
+{
+	(void)item;
+	gtk_clipboard_request_text(gtk_widget_get_clipboard(v,
+		GDK_SELECTION_CLIPBOARD), pasted, g_object_ref(v));
+}
+
+static GtkWidget *menu_item(GtkWidget *menu, const char *label,
+	GCallback fn, gpointer data, gboolean on)
+{
+	GtkWidget *i = gtk_menu_item_new_with_mnemonic(label);
+
+	g_signal_connect(i, "activate", fn, data);
+	gtk_widget_set_sensitive(i, on);
+	gtk_menu_shell_append(GTK_MENU_SHELL(menu), i);
+	return i;
+}
+
+static void copy_item(GtkWidget *menu, const char *label, const char *text)
+{
+	GtkWidget *i = menu_item(menu, label, G_CALLBACK(copy_text), NULL,
+		TRUE);
+
+	g_object_set_data_full(G_OBJECT(i), "text", g_strdup(text), g_free);
+}
+
+static gboolean menu_gone(gpointer menu)
+{
+	gtk_widget_destroy(menu);
+	g_object_unref(menu);
+	return G_SOURCE_REMOVE;
+}
+
+/* After its item ran: an item's activate comes after the hide */
+static void menu_hidden(GtkWidget *menu, gpointer data)
+{
+	(void)data;
+	g_idle_add(menu_gone, menu);
+}
+
+/*
+ * The default items for what is at x,y, then the browser's handlers of
+ * "context-menu" (add theirs, or TRUE: no menu), then the menu.
+ */
+static void context_menu(SoieView *v, GdkEventButton *e)
+{
+	GtkWidget *menu = gtk_menu_new();
+	char link[4096], image[4096];
+	gboolean field, stop = FALSE;
+
+	g_object_ref_sink(menu);
+	field = shell_hit(v->sh, DEV(v, e->x), DEV(v, e->y), link, image,
+		sizeof(link));
+	menu_item(menu, "_Back", G_CALLBACK(menu_back), v,
+		soie_view_can_go_back(v));
+	menu_item(menu, "_Forward", G_CALLBACK(menu_forward), v,
+		soie_view_can_go_forward(v));
+	menu_item(menu, "_Reload", G_CALLBACK(menu_reload), v, TRUE);
+	if (*link || *image || field)
+		gtk_menu_shell_append(GTK_MENU_SHELL(menu),
+			gtk_separator_menu_item_new());
+	if (*link)
+		copy_item(menu, "Copy _Link Address", link);
+	if (*image)
+		copy_item(menu, "Copy _Image Address", image);
+	if (field)
+		menu_item(menu, "_Paste", G_CALLBACK(menu_paste), v, TRUE);
+	g_signal_emit(v, sigs[SIG_CONTEXT_MENU], 0, menu, link, image, &stop);
+	if (stop) {
+		gtk_widget_destroy(menu);
+		g_object_unref(menu);
+		return;
+	}
+	gtk_widget_show_all(menu);
+	g_signal_connect(menu, "hide", G_CALLBACK(menu_hidden), NULL);
+	gtk_menu_attach_to_widget(GTK_MENU(menu), GTK_WIDGET(v), NULL);
+	gtk_menu_popup_at_pointer(GTK_MENU(menu), (GdkEvent *)e);
+}
+
 static gboolean button_press(GtkWidget *w, GdkEventButton *e)
 {
 	SoieView *v = SOIE_VIEW(w);
+	char link[4096];
 
 	if (e->type != GDK_BUTTON_PRESS)
 		return FALSE;	/* double clicks: the first did it */
 	gtk_widget_grab_focus(w);
 	switch (e->button) {
 	case 1:
-		shell_click(v->sh, (int)e->x, (int)e->y, mods_of(e->state));
+		/* Ctrl+click: a link in a new window too */
+		if ((e->state & GDK_CONTROL_MASK) && shell_hover(v->sh,
+		    DEV(v, e->x), DEV(v, e->y), link, sizeof(link)) ==
+		    SHELL_HAND && *link) {
+			open_new(v, link);
+			return TRUE;
+		}
+		shell_click(v->sh, DEV(v, e->x), DEV(v, e->y), mods_of(e->state));
 		break;
 	case 2:
+		/* a link in a new window */
+		if (shell_hover(v->sh, DEV(v, e->x), DEV(v, e->y), link,
+		    sizeof(link)) == SHELL_HAND && *link) {
+			open_new(v, link);
+			return TRUE;
+		}
 		/* the PRIMARY selection into a text field */
-		shell_click(v->sh, (int)e->x, (int)e->y, mods_of(e->state));
+		shell_click(v->sh, DEV(v, e->x), DEV(v, e->y), mods_of(e->state));
 		if (shell_field(v->sh))
 			gtk_clipboard_request_text(gtk_widget_get_clipboard(w,
 				GDK_SELECTION_PRIMARY), pasted,
 				g_object_ref(v));
 		break;
+	case 3:
+		context_menu(v, e);
+		return TRUE;
 	case 8:
 		shell_history(v->sh, -1);
 		break;
@@ -582,7 +974,7 @@ static gboolean scroll(GtkWidget *w, GdkEventScroll *e)
 		return FALSE;
 	}
 	if (d) {
-		shell_scroll(v->sh, d);
+		shell_scroll(v->sh, d * v->scale);
 		redraw(v);
 	}
 	return TRUE;
@@ -595,7 +987,7 @@ static void vadj_changed(GtkAdjustment *a, gpointer data)
 
 	if (v->syncing)
 		return;
-	shell_scroll_to(v->sh, (int)gtk_adjustment_get_value(a));
+	shell_scroll_to(v->sh, (int)(gtk_adjustment_get_value(a) * v->scale));
 	redraw(v);
 }
 
@@ -616,7 +1008,7 @@ static void set_vadj(SoieView *v, GtkAdjustment *a)
 
 static void set_hadj(SoieView *v, GtkAdjustment *a)
 {
-	/* no horizontal scrolling yet: an empty range */
+	/* no horizontal scrolling yet: the view's width, sync_adjustment() */
 	if (a == v->hadj)
 		return;
 	if (v->hadj)
@@ -624,7 +1016,7 @@ static void set_hadj(SoieView *v, GtkAdjustment *a)
 	if (!a)
 		a = gtk_adjustment_new(0, 0, 0, 0, 0, 0);
 	v->hadj = g_object_ref_sink(a);
-	gtk_adjustment_configure(a, 0, 0, 0, 0, 0, 0);
+	gtk_adjustment_configure(a, 0, 0, v->w, 10, v->w, v->w);
 }
 
 /* The object */
@@ -652,6 +1044,12 @@ static void get_property(GObject *o, guint id, GValue *val, GParamSpec *ps)
 	case PROP_SCRIPTS:
 		g_value_set_boolean(val, v->scripts);
 		break;
+	case PROP_ZOOM:
+		g_value_set_double(val, soie_view_get_zoom_level(v));
+		break;
+	case PROP_PRIVATE:
+		g_value_set_boolean(val, v->private);
+		break;
 	case PROP_HADJ:
 		g_value_set_object(val, v->hadj);
 		break;
@@ -678,6 +1076,12 @@ static void set_property(GObject *o, guint id, const GValue *val,
 	case PROP_SCRIPTS:
 		v->scripts = g_value_get_boolean(val);
 		break;
+	case PROP_ZOOM:
+		soie_view_set_zoom_level(v, g_value_get_double(val));
+		break;
+	case PROP_PRIVATE:
+		v->private = g_value_get_boolean(val);
+		break;
 	case PROP_HADJ:
 		set_hadj(v, g_value_get_object(val));
 		break;
@@ -702,9 +1106,15 @@ static void constructed(GObject *o)
 
 	G_OBJECT_CLASS(soie_view_parent_class)->constructed(o);
 	fd = shell_init();
-	if (fd >= 0 && !fd_watch)
+	if (fd >= 0 && !fd_watch) {
 		fd_watch = g_unix_fd_add(fd, G_IO_IN, on_fd, NULL);
+		downloads = g_hash_table_new_full(NULL, NULL, NULL,
+			g_object_unref);
+		shell_downloads(download_progress, download_done, NULL);
+	}
 	v->sh = shell_new(&ui, v, v->scripts);
+	if (v->private)
+		shell_private(v->sh);
 	shell_bgra(v->sh, G_BYTE_ORDER == G_LITTLE_ENDIAN);
 	views = g_list_prepend(views, v);
 	sync_adjustment(v);
@@ -741,6 +1151,7 @@ static void finalize(GObject *o)
 	g_free(v->title);
 	g_free(v->link);
 	g_free(v->alert);
+	g_free(v->open);
 	G_OBJECT_CLASS(soie_view_parent_class)->finalize(o);
 }
 
@@ -786,6 +1197,13 @@ static void soie_view_class_init(SoieViewClass *c)
 	props[PROP_SCRIPTS] = g_param_spec_boolean("scripts", "Scripts",
 		"Run the pages' JavaScript", TRUE, G_PARAM_READWRITE |
 		G_PARAM_CONSTRUCT_ONLY | G_PARAM_STATIC_STRINGS);
+	props[PROP_PRIVATE] = g_param_spec_boolean("private", "Private",
+		"Cookies in memory only, apart from the other views'", FALSE,
+		G_PARAM_READWRITE | G_PARAM_CONSTRUCT_ONLY |
+		G_PARAM_STATIC_STRINGS);
+	props[PROP_ZOOM] = g_param_spec_double("zoom-level", "Zoom level",
+		"The page's zoom, 1 is 100%", 0.25, 5, 1, G_PARAM_READWRITE |
+		G_PARAM_STATIC_STRINGS);
 	g_object_class_install_properties(oc, N_PROPS, props);
 	g_object_class_override_property(oc, PROP_HADJ, "hadjustment");
 	g_object_class_override_property(oc, PROP_VADJ, "vadjustment");
@@ -799,6 +1217,16 @@ static void soie_view_class_init(SoieViewClass *c)
 	sigs[SIG_ALERT] = g_signal_new("alert", G_TYPE_FROM_CLASS(c),
 		G_SIGNAL_RUN_LAST, 0, NULL, NULL, NULL, G_TYPE_NONE, 1,
 		G_TYPE_STRING);
+	sigs[SIG_CONTEXT_MENU] = g_signal_new("context-menu",
+		G_TYPE_FROM_CLASS(c), G_SIGNAL_RUN_LAST, 0,
+		g_signal_accumulator_true_handled, NULL, NULL, G_TYPE_BOOLEAN, 3,
+		GTK_TYPE_MENU, G_TYPE_STRING, G_TYPE_STRING);
+	sigs[SIG_DOWNLOAD_STARTED] = g_signal_new("download-started",
+		G_TYPE_FROM_CLASS(c), G_SIGNAL_RUN_LAST, 0, NULL, NULL, NULL,
+		G_TYPE_NONE, 1, SOIE_TYPE_DOWNLOAD);
+	sigs[SIG_CREATE] = g_signal_new("create", G_TYPE_FROM_CLASS(c),
+		G_SIGNAL_RUN_LAST, 0, g_signal_accumulator_first_wins, NULL,
+		NULL, GTK_TYPE_WIDGET, 1, G_TYPE_STRING);
 }
 
 static void soie_view_init(SoieView *v)
@@ -807,6 +1235,8 @@ static void soie_view_init(SoieView *v)
 
 	v->scripts = TRUE;
 	v->cursor = -1;
+	v->scale = 1;
+	v->zoom = 1;
 	v->full = TRUE;
 	gtk_widget_set_has_window(w, TRUE);
 	gtk_widget_set_can_focus(w, TRUE);
@@ -837,6 +1267,57 @@ void soie_view_load_uri(SoieView *v, const char *uri)
 	g_return_if_fail(SOIE_IS_VIEW(v) && uri);
 	shell_load(v->sh, uri);
 	after(v);
+}
+
+void soie_view_load_html(SoieView *v, const char *html, const char *base)
+{
+	g_return_if_fail(SOIE_IS_VIEW(v));
+	shell_load_html(v->sh, html, base);
+	after(v);
+}
+
+/* A browser's scheme: its function, behind the shell's */
+struct scheme {
+	SoieURISchemeFunc fn;
+	gpointer data;
+};
+
+static int scheme_answer(void *data, const char *url, char **body,
+	size_t *len, char *type, size_t size)
+{
+	struct scheme *sc = data;
+	char *ct = NULL;
+	GBytes *b = sc->fn(url, &ct, sc->data);
+	gsize n;
+	const void *p;
+
+	if (!b) {
+		g_free(ct);
+		return -1;
+	}
+	p = g_bytes_get_data(b, &n);
+	*body = malloc(n + 1);
+	if (!*body)
+		abort();
+	if (n)
+		memcpy(*body, p, n);
+	(*body)[n] = '\0';
+	*len = n;
+	g_snprintf(type, size, "%s", ct ? ct : "text/html");
+	g_free(ct);
+	g_bytes_unref(b);
+	return 0;
+}
+
+void soie_view_register_uri_scheme(const char *scheme, SoieURISchemeFunc fn,
+	gpointer data)
+{
+	struct scheme *sc = g_new(struct scheme, 1);	/* kept: as WebKit */
+
+	g_return_if_fail(scheme && fn);
+	sc->fn = fn;
+	sc->data = data;
+	shell_scheme(scheme, scheme_answer, sc);
 }
 
 void soie_view_go(SoieView *v, const char *typed)
@@ -895,6 +1376,40 @@ gboolean soie_view_can_go_forward(SoieView *v)
 {
 	g_return_val_if_fail(SOIE_IS_VIEW(v), FALSE);
 	return shell_can_go(v->sh, 1) != 0;
+}
+
+void soie_view_set_zoom_level(SoieView *v, double zoom)
+{
+	g_return_if_fail(SOIE_IS_VIEW(v));
+	zoom = zoom < 0.25 ? 0.25 : zoom > 5 ? 5 : zoom;
+	if (zoom == v->zoom)
+		return;
+	v->zoom = zoom;
+	shell_zoom(v->sh, (float)(zoom * v->scale));
+	v->full = TRUE;
+	redraw(v);
+	tick_soon(v);
+	g_object_notify_by_pspec(G_OBJECT(v), props[PROP_ZOOM]);
+}
+
+double soie_view_get_zoom_level(SoieView *v)
+{
+	g_return_val_if_fail(SOIE_IS_VIEW(v), 1);
+	return v->zoom;
+}
+
+void soie_view_set_cookie_policy(SoieCookiePolicy policy)
+{
+	shell_init();	/* the extensions, the cookie jar among them */
+	soie_cookies_policy(policy == SOIE_COOKIE_POLICY_ALL ?
+		SOIE_COOKIES_ALL : policy == SOIE_COOKIE_POLICY_NONE ?
+		SOIE_COOKIES_NONE : SOIE_COOKIES_NO_THIRD_PARTY);
+}
+
+void soie_view_clear_cookies(gboolean private_ones)
+{
+	shell_init();
+	soie_cookies_clear(private_ones ? SOIE_COOKIE_PRIVATE : 0);
 }
 
 int soie_view_find(SoieView *v, const char *text, int dir, int *current)

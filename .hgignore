@@ -21,3 +21,4 @@ ext/*.so
 ext/script/dom-js.c
 gtk/gsoie
 asan-build
+*.pc

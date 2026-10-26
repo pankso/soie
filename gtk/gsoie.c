@@ -1,8 +1,10 @@
 /*
  * gsoie: a little GTK 3 browser on SoieView, to try the widget and show
  * how a browser uses it: tabs, an address bar, back, forward, reload,
- * the link under the pointer. Ctrl+T a tab, Ctrl+W closes it, Ctrl+L
- * the address, Ctrl+R or F5 reloads, Alt+arrows the history, Ctrl+Q.
+ * the link under the pointer, new tabs for target=_blank and the middle
+ * button, downloads on the status line. Ctrl+T a tab, Ctrl+W closes it,
+ * Ctrl+L the address, Ctrl+R or F5 reloads, Alt+arrows the history,
+ * Ctrl+plus, Ctrl+minus and Ctrl+0 zoom, Ctrl+Q.
  *
  * Copyright (C) 2026 Christophe Lincoln <pankso@slitaz.org>
  * Written with the assistance of Claude (Anthropic) and Opencode.
@@ -78,7 +80,96 @@ static void alert(SoieView *v, const char *text, gpointer data)
 	gtk_widget_destroy(d);
 }
 
-static void new_tab(const char *uri)
+static GtkWidget *new_tab(const char *uri);
+
+/* target=_blank, window.open(), the middle button: a tab, which the
+ * view then loads */
+static GtkWidget *create(SoieView *v, const char *uri, gpointer data)
+{
+	(void)v;
+	(void)uri;
+	(void)data;
+	return new_tab(NULL);
+}
+
+/* Downloads, on the status line */
+
+static void dl_progress(SoieDownload *d, gpointer data)
+{
+	gint64 total = soie_download_get_content_length(d);
+	guint64 got = soie_download_get_received_data_length(d);
+	char text[600];
+
+	(void)data;
+	if (total > 0)
+		g_snprintf(text, sizeof(text), "Downloading %s: %d%%",
+			soie_download_get_destination(d),
+			(int)(got * 100 / (guint64)total));
+	else
+		g_snprintf(text, sizeof(text), "Downloading %s: %" G_GUINT64_FORMAT
+			" bytes", soie_download_get_destination(d), got);
+	gtk_label_set_text(GTK_LABEL(status), text);
+}
+
+static void dl_finished(SoieDownload *d, gpointer data)
+{
+	char text[600];
+
+	(void)data;
+	g_snprintf(text, sizeof(text), "Saved to %s",
+		soie_download_get_destination(d));
+	gtk_label_set_text(GTK_LABEL(status), text);
+}
+
+static void dl_failed(SoieDownload *d, const char *error, gpointer data)
+{
+	char text[600];
+
+	(void)data;
+	g_snprintf(text, sizeof(text), "Download of %s failed: %s",
+		soie_download_get_uri(d), error);
+	gtk_label_set_text(GTK_LABEL(status), text);
+}
+
+/* Its default destination (~/Downloads) is fine: follow it */
+static void download(SoieView *v, SoieDownload *d, gpointer data)
+{
+	(void)v;
+	(void)data;
+	g_signal_connect(d, "progress", G_CALLBACK(dl_progress), NULL);
+	g_signal_connect(d, "finished", G_CALLBACK(dl_finished), NULL);
+	g_signal_connect(d, "failed", G_CALLBACK(dl_failed), NULL);
+	dl_progress(d, NULL);
+}
+
+static void open_tab(GtkMenuItem *item, gpointer data)
+{
+	(void)data;
+	new_tab(g_object_get_data(G_OBJECT(item), "uri"));
+}
+
+/* The right button: a link opens in a new tab too, first */
+static gboolean context_menu(SoieView *v, GtkMenu *menu, const char *link,
+	const char *image, gpointer data)
+{
+	GtkWidget *i;
+
+	(void)v;
+	(void)image;
+	(void)data;
+	if (!*link)
+		return FALSE;
+	i = gtk_menu_item_new_with_mnemonic("Open Link in New _Tab");
+	g_object_set_data_full(G_OBJECT(i), "uri", g_strdup(link), g_free);
+	g_signal_connect(i, "activate", G_CALLBACK(open_tab), NULL);
+	gtk_menu_shell_prepend(GTK_MENU_SHELL(menu),
+		gtk_separator_menu_item_new());
+	gtk_menu_shell_prepend(GTK_MENU_SHELL(menu), i);
+	return FALSE;
+}
+
+/* A tab on uri (NULL: its view loads nothing yet) */
+static GtkWidget *new_tab(const char *uri)
 {
 	GtkWidget *view = soie_view_new(), *sw, *label;
 	int i;
@@ -100,12 +191,17 @@ static void new_tab(const char *uri)
 	g_signal_connect(view, "link-hovered", G_CALLBACK(link_hovered),
 		NULL);
 	g_signal_connect(view, "alert", G_CALLBACK(alert), NULL);
+	g_signal_connect(view, "create", G_CALLBACK(create), NULL);
+	g_signal_connect(view, "context-menu", G_CALLBACK(context_menu), NULL);
+	g_signal_connect(view, "download-started", G_CALLBACK(download), NULL);
 	gtk_widget_show_all(sw);
 	i = gtk_notebook_append_page(GTK_NOTEBOOK(tabs), sw, label);
 	gtk_notebook_set_tab_reorderable(GTK_NOTEBOOK(tabs), sw, TRUE);
 	gtk_notebook_set_current_page(GTK_NOTEBOOK(tabs), i);
-	soie_view_load_uri(SOIE_VIEW(view), uri);
+	if (uri)
+		soie_view_load_uri(SOIE_VIEW(view), uri);
 	gtk_widget_grab_focus(view);
+	return view;
 }
 
 static void close_tab(void)
@@ -178,6 +274,15 @@ static gboolean shortcut(GtkWidget *w, GdkEventKey *e, gpointer data)
 	} else if (v && ((m == GDK_CONTROL_MASK && k == GDK_KEY_r) ||
 		   (!m && k == GDK_KEY_F5))) {
 		soie_view_reload(v);
+	} else if (v && (m & ~GDK_SHIFT_MASK) == GDK_CONTROL_MASK && (k == GDK_KEY_plus ||
+		   k == GDK_KEY_equal || k == GDK_KEY_KP_Add)) {
+		soie_view_set_zoom_level(v, soie_view_get_zoom_level(v) * 1.1);
+	} else if (v && (m & ~GDK_SHIFT_MASK) == GDK_CONTROL_MASK && (k == GDK_KEY_minus ||
+		   k == GDK_KEY_KP_Subtract)) {
+		soie_view_set_zoom_level(v, soie_view_get_zoom_level(v) / 1.1);
+	} else if (v && (m & ~GDK_SHIFT_MASK) == GDK_CONTROL_MASK && (k == GDK_KEY_0 ||
+		   k == GDK_KEY_KP_0)) {
+		soie_view_set_zoom_level(v, 1);
 	} else if (v && m == GDK_MOD1_MASK && k == GDK_KEY_Left) {
 		soie_view_go_back(v);
 	} else if (v && m == GDK_MOD1_MASK && k == GDK_KEY_Right) {

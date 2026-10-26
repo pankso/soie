@@ -52,7 +52,9 @@ share (bars, keys, repainting only what changed) is `browser/front.c`,
 xsoie is the Xlib part (MIT-SHM), `browser/wsoie` the Wayland one
 (built when wayland-client, wayland-cursor and xkbcommon are there). Ctrl+L address (or words to search for,
 `$SOIE_SEARCH`), Ctrl+F find, Ctrl+C/Ctrl+V clipboard, Ctrl+N or the
-middle button on a link a new window, Alt+arrows history, F5 reload.
+middle button on a link a new window, Alt+arrows history, F5 reload,
+Ctrl+plus, Ctrl+minus, Ctrl+0 zoom. Files that are not pages (archives,
+ISO images) are downloaded to `~/Downloads` (or `$XDG_DOWNLOAD_DIR`).
 It loads the extensions of `$SOIE_EXT_DIR`, else those of the source
 tree when run from it, else the installed ones.
 Cookies live in `~/.local/share/soie/cookies.txt`; a hosts-style

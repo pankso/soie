@@ -1,7 +1,7 @@
 /*
  * Networking for the browser: HTTP/1.1 over TCP or TLS (GnuTLS, system
  * trust store, SNI, certificate and host name checks), redirects,
- * chunked bodies, gzip and deflate, file:// URLs. Cookies, request
+ * chunked bodies, gzip and deflate, file:// and data: URLs. Cookies, request
  * filters and other URL schemes come from the extensions.
  *
  * Copyright (C) 2026 Christophe Lincoln <pankso@slitaz.org>
@@ -378,24 +378,77 @@ static int last_token(const char *v, size_t len, const char *tok)
 		 v[k - n - 1] == '\t');
 }
 
+int net_shown(const char *h)
+{
+	const char *v = header(h, "Content-Disposition");
+	char type[128];
+	size_t n;
+
+	if (v && !strncasecmp(v, "attachment", 10))
+		return 0;
+	if (!(v = header(h, "Content-Type")))
+		return 1;
+	n = strcspn(v, "; \t\r\n");
+	snprintf(type, sizeof(type), "%.*s", (int)(n < sizeof(type) ? n :
+		sizeof(type) - 1), v);
+	return !*type || !strncasecmp(type, "text/", 5) ||
+		!strncasecmp(type, "image/", 6) || strstr(type, "html") ||
+		strstr(type, "xml") || strstr(type, "json") ||
+		strstr(type, "javascript");
+}
+
+/* Downloads: the body bytes read so far to the file, at most up to
+ * want with a Content-Length; -1 when the file cannot take them. */
+static int dl_flush(struct response *raw, size_t head, size_t *streamed,
+	int mode, size_t want)
+{
+	struct download *d = raw->dl;
+	size_t n = raw->len - head, off = 0;
+	ssize_t k;
+
+	if (mode == 1 && *streamed + n > want)
+		n = want - *streamed;
+	while (off < n) {
+		k = write(d->fd, raw->body + head + off, n - off);
+		if (k <= 0) {
+			if (k < 0 && errno == EINTR)
+				continue;
+			return -1;
+		}
+		off += (size_t)k;
+	}
+	*streamed += n;
+	d->got = (long long)*streamed;
+	raw->len = head;
+	raw->body[head] = '\0';
+	return 0;
+}
+
 /*
  * Read one response, headers and raw body, framed as HTTP/1.1 says:
  * chunked, Content-Length, nothing (HEAD, 204, 304), or until the peer
  * closes. *reuse: the connection can carry another request, only when
  * the frame is sure and nothing past it was read. Headers are looked
- * up in the header block only, never in the body.
+ * up in the header block only, never in the body. With raw->dl, a
+ * body not shown goes to the file instead (identity bodies only:
+ * chunked or compressed ones stay in memory).
  */
 static int read_response(struct conn *c, struct response *raw,
 	const char *method, int *reuse)
 {
 	char buf[16384], *hb = NULL;
 	const char *v;
-	size_t head = 0, want = 0, pos = 0, end, n;
+	size_t head = 0, want = 0, pos = 0, end, n, streamed = 0;
 	ssize_t k;
 	int status = 0, mode = 0, have = 0;	/* 0 close, 1 length, 2 chunked */
+	int stream = 0;
 
 	*reuse = 0;
 	for (;;) {
+		if (stream && raw->dl->cancel) {
+			free(hb);
+			return -1;
+		}
 		if (!have && raw->len && (v = strstr(raw->body, "\r\n\r\n"))) {
 			head = (size_t)(v - raw->body) + 4;
 			if (sscanf(raw->body, "HTTP/%*s %d", &status) == 1 &&
@@ -458,11 +511,28 @@ static int read_response(struct conn *c, struct response *raw,
 				mode = 0;
 				*reuse = 0;
 			}
+			if (raw->dl && status / 100 == 2 && mode != 2 &&
+			    strcmp(method, "HEAD") &&
+			    !header(hb, "Content-Encoding") && !net_shown(hb) &&
+			    (raw->dl->fd = mkstemp(raw->dl->path)) >= 0) {
+				/* mkstemp() made it 0600: a file as others */
+				fchmod(raw->dl->fd, 0644);
+				raw->dl->headers = strdup(hb);
+				v = header(hb, "Content-Length");
+				raw->dl->total = v ? strtoll(v, NULL, 10) : -1;
+				raw->dl->state = DL_STREAMING;
+				stream = 1;
+			}
 		}
-		if (have && mode == 1 && raw->len - head >= want) {
-			if (raw->len - head > want)
+		if (stream && raw->len > head &&
+		    dl_flush(raw, head, &streamed, mode, want)) {
+			free(hb);
+			return -1;
+		}
+		if (have && mode == 1 && streamed + raw->len - head >= want) {
+			if (streamed + raw->len - head > want)
 				*reuse = 0;	/* more than ours: drop it */
-			raw->len = head + want;
+			raw->len = head + want - streamed;
 			raw->body[raw->len] = '\0';
 			free(hb);
 			return 0;
@@ -677,6 +747,86 @@ static int fetch_file(const char *url, struct response *r)
 	return 0;
 }
 
+static int hexval(int c)
+{
+	return c >= '0' && c <= '9' ? c - '0' : c >= 'a' && c <= 'f' ?
+		c - 'a' + 10 : c >= 'A' && c <= 'F' ? c - 'A' + 10 : -1;
+}
+
+/*
+ * data: URLs (RFC 2397, the Fetch standard's data: URL processor):
+ * a media type, ;base64 or not, then the bytes percent-encoded. Fonts,
+ * images and style sheets of pages come this way.
+ */
+static int fetch_data(const char *url, struct response *r)
+{
+	static const char b64[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghij"
+		"klmnopqrstuvwxyz0123456789+/";
+	const char *comma = strchr(url, ','), *p, *cs;
+	size_t mlen, n = 0, i;
+	char *raw;
+	int base64 = 0, h, l;
+	unsigned v = 0, bits = 0;
+
+	if (!comma || strlen(comma) > MAX_BODY) {
+		set_error(r, "bad data: URL");
+		return -1;
+	}
+	url += 5;
+	mlen = (size_t)(comma - url);
+	while (mlen && url[mlen - 1] == ' ')
+		mlen--;
+	if (mlen >= 7 && !strncasecmp(url + mlen - 7, ";base64", 7)) {
+		base64 = 1;
+		mlen -= 7;
+	}
+	/* the bytes, percent-decoded first (base64 may be encoded too) */
+	raw = malloc(strlen(comma));
+	if (!raw)
+		abort();
+	for (p = comma + 1; *p; p++) {
+		if (*p == '%' && (h = hexval(p[1])) >= 0 &&
+		    (l = hexval(p[2])) >= 0) {
+			raw[n++] = (char)(h * 16 + l);
+			p += 2;
+		} else {
+			raw[n++] = *p;
+		}
+	}
+	if (!base64) {
+		add(r, raw, n);
+	} else {
+		for (i = 0; i < n; i++) {
+			const char *k = raw[i] ? strchr(b64, raw[i]) : NULL;
+
+			if (!k)
+				continue;	/* spaces, '=' padding */
+			v = v << 6 | (unsigned)(k - b64);
+			bits += 6;
+			if (bits >= 8) {
+				char c = (char)(v >> (bits - 8) & 0xff);
+
+				bits -= 8;
+				add(r, &c, 1);
+			}
+		}
+	}
+	free(raw);
+	r->status = 200;
+	/* the type, before its parameters */
+	i = strcspn(url, ";");
+	snprintf(r->type, sizeof(r->type), "%.*s", (int)(i < mlen ? i : mlen),
+		url);
+	if (!*r->type)
+		strcpy(r->type, "text/plain");
+	for (i = 0; r->type[i]; i++)
+		r->type[i] = (char)tolower((unsigned char)r->type[i]);
+	if ((cs = strstr(url, "charset=")) && cs < url + mlen)
+		snprintf(r->charset, sizeof(r->charset), "%.*s",
+			(int)strcspn(cs + 8, ";,"), cs + 8);
+	return 0;
+}
+
 /* RFC 9110 token characters: methods and header names */
 static int is_token(const char *s, size_t n)
 {
@@ -747,7 +897,7 @@ static int has_header(const char *h, const char *name)
 }
 
 /* Keep the response headers, names in lower case, and hand each
- * Set-Cookie to the jar. */
+ * Set-Cookie to the jar: jar 0 none, 1 the jar, 3 the private one. */
 static void keep_headers(const char *raw, const char *end, const char *url,
 	const char *first_party, int jar, struct response *r)
 {
@@ -778,7 +928,7 @@ static void keep_headers(const char *raw, const char *end, const char *url,
 				char *v = line + strspn(line, " \t");
 
 				soie_cookies_set(url, first_party ? first_party :
-					url, v, 0);
+					url, v, jar & 2 ? SOIE_COOKIE_PRIVATE : 0);
 				free(line);
 			}
 		}
@@ -826,7 +976,8 @@ static int request(const char *url, const soie_request *rq,
 		adds(&req, "Accept: text/html,application/xhtml+xml,*/*;"
 			"q=0.8\r\n");
 	if (!(rq->flags & SOIE_REQ_NO_COOKIES) &&
-	    (cookie = soie_cookies_get(url, fp, 0))) {
+	    (cookie = soie_cookies_get(url, fp, rq->flags & SOIE_REQ_PRIVATE ?
+	    SOIE_COOKIE_PRIVATE : 0))) {
 		adds(&req, "Cookie: ");
 		adds(&req, cookie);
 		adds(&req, "\r\n");
@@ -863,10 +1014,17 @@ static int request(const char *url, const soie_request *rq,
 				goto out;
 		}
 		raw.len = 0;
+		raw.dl = r->dl;
 		if (!conn_write(&c, req.body, req.len) &&
 		    !read_response(&c, &raw, method, &reuse) && raw.len)
 			break;
 		conn_close(&c);
+		if (r->dl && r->dl->fd >= 0) {
+			/* a download cut: not again from the start */
+			set_error(r, r->dl->cancel ? "cancelled" :
+				"download cut");
+			goto out;
+		}
 		if (!reused) {
 			set_error(r, "no response");
 			goto out;
@@ -887,7 +1045,8 @@ static int request(const char *url, const soie_request *rq,
 	if (!hb)
 		abort();
 	keep_headers(raw.body, hend ? hend + 2 : raw.body + raw.len, url,
-		rq->first_party, !(rq->flags & SOIE_REQ_NO_COOKIES), r);
+		rq->first_party, rq->flags & SOIE_REQ_NO_COOKIES ? 0 :
+		rq->flags & SOIE_REQ_PRIVATE ? 3 : 1, r);
 	if ((v = header(hb, "Location")) && r->status >= 300 &&
 	    r->status < 400) {
 		*location = strndup(v, header_len(v));
@@ -934,6 +1093,15 @@ out:
 		c.tls = NULL;
 	}
 	conn_close(&c);
+	if (r->dl && r->dl->fd >= 0) {
+		if (close(r->dl->fd) || ret) {
+			unlink(r->dl->path);
+			r->dl->state = DL_FAILED;
+		} else {
+			r->dl->state = DL_DONE;
+		}
+		r->dl->fd = -1;
+	}
 	free(raw.body);
 	free(req.body);
 	free(u.path);
@@ -966,9 +1134,11 @@ int net_fetch(const soie_request *rq, struct response *r)
 	const char *headers = rq->headers;
 	char *cur, *loc;
 	soie_response er;
+	struct download *dl = r->dl;
 	int i;
 
 	memset(r, 0, sizeof(*r));
+	r->dl = dl;
 	if (soie_ext_blocked(rq)) {
 		set_error(r, "blocked");
 		return -1;
@@ -998,6 +1168,10 @@ int net_fetch(const soie_request *rq, struct response *r)
 		}
 		snprintf(r->url, sizeof(r->url), "%s", url);
 		return fetch_file(url, r);
+	}
+	if (!strncasecmp(url, "data:", 5)) {
+		snprintf(r->url, sizeof(r->url), "%s", url);
+		return fetch_data(url, r);
 	}
 	if (strncmp(url, "http://", 7) && strncmp(url, "https://", 8)) {
 		set_error(r, "unsupported URL scheme");
@@ -1054,6 +1228,7 @@ int net_request(void *data, const soie_request *req, soie_response *res)
 
 	(void)data;
 	memset(res, 0, sizeof(*res));
+	memset(&r, 0, sizeof(r));	/* no download */
 	if (net_fetch(req, &r)) {
 		response_free(&r);
 		return -1;

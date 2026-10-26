@@ -54,6 +54,7 @@ static void *worker(void *arg)
 		rq.body = j->post;
 		rq.body_len = j->post ? strlen(j->post) : 0;
 		rq.first_party = j->first_party;
+		rq.flags = j->flags;
 		j->ok = net_fetch(&rq, &j->r) == 0;
 		pthread_mutex_lock(&lock);
 		append(&done, j);
@@ -91,8 +92,9 @@ static char *dup_or_null(const char *s)
 	return d;
 }
 
-void fetch_add(const char *url, const char *post, const char *first_party,
-	int kind, unsigned gen, int is_urgent)
+struct job *fetch_add(const char *url, const char *post,
+	const char *first_party, int kind, unsigned gen, int is_urgent,
+	int flags, struct download *dl)
 {
 	struct job *j = calloc(1, sizeof(*j));
 
@@ -102,12 +104,15 @@ void fetch_add(const char *url, const char *post, const char *first_party,
 	j->post = dup_or_null(post);
 	j->first_party = dup_or_null(first_party);
 	j->kind = kind;
+	j->flags = flags;
 	j->gen = gen;
+	j->r.dl = dl;
 	pthread_mutex_lock(&lock);
 	append(is_urgent ? &urgent : &normal, j);
 	busy++;
 	pthread_cond_signal(&cond);
 	pthread_mutex_unlock(&lock);
+	return j;
 }
 
 struct job *fetch_done(void)
@@ -141,6 +146,13 @@ void job_free(struct job *j)
 {
 	if (!j)
 		return;
+	if (j->r.dl) {
+		/* a file nobody took (path emptied when taken) */
+		if (j->r.dl->state == DL_DONE && *j->r.dl->path)
+			unlink(j->r.dl->path);
+		free(j->r.dl->headers);
+		free(j->r.dl);
+	}
 	response_free(&j->r);
 	free(j->url);
 	free(j->post);

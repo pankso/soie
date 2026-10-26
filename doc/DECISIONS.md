@@ -666,11 +666,101 @@ reversed, edit the entry and say why; do not leave stale rules here.
   and show its use; installed too. Checked on Xvfb: tabs loading at
   once, Ctrl+Page Up between them, the address bar, history, tabs
   closed while YouTube's and Wikipedia's scripts load (MALLOC_CHECK_).
-- Not yet (step 3, what Toile needs): zoom and the screen's scale
-  (HiDPI: the page is painted at 1 px per CSS px), context menu, new
-  window and target=_blank, downloads, toile:// scheme, private mode,
-  load_html, an adblock hook. Seen on the way: hg.slitaz.org's Anubis
-  wants Web Workers.
+- What Toile needed came the night after, worked out with the Claude
+  session porting Toile (toile-soie): each item below was asked by
+  it, mapped on the WebKit call it replaces, and tested in Toile too.
+- Adblock: no hook in the widget; Soie's block.so
+  (~/.config/soie/block.txt) blocks for every view. Still missing:
+  text selection in the page (engine work), Web Workers
+  (hg.slitaz.org's Anubis page waits for them).
+
+## SoieView for Toile: what a browser needs
+
+- pkg-config: soie.pc and soie-gtk.pc installed, and their
+  -uninstalled twins at the tree's top made by the build, so that a
+  browser built on the tree needs only PKG_CONFIG_PATH=<the tree>
+  (its paths and rpath come from there). Headers: <soie/soie.h> and
+  "soie-view.h" (Cflags has $includedir/soie).
+- A GtkScrolledWindow with an automatic horizontal policy left Toile's
+  window black ("infinite surface size"): the widget's horizontal
+  adjustment was all zero. It is the view's width now (nothing to
+  scroll), the usual way to say so.
+- The browser's own pages: shell_scheme() / soie_view_register_uri_
+  scheme("toile", fn, data). As WebKit's, but answered at once in the
+  main thread (Toile's pages are built at once anyway): fn gets the
+  whole URI with its query (a GET form's fields), returns the page and
+  its type, NULL for an error page. The scheme is isolated as WebKit's
+  "display isolated" ones: its pages, the address bar and history reach
+  it, a web page cannot (no link, form, refresh, resource, script
+  request, new window, middle click): a page could otherwise make the
+  user click toile://admin?action=clear_cookies&confirm=1. load_html()
+  shows a string at a base URI (a history entry).
+- "loading" goes TRUE then FALSE for every load, also those that come
+  at once (the scheme's, load_html): Toile adds to its history and
+  refreshes its buttons on the end of a load, as on WebKit's
+  LOAD_FINISHED.
+- New windows: the script host's navigate() takes 2 for a new window
+  (window.open(), a click on a link of another target), honoured only
+  in the user's click or key (in_input): pop-ups from timers are
+  dropped, as browsers block them. shell_ui.open asks the front;
+  xsoie starts another process (as Ctrl+N), SoieView emits "create",
+  as WebKit's: the handler returns a new view, unloaded, which then
+  loads the URI; without a handler it loads in place. The middle
+  button and Ctrl+click on a link go the same way.
+- Context menu: the widget builds the stock menu (Back, Forward,
+  Reload, Copy Link Address, Copy Image Address, Paste in a field)
+  from shell_hit() (link, image, field under the pointer), emits
+  "context-menu" (menu, link, image) for the browser to add its items
+  or say no, then pops it up: Toile already worked by adding items to
+  WebKit's stock menu.
+- Downloads: a page load whose response is not to be shown
+  (net_shown(): Content-Disposition: attachment, or a type that is not
+  text, image, HTML, XML, JSON, JavaScript) is a download, decided in
+  the fetch thread as soon as the headers are read, so that the body
+  goes to a file in the cache as it comes (struct download in net.h:
+  identity bodies; chunked or compressed ones stay in memory and are
+  written at the end): an ISO image does not go through the RAM of an
+  old PC. The shell adopts it, the page on screen stays, the front
+  picks the destination (~/Downloads or $XDG_DOWNLOAD_DIR, a free
+  name), the file is renamed (or copied across file systems) at the
+  end, cancelled or failed ones leave no file behind. Downloads belong
+  to the process, as to WebKit's context: closing their view does not
+  stop them (Toile's target=_blank downloads open a tab the user
+  closes). SoieView: "download-started" (destination set there,
+  synchronously as WebKit's decide-destination), SoieDownload with
+  "progress", "finished", "failed" emitted from an idle.
+- Zoom: a page zoom in the cascade, as CSS zoom on the root, not a
+  scaled painting: style options' zoom multiplies absolute lengths
+  (lin_resolve), the 16 px defaults, font-size and border-width
+  keywords; past the cascade, doc_zoom() (the document laid out or
+  painted) scales intrinsic sizes, transform translations, background
+  sizes and positions and gradient stops. Media queries see the
+  viewport divided by the zoom, so responsive pages switch layouts as
+  in browsers; vw and vh stay the screen's. At 1 the renders are byte
+  for byte the same (checked on the corpus and real sites). Scripts
+  still see device pixels (innerWidth, rects). shell_zoom(), xsoie
+  Ctrl+plus, minus, 0; SoieView "zoom-level" (WebKit's name).
+- HiDPI: the widget paints at gtk_widget_get_scale_factor() (a cairo
+  surface with its device scale), the shell's zoom is the user's
+  times the scale; events and adjustments converted. Checked with
+  GDK_SCALE=2.
+- Private windows: SOIE_REQ_PRIVATE on every request of a private
+  shell (page, resources, scripts' requests through the script host's
+  flags, players) and document.cookie: the cookie extension keeps a
+  second jar for them, in memory only (swapped in under its lock).
+  SoieView "private" (construct only), as a view on WebKit's ephemeral
+  context. The cookie policy (third-party refused by default, all, or
+  none) and clearing a jar are new hooks of the cookie extension,
+  appended to its struct (SOIE_EXT_HOOK sees whether a module has
+  them): soie_view_set_cookie_policy(), soie_view_clear_cookies().
+- Fixed on the way: <noscript> is hidden when scripts run (HTML
+  15.3.1, @media (scripting) in the UA sheet; its raw text showed on
+  duckduckgo.com); @font-face src URLs are resolved against their
+  sheet (relative and protocol-relative ones were never fetched);
+  data: URLs in the network layer (RFC 2397: images, backgrounds,
+  fonts, scripts' requests); the offscreen render paints again once
+  late background images came. make asan-sites keeps cookies in
+  memory (the sites wrote into the user's jar).
 
 ## YouTube, the first round
 

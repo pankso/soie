@@ -19,6 +19,9 @@
 #include <time.h>
 #include <unistd.h>
 #include <pthread.h>
+#include <errno.h>
+#include <fcntl.h>
+#include <sys/stat.h>
 #include <png.h>
 #include <soie/soie.h>
 #include "net.h"
@@ -95,6 +98,8 @@ struct shell {
 	soie_node *focus;	/* focused page control */
 	int caret;
 	int view_w, view_h;
+	float zoom;		/* the page's, 1 */
+	int private;		/* SOIE_REQ_PRIVATE: a private window */
 	/* The front's pixels are B G R A (shell_bgra()); what shell_paint()
 	 * showed last, at which scroll and document generation */
 	int bgra, painted_scroll;
@@ -105,6 +110,8 @@ struct shell {
 	int damage_full;
 	int scripts;		/* 0: no JavaScript */
 	char *pending_nav;	/* a script's navigation, done after it */
+	char *pending_open;	/* a script's new window, after it too */
+	int in_input;		/* in the user's click or key */
 	int pending_replace;
 	char *refresh_url;	/* <meta http-equiv=refresh> */
 	double refresh_at;
@@ -116,7 +123,29 @@ struct shell {
 		float x, y, w, h;
 	} found;
 	char loading_text[64];	/* shell_loading()'s */
+	struct download *page_dl;	/* the page load's, its job's */
 };
+
+/* A download: a page load that was not a page. They are the process's:
+ * one goes on when the shell it came from is freed. */
+struct sdl {
+	unsigned id;
+	struct shell *s;	/* where it came from, NULL once freed */
+	struct download *d;	/* its job's, until the job is collected */
+	char *url;
+	char dest[4096];	/* "" when cancelled */
+	long long told;		/* bytes last told the front */
+	double told_at;
+	struct sdl *next;
+};
+static unsigned dl_ids;
+static struct sdl *downloads;
+static struct {
+	void (*progress)(void *data, unsigned id, long long got,
+		long long total);
+	void (*done)(void *data, unsigned id, const char *error);
+	void *data;
+} dl_ui;
 
 /* Shared by the shells: the fetch threads, their descriptor */
 static int fetch_fd = -1;	/* readable when jobs finish */
@@ -130,6 +159,117 @@ static int page_changed(struct shell *s);
 /* Fetching */
 
 static double now_s(void);
+
+/* URL schemes of the front's own (toile://), answered in this thread */
+#define NSCHEMES 8
+static struct {
+	char name[32];
+	shell_scheme_fn fn;
+	void *data;
+} schemes[NSCHEMES];
+static int nschemes;
+
+void shell_scheme(const char *name, shell_scheme_fn fn, void *data)
+{
+	int i;
+
+	for (i = 0; i < nschemes && strcasecmp(schemes[i].name, name); i++)
+		;
+	if (i == nschemes) {
+		if (nschemes == NSCHEMES || strlen(name) >= sizeof(
+		    schemes[0].name))
+			return;
+		nschemes++;
+	}
+	snprintf(schemes[i].name, sizeof(schemes[i].name), "%s", name);
+	schemes[i].fn = fn;
+	schemes[i].data = data;
+}
+
+/* The front's scheme of url, -1 when it has none */
+static int scheme_of(const char *url)
+{
+	size_t n = strcspn(url, ":");
+	int i;
+
+	if (!url[n])
+		return -1;
+	for (i = 0; i < nschemes; i++)
+		if (strlen(schemes[i].name) == n &&
+		    !strncasecmp(url, schemes[i].name, n))
+			return i;
+	return -1;
+}
+
+/*
+ * May the page at from have url? A front's scheme is for the front and
+ * its own pages (what the user types, a toile:// page's links), never
+ * for the web's (WebKit's display isolated schemes).
+ */
+static int scheme_allowed(const char *from, const char *url)
+{
+	int k = scheme_of(url);
+
+	return k < 0 || !from || !*from || scheme_of(from) == k;
+}
+
+/* The answer of the front's scheme k for url, as a finished job */
+static void scheme_answer(int k, const char *url, struct job *j)
+{
+	char *body = NULL;
+	size_t len = 0;
+
+	memset(j, 0, sizeof(*j));
+	j->url = (char *)url;
+	snprintf(j->r.url, sizeof(j->r.url), "%s", url);
+	if (schemes[k].fn(schemes[k].data, url, &body, &len, j->r.type,
+	    sizeof(j->r.type)) || !body) {
+		free(body);
+		snprintf(j->r.error, sizeof(j->r.error), "not found");
+		return;
+	}
+	j->ok = 1;
+	j->r.status = 200;
+	j->r.body = body;
+	j->r.len = len;
+	if (!*j->r.type)
+		strcpy(j->r.type, "text/html");
+	/* "text/html; charset=utf-8": the type, the charset apart */
+	{
+		char *c = strchr(j->r.type, ';'), *cs;
+
+		if (c) {
+			if ((cs = strstr(c, "charset=")))
+				snprintf(j->r.charset, sizeof(j->r.charset),
+					"%.*s", (int)strcspn(cs + 8, " ;"),
+					cs + 8);
+			while (c > j->r.type && c[-1] == ' ')
+				c--;
+			*c = '\0';
+		}
+	}
+}
+
+/* Ask for a resource: the front's scheme at once, else the network. */
+static void res_fetch(struct shell *s, struct res *r, int urgent)
+{
+	int k = scheme_of(r->url);
+	struct job j;
+
+	if (k < 0) {
+		fetch_add(r->url, NULL, s->page.url, r->kind, s->page.gen,
+			urgent, s->private, NULL);
+		return;
+	}
+	if (!scheme_allowed(s->page.url, r->url)) {
+		r->state = R_FAILED;
+		return;
+	}
+	scheme_answer(k, r->url, &j);
+	r->state = j.ok ? R_DONE : R_FAILED;
+	r->data = j.r.body;
+	r->len = j.r.len;
+}
 
 static struct res *res_find(struct shell *s, const char *url)
 {
@@ -155,7 +295,7 @@ static struct res *res_add(struct shell *s, const char *url, int kind)
 	r->url = strdup(url);
 	r->kind = kind;
 	r->state = R_PENDING;
-	fetch_add(url, NULL, s->page.url, kind, s->page.gen, kind != K_IMAGE);
+	res_fetch(s, r, kind != K_IMAGE);
 	return r;
 }
 
@@ -182,7 +322,7 @@ static int page_fetch(void *data, const char *url, char **buf, size_t *len)
 	if (r && r->state == R_GIVEN) {
 		/* asked twice: fetch it again */
 		r->state = R_PENDING;
-		fetch_add(url, NULL, s->page.url, r->kind, s->page.gen, 0);
+		res_fetch(s, r, 0);
 	}
 	if (!r)
 		r = res_add(s, url, s->in_style ? K_STYLE : K_IMAGE);
@@ -335,6 +475,20 @@ static void js_navigate(void *data, const char *url, int replace)
 {
 	struct shell *s = data;
 
+	if (replace == 2) {
+		/* a new window: for the user's click or key only, as
+		 * browsers block pop-ups */
+		if (!s->in_input) {
+			debug(1, "no window without a click: %s", url);
+			return;
+		}
+		if (s->ui.open) {
+			free(s->pending_open);
+			s->pending_open = strdup(url);
+			return;
+		}
+		replace = 0;
+	}
 	free(s->pending_nav);
 	s->pending_nav = strdup(url);
 	s->pending_replace = replace;
@@ -388,16 +542,43 @@ static int page_request(void *data, const soie_request *req,
 	/* from the script engine's threads (fetch, async XHR): straight to
 	 * the network, the page's resources are the main thread's */
 	if (!pthread_equal(pthread_self(), main_thread)) {
-		int r = net_request(NULL, req, res);
+		int r;
+
+		if (scheme_of(req->url) >= 0)
+			return -1;	/* the front's: in its thread only */
+		r = net_request(NULL, req, res);
 
 		debug(2, "script request %s %s: %s %d", req->method ? req->method :
 			"GET", req->url, r ? "failed" : "HTTP", r ? 0 : res->status);
 		return r;
 	}
+	if (scheme_of(req->url) >= 0) {
+		struct job j;
+
+		if (!scheme_allowed(s->page.url, req->url))
+			return -1;
+		scheme_answer(scheme_of(req->url), req->url, &j);
+		if (!j.ok)
+			return -1;
+		memset(res, 0, sizeof(*res));
+		res->status = 200;
+		res->url = strdup(req->url);
+		res->headers = malloc(strlen(j.r.type) + 20);
+		if (!res->url || !res->headers)
+			abort();
+		sprintf(res->headers, "content-type: %s\r\n", j.r.type);
+		res->body = j.r.body;
+		res->len = j.r.len;
+		return 0;
+	}
 	if (!req->body && (!req->method || !strcmp(req->method, "GET")))
 		r = res_find(s, req->url);
-	if (!r || r->state == R_GIVEN)
-		return net_request(NULL, req, res);
+	if (!r || r->state == R_GIVEN) {
+		soie_request q = *req;
+
+		q.flags |= s->private;
+		return net_request(NULL, &q, res);
+	}
 	while (r->state == R_PENDING) {
 		p.fd = fetch_fd;
 		p.events = POLLIN;
@@ -449,6 +630,28 @@ static void layout_done(struct shell *s);
 static void find_again(struct shell *s);
 
 /* After scripts ran: their navigation, or their changes on screen. */
+static int new_window(const char *target)
+{
+	return target && *target && strcasecmp(target, "_self") &&
+		strcasecmp(target, "_top") && strcasecmp(target, "_parent");
+}
+
+int shell_may_open(struct shell *s, const char *url)
+{
+	return scheme_allowed(s->page.url, url);
+}
+
+/* The front opens url in a new window, when this page may have it */
+static void open_window(struct shell *s, const char *url)
+{
+	if (!scheme_allowed(s->page.url, url)) {
+		debug(1, "not from this page: %s", url);
+		return;
+	}
+	debug(1, "new window %s", url);
+	s->ui.open(s->ui_data, url);
+}
+
 static int after_scripts(struct shell *s)
 {
 	int moved = 0;
@@ -463,6 +666,13 @@ static int after_scripts(struct shell *s)
 			s->caret = c;
 			moved = 1;
 		}
+	}
+	if (s->pending_open) {
+		char *u = s->pending_open;
+
+		s->pending_open = NULL;
+		open_window(s, u);
+		free(u);
 	}
 	if (s->pending_nav) {
 		char *u = s->pending_nav;
@@ -481,6 +691,19 @@ static int after_scripts(struct shell *s)
 
 /* Layout and drawing */
 
+static int scripts_on(struct shell *s);
+
+/* A private window's players: their requests use its jar */
+static int private_request(void *data, const soie_request *req,
+	soie_response *res)
+{
+	soie_request q = *req;
+
+	(void)data;
+	q.flags |= SOIE_REQ_PRIVATE;
+	return net_request(NULL, &q, res);
+}
+
 static void relayout(struct shell *s)
 {
 	soie_style_options so;
@@ -492,7 +715,10 @@ static void relayout(struct shell *s)
 	so.fetch = page_fetch;
 	so.fetch_data = s;
 	so.user_css = s->page.user_css;
-	so.request = net_request;	/* audio and video */
+	so.scripting = scripts_on(s);	/* @media (scripting), <noscript> */
+	so.zoom = s->zoom;
+	/* audio and video */
+	so.request = s->private ? private_request : net_request;
 	double t0 = now_s(), t1;
 
 	s->in_style = 1;
@@ -835,13 +1061,23 @@ static void start_scripts(struct shell *s)
 	debug(1, "scripts ran %.2f s", now_s() - t);
 }
 
+static void dl_adopt(struct shell *s, struct download *d, const char *url,
+	const char *headers);
+
 /* push: 1 adds a history entry, 2 replaces the current one. The page
  * on screen stays until the new one arrives. */
-static void load(struct shell *s, const char *url, const char *post, int push)
+static void load_start(struct shell *s, const char *url, int push)
 {
+	/* the load before: a download goes on, a page stops */
+	if (s->page_dl) {
+		if (s->page_dl->state != DL_NONE)
+			dl_adopt(s, s->page_dl, s->page.want, NULL);
+		else
+			s->page_dl->cancel = 1;
+		s->page_dl = NULL;
+	}
 	if (s->page.doc && push && s->hist.cur >= 0)
 		s->hist.scroll[s->hist.cur] = s->page.scroll;
-	debug(1, "load%s %s", post ? " (POST)" : "", url);
 	s->page.t_load = now_s();
 	s->page.done = 0;
 	s->page.gen = ++gens;
@@ -850,23 +1086,346 @@ static void load(struct shell *s, const char *url, const char *post, int push)
 	s->page.want = strdup(url);
 	free(s->refresh_url);
 	s->refresh_url = NULL;
+}
+
+/* A page that is here already: html, at url */
+static void load_here(struct shell *s, const char *url, const char *html)
+{
+	struct job j;
+
+	memset(&j, 0, sizeof(j));
+	j.url = (char *)url;
+	j.ok = 1;
+	snprintf(j.r.url, sizeof(j.r.url), "%s", url);
+	strcpy(j.r.type, "text/html");
+	strcpy(j.r.charset, "UTF-8");
+	j.r.body = strdup(html);
+	j.r.len = strlen(html);
+	doc_arrived(s, &j);
+	free(j.r.body);
+}
+
+static void load(struct shell *s, const char *url, const char *post, int push)
+{
+	int k;
+
+	debug(1, "load%s %s", post ? " (POST)" : "", url);
+	load_start(s, url, push);
 	if (!strcmp(url, HOME)) {
+		load_here(s, HOME, home_html);
+		return;
+	}
+	if ((k = scheme_of(url)) >= 0) {
 		struct job j;
 
-		memset(&j, 0, sizeof(j));
-		j.url = (char *)url;
-		j.ok = 1;
-		snprintf(j.r.url, sizeof(j.r.url), "%s", HOME);
-		strcpy(j.r.type, "text/html");
-		j.r.body = strdup(home_html);
-		j.r.len = strlen(home_html);
+		scheme_answer(k, url, &j);
 		doc_arrived(s, &j);
 		free(j.r.body);
 		return;
 	}
-	fetch_add(url, post, NULL, K_DOC, s->page.gen, 1);
+	/* a body that is not a page streams to a file in the cache */
+	{
+		const char *dir = debug_dir();
+		struct download *d = NULL;
+
+		if (dir && (d = calloc(1, sizeof(*d)))) {
+			d->fd = -1;
+			snprintf(d->path, sizeof(d->path), "%s/dl-XXXXXX", dir);
+		}
+		s->page_dl = d;
+		fetch_add(url, post, NULL, K_DOC, s->page.gen, 1, s->private,
+			d);
+	}
 	s->page.loading = L_DOC;
 	s->ui.address(s->ui_data, url);
+}
+
+/*
+ * Downloads: a page load whose response is not shown (net_shown()) is
+ * adopted as a download: the page on screen stays, the front picks the
+ * file (in ~/Downloads by default), the body streams there through a
+ * file in the cache (net.c), or is written from memory at the end
+ * (chunked, compressed bodies).
+ */
+
+/* $XDG_DOWNLOAD_DIR, ~/Downloads (made), ~ */
+static void dl_dir(char *out, size_t size)
+{
+	const char *d = getenv("XDG_DOWNLOAD_DIR"), *home = getenv("HOME");
+
+	if (d && *d == '/') {
+		snprintf(out, size, "%s", d);
+		return;
+	}
+	snprintf(out, size, "%s/Downloads", home ? home : "/tmp");
+	if (mkdir(out, 0755) && errno != EEXIST)
+		snprintf(out, size, "%s", home ? home : "/tmp");
+}
+
+/* The file's name: Content-Disposition's filename, else the URL's last
+ * segment; no directory, no leading dot, no control bytes. */
+static void dl_name(const char *url, const char *headers, char *out,
+	size_t size)
+{
+	const char *v = NULL, *p;
+	size_t n = 0, i;
+
+	if (headers && (p = strcasestr(headers, "filename="))) {
+		v = p + 9;
+		if (*v == '"')
+			n = strcspn(++v, "\"\r\n");
+		else
+			n = strcspn(v, "; \r\n");
+	}
+	if (!n) {
+		size_t end = strcspn(url, "?#");
+
+		for (v = url + end; v > url && v[-1] != '/'; v--)
+			;
+		n = (size_t)(url + end - v);
+	}
+	if (n >= size)
+		n = size - 1;
+	for (i = 0; i < n; i++) {
+		unsigned char c = (unsigned char)v[i];
+
+		out[i] = c < 0x20 || c == 0x7f || c == '/' || c == '\\' ?
+			'_' : (char)c;
+	}
+	out[n] = '\0';
+	while (*out == '.')
+		memmove(out, out + 1, strlen(out));
+	if (!*out)
+		snprintf(out, size, "download");
+}
+
+/* dir/name, or dir/name-1.ext... when it is taken */
+static void dl_free_path(const char *dir, const char *name, char *out,
+	size_t size)
+{
+	const char *dot = strrchr(name, '.');
+	int i, base = dot && dot != name ? (int)(dot - name) :
+		(int)strlen(name);
+
+	snprintf(out, size, "%s/%s", dir, name);
+	for (i = 1; i < 1000 && !access(out, F_OK); i++)
+		snprintf(out, size, "%s/%.*s-%d%s", dir, base, name, i,
+			name + base);
+}
+
+void shell_downloads(void (*progress)(void *data, unsigned id,
+	long long got, long long total), void (*done)(void *data,
+	unsigned id, const char *error), void *data)
+{
+	dl_ui.progress = progress;
+	dl_ui.done = done;
+	dl_ui.data = data;
+}
+
+static struct sdl *dl_of(const struct download *d)
+{
+	struct sdl *x;
+
+	for (x = downloads; d && x && x->d != d; x = x->next)
+		;
+	return d ? x : NULL;
+}
+
+/* The page load d (or a finished one, d NULL) is a download: the
+ * front tells where it goes; the page on screen stays. */
+static struct sdl *dl_start(struct shell *s, struct download *d,
+	const char *url, const char *headers, const char *type,
+	long long total)
+{
+	struct sdl *x = calloc(1, sizeof(*x));
+	char dir[4096], name[512];
+
+	if (!x)
+		abort();
+	x->id = ++dl_ids;
+	x->s = s;
+	x->d = d;
+	x->url = strdup(url ? url : "");
+	x->told = -1;
+	dl_dir(dir, sizeof(dir));
+	dl_name(x->url, headers, name, sizeof(name));
+	dl_free_path(dir, name, x->dest, sizeof(x->dest));
+	x->next = downloads;
+	downloads = x;
+	if (s->page_dl == d)
+		s->page_dl = NULL;
+	/* the page that was there stays, its address too */
+	if (s->page.loading == L_DOC)
+		s->page.loading = L_NONE;
+	s->ui.address(s->ui_data, s->page.url);
+	debug(1, "download %u: %s -> %s", x->id, x->url, x->dest);
+	if (s->ui.download) {
+		s->ui.download(s->ui_data, x->id, x->url, type, total, x->dest,
+			sizeof(x->dest));
+	} else {
+		char msg[4200];
+
+		snprintf(msg, sizeof(msg), "Downloading to %s", x->dest);
+		s->ui.alert(s->ui_data, msg);
+	}
+	if (!*x->dest && d)
+		d->cancel = 1;
+	return x;
+}
+
+static void dl_adopt(struct shell *s, struct download *d, const char *url,
+	const char *headers)
+{
+	const char *h = headers ? headers : d->headers;
+	char type[128] = "";
+	const char *v = h ? strcasestr(h, "content-type:") : NULL;
+
+	if (dl_of(d))
+		return;
+	if (v) {
+		v += 13;
+		while (*v == ' ')
+			v++;
+		snprintf(type, sizeof(type), "%.*s",
+			(int)strcspn(v, "; \r\n"), v);
+	}
+	dl_start(s, d, url, h, type, d->total);
+}
+
+/* Copy a file, for a destination on another file system */
+static int copy_file(const char *from, const char *to)
+{
+	char buf[65536];
+	int in = open(from, O_RDONLY), out, ok = 1;
+	ssize_t n;
+
+	if (in < 0)
+		return -1;
+	out = open(to, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+	if (out < 0) {
+		close(in);
+		return -1;
+	}
+	while ((n = read(in, buf, sizeof(buf))) > 0)
+		if (write(out, buf, (size_t)n) != n) {
+			ok = 0;
+			break;
+		}
+	if (n < 0)
+		ok = 0;
+	close(in);
+	if (close(out) || !ok) {
+		unlink(to);
+		return -1;
+	}
+	unlink(from);
+	return 0;
+}
+
+/* Its job came: the file goes to its place, the front is told. */
+static void dl_finish(struct sdl *x, struct job *j)
+{
+	struct download *d = j->r.dl;
+	const char *err = NULL;
+	struct sdl **p;
+
+	if (!*x->dest) {
+		err = "cancelled";
+	} else if (!j->ok) {
+		err = *j->r.error ? j->r.error : "failed";
+	} else if (d && d->state == DL_DONE) {
+		if (rename(d->path, x->dest) && (errno != EXDEV ||
+		    copy_file(d->path, x->dest)))
+			err = strerror(errno);
+		else
+			*d->path = '\0';	/* taken */
+	} else if (d && d->state != DL_NONE) {
+		err = "failed";
+	} else {
+		/* in memory: chunked, compressed */
+		FILE *f = fopen(x->dest, "wb");
+
+		if (!f || fwrite(j->r.body ? j->r.body : "", 1, j->r.len, f) !=
+		    j->r.len)
+			err = strerror(errno ? errno : EIO);
+		if (f && fclose(f) && !err)
+			err = strerror(errno);
+		if (err)
+			unlink(x->dest);
+	}
+	debug(1, "download %u %s: %s", x->id, err ? err : "done", x->dest);
+	if (dl_ui.done) {
+		dl_ui.done(dl_ui.data, x->id, err);
+	} else if (x->s) {
+		char msg[4200];
+
+		snprintf(msg, sizeof(msg), err ? "Download failed: %s" :
+			"Saved to %s", err ? err : x->dest);
+		x->s->ui.alert(x->s->ui_data, msg);
+	}
+	for (p = &downloads; *p && *p != x; p = &(*p)->next)
+		;
+	if (*p)
+		*p = x->next;
+	free(x->url);
+	free(x);
+}
+
+/* How far the downloads are, told every quarter of a second */
+static void dl_progress(struct shell *s)
+{
+	struct sdl *x;
+	double t = now_s();
+
+	for (x = downloads; x; x = x->next) {
+		long long got = x->d ? x->d->got : 0;
+
+		if (!dl_ui.progress || got == x->told ||
+		    t - x->told_at < 0.25)
+			continue;
+		x->told = got;
+		x->told_at = t;
+		dl_ui.progress(dl_ui.data, x->id, got,
+			x->d ? x->d->total : -1);
+	}
+	/* the page load streams: it is a download */
+	if (s->page_dl && s->page_dl->state != DL_NONE)
+		dl_adopt(s, s->page_dl, s->page.want, NULL);
+}
+
+void shell_download_cancel(unsigned id)
+{
+	struct sdl *x;
+
+	for (x = downloads; x && x->id != id; x = x->next)
+		;
+	if (!x)
+		return;
+	*x->dest = '\0';
+	if (x->d)
+		x->d->cancel = 1;
+}
+
+/* The page's load, finished: a page, or a download after all */
+static void doc_or_download(struct shell *s, struct job *j)
+{
+	struct download *d = j->r.dl;
+	struct sdl *x;
+
+	if (d && d == s->page_dl)
+		s->page_dl = NULL;
+	if ((d && d->state != DL_NONE) || (j->ok && j->r.status / 100 == 2 &&
+	    j->r.headers && !net_shown(j->r.headers))) {
+		const char *url = j->ok && *j->r.url ? j->r.url : j->url;
+
+		x = d && d->state != DL_NONE ? (dl_adopt(s, d, url, NULL),
+			dl_of(d)) : dl_start(s, d, url, j->r.headers,
+			j->r.type, (long long)j->r.len);
+		if (x)
+			dl_finish(x, j);
+		return;
+	}
+	doc_arrived(s, j);
 }
 
 /* The finished jobs to the inboxes of the shells whose page asked for
@@ -877,6 +1436,14 @@ void shell_route(void)
 	struct shell *s;
 
 	while ((j = fetch_done())) {
+		struct sdl *x = dl_of(j->r.dl);
+
+		/* a download, whatever its shell does now */
+		if (x) {
+			dl_finish(x, j);
+			job_free(j);
+			continue;
+		}
 		for (s = shells; s && s->page.gen != j->gen; s = s->next)
 			;
 		if (!s) {
@@ -911,7 +1478,7 @@ static void collect_jobs(struct shell *s, int nested)
 		j = s->deferred;
 		s->deferred = NULL;
 		if (j->gen == s->page.gen)
-			doc_arrived(s, j);
+			doc_or_download(s, j);
 		job_free(j);
 	}
 	while ((j = next_job(s))) {
@@ -925,7 +1492,7 @@ static void collect_jobs(struct shell *s, int nested)
 				s->deferred = j;
 				continue;
 			}
-			doc_arrived(s, j);
+			doc_or_download(s, j);
 			job_free(j);
 			continue;
 		}
@@ -1013,6 +1580,12 @@ static void navigate(struct shell *s, const char *href)
 static void navigate_to(struct shell *s, const char *href, int replace)
 {
 	char *abs = soie_url_resolve(s->page.url, href);
+
+	if (!abs || !scheme_allowed(s->page.url, abs)) {
+		debug(1, "not from this page: %s", abs ? abs : href);
+		free(abs);
+		return;
+	}
 
 	/* same document, other fragment: just scroll */
 	{
@@ -1155,6 +1728,11 @@ static void submit(struct shell *s, soie_node *form, soie_node *submitter)
 	collect(form, submitter, &q, &len);
 	abs = soie_url_resolve(s->page.url, action && *action ? action :
 		s->page.url);
+	if (!abs || !scheme_allowed(s->page.url, abs)) {
+		free(abs);
+		free(q);
+		return;
+	}
 	if (method && !strcasecmp(method, "post")) {
 		load(s, abs, q, 1);
 	} else {
@@ -1313,16 +1891,29 @@ static void click(struct shell *s, int x, int y, int mods)
 			submit(s, form, a);
 		return;
 	}
-	if ((a = ancestor(n, "a")) && soie_element_get_attr(a, "href"))
-		navigate(s, soie_element_get_attr(a, "href"));
+	if ((a = ancestor(n, "a")) && soie_element_get_attr(a, "href")) {
+		const char *h = soie_element_get_attr(a, "href");
+		char *abs;
+
+		if (s->ui.open && new_window(soie_element_get_attr(a,
+		    "target")) && strncasecmp(h, "javascript:", 11) &&
+		    (abs = soie_url_resolve(s->page.url, h))) {
+			open_window(s, abs);
+			free(abs);
+		} else {
+			navigate(s, h);
+		}
+	}
 }
 
 
 void shell_click(struct shell *s, int x, int y, int mods)
 {
 	debug(2, "click %d,%d (scroll %d)", x, y, s->page.scroll);
+	s->in_input++;
 	click(s, x, y, mods);
 	after_scripts(s);
+	s->in_input--;
 	clamp_scroll(s);
 }
 
@@ -1380,7 +1971,7 @@ int shell_edit(soie_node *el, int *cp, const char *key, const char *text)
 	return 1;
 }
 
-int shell_key(struct shell *s, const char *key, const char *text, int mods)
+static int key_in(struct shell *s, const char *key, const char *text, int mods)
 {
 	int r = 2;
 
@@ -1449,6 +2040,16 @@ int shell_key(struct shell *s, const char *key, const char *text, int mods)
 	return r;
 }
 
+int shell_key(struct shell *s, const char *key, const char *text, int mods)
+{
+	int r;
+
+	s->in_input++;
+	r = key_in(s, key, text, mods);
+	s->in_input--;
+	return r;
+}
+
 int shell_hover(struct shell *s, int x, int y, char *link, size_t size)
 {
 	soie_node *n = s->page.doc ? soie_hit_test(s->page.doc, (float)x,
@@ -1464,6 +2065,29 @@ int shell_hover(struct shell *s, int x, int y, char *link, size_t size)
 		return SHELL_HAND;
 	}
 	return is_text_control(n) ? SHELL_TEXT : SHELL_ARROW;
+}
+
+int shell_hit(struct shell *s, int x, int y, char *link, char *image,
+	size_t size)
+{
+	soie_node *n = s->page.doc ? soie_hit_test(s->page.doc, (float)x,
+		(float)(y + s->page.scroll)) : NULL, *a;
+	const char *v;
+	char *abs;
+
+	*link = *image = '\0';
+	if ((a = ancestor(n, "a")) && (v = soie_element_get_attr(a, "href")) &&
+	    strncasecmp(v, "javascript:", 11) &&
+	    (abs = soie_url_resolve(s->page.url, v))) {
+		snprintf(link, size, "%s", abs);
+		free(abs);
+	}
+	if ((a = ancestor(n, "img")) && (v = soie_element_get_attr(a, "src")) &&
+	    (abs = soie_url_resolve(s->page.url, v))) {
+		snprintf(image, size, "%s", abs);
+		free(abs);
+	}
+	return is_text_control(n);
 }
 
 void shell_scroll(struct shell *s, int dy)
@@ -1627,6 +2251,10 @@ int shell_tick(struct shell *s, int *repaint)
 	m = refresh_wait(s);
 	if (m >= 0 && (t < 0 || m < t))
 		t = m;
+	dl_progress(s);
+	/* downloads on their way: told as they go */
+	if ((downloads || s->page_dl) && (t < 0 || t > 250))
+		t = 250;
 	refresh_due(s);
 	t1 = now_s();
 	if (after_scripts(s)) {
@@ -2063,6 +2691,7 @@ struct shell *shell_new(const struct shell_ui *ui, void *data, int js)
 	s->hist.cur = -1;
 	s->view_w = 1024;
 	s->view_h = 734;
+	s->zoom = 1;
 	s->damage_full = 1;
 	s->next = shells;
 	shells = s;
@@ -2071,6 +2700,7 @@ struct shell *shell_new(const struct shell_ui *ui, void *data, int js)
 
 void shell_free(struct shell *s)
 {
+	struct sdl *x;
 	struct shell **p;
 	struct job *j;
 	int i;
@@ -2081,6 +2711,12 @@ void shell_free(struct shell *s)
 		;
 	if (*p)
 		*p = s->next;
+	/* its page load stops, its downloads go on without it */
+	if (s->page_dl)
+		s->page_dl->cancel = 1;
+	for (x = downloads; x; x = x->next)
+		if (x->s == s)
+			x->s = NULL;
 	/* soie_node_free() stops their scripts */
 	if (s->page.doc)
 		soie_node_free(s->page.doc);
@@ -2097,6 +2733,7 @@ void shell_free(struct shell *s)
 	}
 	job_free(s->deferred);
 	free(s->pending_nav);
+	free(s->pending_open);
 	free(s->refresh_url);
 	free(s->found.text);
 	free(s);
@@ -2114,9 +2751,47 @@ void shell_resize(struct shell *s, int w, int h)
 	}
 }
 
+void shell_zoom(struct shell *s, float zoom)
+{
+	if (zoom < 0.1f)
+		zoom = 0.1f;
+	if (zoom > 10)
+		zoom = 10;
+	if (zoom == s->zoom)
+		return;
+	debug(2, "zoom %.2f", zoom);
+	/* the same place of the page stays at the top */
+	s->page.scroll = (int)((float)s->page.scroll * zoom / s->zoom);
+	s->zoom = zoom;
+	s->damage_full = 1;
+	if (s->page.doc)
+		relayout(s);
+	clamp_scroll(s);
+}
+
+float shell_get_zoom(struct shell *s)
+{
+	return s->zoom;
+}
+
+void shell_private(struct shell *s)
+{
+	s->private = SOIE_REQ_PRIVATE;
+	s->host.flags = SOIE_REQ_PRIVATE;
+}
+
 void shell_load(struct shell *s, const char *url)
 {
 	load(s, url, NULL, 1);
+}
+
+void shell_load_html(struct shell *s, const char *html, const char *url)
+{
+	if (!url || !*url)
+		url = "about:blank";
+	debug(1, "load html at %s", url);
+	load_start(s, url, 1);
+	load_here(s, url, html ? html : "");
 }
 
 void shell_go(struct shell *s, const char *typed)
@@ -2258,11 +2933,18 @@ static int render_png(struct shell *s, const char *path)
 	FILE *f = fopen(path, "wb");
 	png_structp p;
 	png_infop info;
-	int y, h = s->view_h;
+	int y, h = s->view_h, round;
 
 	if (!f || !px)
 		return 1;
-	soie_paint(s->page.doc, px, s->view_w, h, s->view_w * 4, 0, 0);
+	/* background images are asked for when painted: paint again
+	 * once they came */
+	for (round = 0; round < 3; round++) {
+		soie_paint(s->page.doc, px, s->view_w, h, s->view_w * 4, 0, 0);
+		if (!res_pending(s, -1))
+			break;
+		pump(s);
+	}
 	p = png_create_write_struct(PNG_LIBPNG_VER_STRING, NULL, NULL, NULL);
 	info = png_create_info_struct(p);
 	if (setjmp(png_jmpbuf(p)))

@@ -50,7 +50,8 @@ make -C "$dir" -j"$(nproc 2>/dev/null || echo 2)" QUICKJS_SRC="$QUICKJS_SRC" \
 	all tests/unit tests/html5lib tests/painttest tests/exttest \
 	>"$dir/build.log" 2>&1 || { tail -20 "$dir/build.log"; exit 1; }
 
-export ASAN_OPTIONS=detect_leaks=0 SOIE_AUDIO=none
+# cookies in memory only: the sites do not write into the user's jar
+export ASAN_OPTIONS=detect_leaks=0 SOIE_AUDIO=none SOIE_COOKIES=''
 fail=0
 make -C "$dir" check || fail=1
 if [ -f "$dir/ext/script.so" ]; then

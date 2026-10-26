@@ -15,6 +15,7 @@
 struct job {
 	char *url, *post, *first_party;
 	int kind;		/* the host's: what the bytes are for */
+	int flags;		/* SOIE_REQ_* */
 	unsigned gen;		/* the host's: which page asked */
 	int ok;			/* net_fetch() succeeded */
 	struct response r;
@@ -24,9 +25,12 @@ struct job {
 /* Start the threads; returns a descriptor that becomes readable when
  * jobs finish, -1 on failure. */
 int fetch_start(int threads);
-/* Queue a request; urgent ones go before the others. */
-void fetch_add(const char *url, const char *post, const char *first_party,
-	int kind, unsigned gen, int urgent);
+/* Queue a request; urgent ones go before the others. flags: SOIE_REQ_*.
+ * dl (or NULL): a download the job owns from now on, job_free() frees
+ * it. */
+struct job *fetch_add(const char *url, const char *post,
+	const char *first_party, int kind, unsigned gen, int urgent,
+	int flags, struct download *dl);
 /* A finished job, or NULL when there is none yet. */
 struct job *fetch_done(void);
 void job_free(struct job *j);
