@@ -1397,7 +1397,7 @@ static JSValue n_request_async(JSContext *js, JSValueConst this, int argc,
 		j->body = body_arg(js, argv[3], &j->blen);
 	if (argc > 4)
 		JS_ToInt32(js, &flags, argv[4]);
-	j->flags = flags;
+	j->flags = flags | (c->host->flags & SOIE_REQ_PRIVATE);
 	pthread_mutex_lock(&jobs_lock);
 	j->anext = all_jobs;
 	if (all_jobs)
@@ -1483,6 +1483,7 @@ static JSValue n_request(JSContext *js, JSValueConst this, int argc,
 	rq.first_party = c->url;
 	if (argc > 4)
 		JS_ToInt32(js, &rq.flags, argv[4]);
+	rq.flags |= c->host->flags & SOIE_REQ_PRIVATE;
 	{
 		/* waiting for the network is not running: the script's
 		 * time limit stops while the request is out */
@@ -1506,6 +1507,13 @@ static JSValue n_request(JSContext *js, JSValueConst this, int argc,
 	return o;
 }
 
+/* document.cookie: never HttpOnly ones, a private page's jar */
+static int cookie_flags(const struct sctx *c)
+{
+	return SOIE_COOKIE_SCRIPT | (c->host->flags & SOIE_REQ_PRIVATE ?
+		SOIE_COOKIE_PRIVATE : 0);
+}
+
 static JSValue n_cookie(JSContext *js, JSValueConst this, int argc,
 	JSValueConst *argv)
 {
@@ -1519,11 +1527,11 @@ static JSValue n_cookie(JSContext *js, JSValueConst this, int argc,
 
 		if (!v)
 			return JS_EXCEPTION;
-		soie_cookies_set(c->url, c->url, v, 1);
+		soie_cookies_set(c->url, c->url, v, cookie_flags(c));
 		JS_FreeCString(js, v);
 		return JS_UNDEFINED;
 	}
-	s = soie_cookies_get(c->url, c->url, 1);
+	s = soie_cookies_get(c->url, c->url, cookie_flags(c));
 	r = JS_NewString(js, s ? s : "");
 	free(s);
 	return r;
@@ -1533,12 +1541,15 @@ static JSValue n_navigate(JSContext *js, JSValueConst this, int argc,
 	JSValueConst *argv)
 {
 	struct sctx *c = ctx_of(js);
+	int mode = 0;
 	STR(0, url);
 
 	(void)this;
+	/* false, true or 2: a push, a replace, a new window */
+	if (argc > 1 && JS_ToInt32(js, &mode, argv[1]))
+		mode = 0;
 	if (c->host->navigate)
-		c->host->navigate(c->host->data, url,
-			argc > 1 && JS_ToBool(js, argv[1]));
+		c->host->navigate(c->host->data, url, mode);
 	JS_FreeCString(js, url);
 	return JS_UNDEFINED;
 }

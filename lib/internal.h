@@ -114,6 +114,7 @@ struct soie_node {
 			/* layout_touch() stamps, and the last layout's */
 			unsigned long lstamp, lbuilt;
 			struct damage *damage;	/* soie_layout_damage() */
+			float zoom;		/* the style options', 1 */
 		} doc;
 	} u;
 };

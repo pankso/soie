@@ -7,6 +7,11 @@
  * Third-party cookies are neither sent nor stored: a request whose
  * site differs from the page's site gets no cookie jar at all.
  *
+ * Private windows (SOIE_COOKIE_PRIVATE) have a jar of their own, in
+ * memory only, empty when the program starts. The browser may take
+ * third-party cookies too, or none at all (soie_cookies_policy()), and
+ * forget them all (soie_cookies_clear()).
+ *
  * Copyright (C) 2026 Christophe Lincoln <pankso@slitaz.org>
  * Written with the assistance of Claude (Anthropic) and Opencode.
  *
@@ -39,6 +44,10 @@ struct cookie {
 
 static struct cookie *jar;
 static int njar, capjar;
+/* The private jar, swapped with the one above while it is used */
+static struct cookie *pjar;
+static int npjar, cappjar, in_private;
+static int policy;		/* SOIE_COOKIES_* */
 static char *file;		/* NULL: memory only */
 static long long serial;	/* creation order within one second */
 /* media players fetch from their own threads */
@@ -211,7 +220,7 @@ static int third_party(const struct url *u, const char *first_party)
 {
 	struct url f;
 
-	if (!first_party)
+	if (!first_party || policy == SOIE_COOKIES_ALL)
 		return 0;
 	if (parse_url(first_party, &f))
 		return 1;
@@ -322,7 +331,7 @@ static void save(void)
 	FILE *f;
 	int i, fd;
 
-	if (!file)
+	if (!file || in_private)
 		return;
 	tmp = malloc(strlen(file) + 5);
 	if (!tmp)
@@ -406,12 +415,35 @@ static char *trim(const char *s, size_t len)
 static void set_locked(const char *url, const char *first_party,
 	const char *line, int script);
 
+/* The private jar in place of the other one, or back */
+static void swap_jars(void)
+{
+	struct cookie *j = jar;
+	int n = njar, c = capjar;
+
+	jar = pjar;
+	njar = npjar;
+	capjar = cappjar;
+	pjar = j;
+	npjar = n;
+	cappjar = c;
+	in_private = !in_private;
+}
+
 static void set(void *data, const char *url, const char *first_party,
-	const char *line, int script)
+	const char *line, int flags)
 {
 	(void)data;
 	pthread_mutex_lock(&lock);
-	set_locked(url, first_party, line, script);
+	if (policy == SOIE_COOKIES_NONE) {
+		pthread_mutex_unlock(&lock);
+		return;
+	}
+	if (flags & SOIE_COOKIE_PRIVATE)
+		swap_jars();
+	set_locked(url, first_party, line, flags & SOIE_COOKIE_SCRIPT);
+	if (flags & SOIE_COOKIE_PRIVATE)
+		swap_jars();
 	pthread_mutex_unlock(&lock);
 }
 
@@ -538,13 +570,21 @@ static char *get_locked(const char *url, const char *first_party,
 	int script);
 
 static char *get(void *data, const char *url, const char *first_party,
-	int script)
+	int flags)
 {
 	char *r;
 
 	(void)data;
 	pthread_mutex_lock(&lock);
-	r = get_locked(url, first_party, script);
+	if (policy == SOIE_COOKIES_NONE) {
+		pthread_mutex_unlock(&lock);
+		return NULL;
+	}
+	if (flags & SOIE_COOKIE_PRIVATE)
+		swap_jars();
+	r = get_locked(url, first_party, flags & SOIE_COOKIE_SCRIPT);
+	if (flags & SOIE_COOKIE_PRIVATE)
+		swap_jars();
 	pthread_mutex_unlock(&lock);
 	return r;
 }
@@ -665,9 +705,31 @@ static char *jar_path(void)
 	return path;
 }
 
+static void set_policy(void *data, int p)
+{
+	(void)data;
+	pthread_mutex_lock(&lock);
+	policy = p;
+	pthread_mutex_unlock(&lock);
+}
+
+static void clear(void *data, int flags)
+{
+	(void)data;
+	pthread_mutex_lock(&lock);
+	if (flags & SOIE_COOKIE_PRIVATE)
+		swap_jars();
+	while (njar)
+		drop(njar - 1);
+	save();		/* not the private one's: it has no file */
+	if (flags & SOIE_COOKIE_PRIVATE)
+		swap_jars();
+	pthread_mutex_unlock(&lock);
+}
+
 static struct soie_ext_cookies hooks = {
 	{ SOIE_EXT_ABI, sizeof(hooks), SOIE_EXT_COOKIES, "cookies", NULL },
-	get, set
+	get, set, set_policy, clear
 };
 
 int soie_ext_init(void)

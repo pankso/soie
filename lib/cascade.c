@@ -153,6 +153,7 @@ struct styledb {
 	struct reg *regs;
 	int nregs, noninherit;
 	char **fontfaces;		/* @font-face blocks, for later */
+	char **fontbases;		/* their sheets' URLs, for src */
 	int nfontfaces;
 	struct sval initial[NPROPS];
 	struct {
@@ -340,9 +341,12 @@ void styledb_free(struct styledb *db)
 	for (i = 0; i < 3; i++)
 		layer_free(&db->roots[i]);
 	free(db->regs);
-	for (i = 0; i < db->nfontfaces; i++)
+	for (i = 0; i < db->nfontfaces; i++) {
 		free(db->fontfaces[i]);
+		free(db->fontbases[i]);
+	}
 	free(db->fontfaces);
+	free(db->fontbases);
 	for (i = 0; i < NPROPS; i++)
 		sval_free(&db->initial[i]);
 	free(db->anon);
@@ -914,6 +918,10 @@ static void at_rule(struct styledb *db, struct crule *r,
 		css_serialize(&b, r->block.v, r->block.n);
 		db->fontfaces = xrealloc(db->fontfaces,
 			(size_t)(db->nfontfaces + 1) * sizeof(*db->fontfaces));
+		db->fontbases = xrealloc(db->fontbases,
+			(size_t)(db->nfontfaces + 1) * sizeof(*db->fontbases));
+		db->fontbases[db->nfontfaces] = pc->base ?
+			xstrndup(pc->base, strlen(pc->base)) : NULL;
 		db->fontfaces[db->nfontfaces++] = b.s;
 	}
 	/* @container, @scope, @keyframes, @page...: not supported yet */
@@ -1014,8 +1022,11 @@ static int env_of(const struct styledb *db, const soie_style_options *opts,
 {
 	int i;
 
-	e->width = opts && opts->width > 0 ? (float)opts->width : 1024;
-	e->height = opts && opts->height > 0 ? (float)opts->height : 768;
+	float z = opts && opts->zoom > 0 ? opts->zoom : 1;
+
+	/* media queries see CSS px: the viewport zoomed */
+	e->width = (opts && opts->width > 0 ? (float)opts->width : 1024) / z;
+	e->height = (opts && opts->height > 0 ? (float)opts->height : 768) / z;
 	e->dark = opts ? opts->dark : 0;
 	e->print = opts ? opts->print : 0;
 	e->scripting = opts ? opts->scripting : 0;
@@ -1945,7 +1956,7 @@ static const struct style *compute_style(struct styledb *db,
 	c.self = &s;
 	c.is_root = root;
 	c.u = db->vp;
-	c.u.em = parent ? parent->v[P_FONT_SIZE].u.len.px : 16;
+	c.u.em = parent ? parent->v[P_FONT_SIZE].u.len.px : 16 * db->vp.zoom;
 	c.u.ex = c.u.ch = c.u.em / 2;
 	c.u.rem = rem;
 	for (i = 0; i < NPROPS; i++) {
@@ -2148,7 +2159,7 @@ static void style_element(struct styledb *db, soie_node *el,
 
 /* @font-face (CSS Fonts 4 4): fetch the first usable src. */
 static void load_font_face(struct styledb *db, const void *doc,
-	const char *block)
+	const char *block, const char *base)
 {
 	struct cvlist l;
 	struct crule tmp;
@@ -2181,7 +2192,7 @@ static void load_font_face(struct styledb *db, const void *doc,
 	for (i = 0; src && fam.len && i < src->value.n; i++) {
 		const struct cv *v = &src->value.v[i], *f;
 		const char *url = NULL;
-		char *buf = NULL;
+		char *buf = NULL, *abs;
 		size_t len = 0;
 		int k;
 
@@ -2205,9 +2216,14 @@ static void load_font_face(struct styledb *db, const void *doc,
 		}
 		if (!url || !db->opts || !db->opts->fetch)
 			continue;
+		/* relative to the sheet, as every url() of it */
+		abs = base ? soie_url_resolve(base, url) : NULL;
+		if (abs)
+			url = abs;
 		r = db->opts->fetch(db->opts->fetch_data, url, &buf, &len);
 		if (r == SOIE_FETCH_LATER)
 			pending_add(db, url);
+		free(abs);
 		if (r || !buf)
 			continue;
 		if (font_add_memory(doc, fam.s, (unsigned char *)buf, len,
@@ -2231,7 +2247,7 @@ static void load_fonts(struct styledb *db, const void *doc)
 	int i;
 
 	for (i = 0; i < db->nfontfaces; i++)
-		load_font_face(db, doc, db->fontfaces[i]);
+		load_font_face(db, doc, db->fontfaces[i], db->fontbases[i]);
 }
 
 /*
@@ -2254,9 +2270,9 @@ const struct style *anon_style(struct styledb *db, const struct style *parent)
 	c.parent = parent;
 	c.self = &s;
 	c.u = db->vp;
-	c.u.em = parent ? parent->v[P_FONT_SIZE].u.len.px : 16;
+	c.u.em = parent ? parent->v[P_FONT_SIZE].u.len.px : 16 * db->vp.zoom;
 	c.u.ex = c.u.ch = c.u.em / 2;
-	c.u.rem = 16;
+	c.u.rem = 16 * db->vp.zoom;
 	for (i = 0; i < NPROPS; i++) {
 		if (props[i].inherited && parent)
 			s.v[i] = parent->v[i];
@@ -2663,9 +2679,11 @@ int soie_style_document(soie_node *doc, const soie_style_options *opts)
 	unsigned next, sig;
 	int i, reuse = 0, resized = 0;
 	struct env env;
+	float zoom = opts && opts->zoom > 0 ? opts->zoom : 1;
 
 	if (doc->type != SOIE_DOCUMENT)
 		return -1;
+	doc->u.doc.zoom = zoom;
 	sig = sheet_signature(doc, opts);
 	db = doc->u.doc.styles;
 	if (db && db->sig == sig && env_of(db, opts, &env) &&
@@ -2674,9 +2692,13 @@ int soie_style_document(soie_node *doc, const soie_style_options *opts)
 		 * viewport (its units) changed */
 		resized = env.width != db->env.width ||
 			env.height != db->env.height;
+		/* another zoom: every length is another */
+		if (zoom != db->vp.zoom)
+			doc->u.doc.restyle_all = 1;
 		db->env = env;
-		db->vp.vw = env.width;
-		db->vp.vh = env.height;
+		db->vp.zoom = zoom;
+		db->vp.vw = env.width * zoom;	/* device px */
+		db->vp.vh = env.height * zoom;
 		base = document_base(doc, opts ? opts->base_url : NULL);
 		db->opts = opts;
 		db->base = base;
@@ -2700,8 +2722,9 @@ int soie_style_document(soie_node *doc, const soie_style_options *opts)
 	db->sig = sig;
 	db->opts = opts;
 	env_of(NULL, opts, &db->env);
-	db->vp.vw = db->env.width;
-	db->vp.vh = db->env.height;
+	db->vp.zoom = zoom;
+	db->vp.vw = db->env.width * zoom;
+	db->vp.vh = db->env.height * zoom;
 	db->doc_charset = doc->u.doc.charset;
 	db->quirks = doc->u.doc.quirks == SOIE_QUIRKS;
 	for (i = 0; i < 3; i++)
@@ -2763,7 +2786,7 @@ cascade:
 	} else if (!reuse || resized || doc->u.doc.ndirty ||
 		   doc->u.doc.restyle_all) {
 		/* every element, in tree order, after its parent */
-		db->rem = 16;
+		db->rem = 16 * zoom;
 		for (n = doc->first; n; n = n->next)
 			style_tree(db, n, 0);
 	}

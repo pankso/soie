@@ -82,6 +82,7 @@ typedef struct {
 } soie_request;
 
 #define SOIE_REQ_NO_COOKIES 1	/* credentials omitted: no jar either way */
+#define SOIE_REQ_PRIVATE 2	/* a private window's: its own jar */
 
 typedef struct {
 	int status;		/* HTTP status, 200 for files */
@@ -140,23 +141,36 @@ int soie_ext_blocked(const soie_request *req);
 int soie_ext_fetch(const soie_request *req, soie_response *res);
 
 /* The cookie jar. first_party is the URL of the page that makes the
- * request (or that url itself for a page load); script is nonzero for
- * document.cookie, which never sees HttpOnly cookies. */
+ * request (or that url itself for a page load); flags: SCRIPT for
+ * document.cookie, which never sees HttpOnly cookies, PRIVATE for a
+ * private window's jar (in memory only, apart from the other one). */
+#define SOIE_COOKIE_SCRIPT 1
+#define SOIE_COOKIE_PRIVATE 2
 struct soie_ext_cookies {
 	struct soie_ext base;
 	/* The Cookie header value for a request to url, or NULL. */
 	char *(*get)(void *data, const char *url, const char *first_party,
-		int script);
+		int flags);
 	/* A Set-Cookie header value (or a document.cookie assignment). */
 	void (*set)(void *data, const char *url, const char *first_party,
-		const char *line, int script);
+		const char *line, int flags);
+	/* SOIE_COOKIES_*: which cookies are kept and sent */
+	void (*policy)(void *data, int policy);
+	/* Forget every cookie: the private jar with SOIE_COOKIE_PRIVATE,
+	 * else the other one (and its file) */
+	void (*clear)(void *data, int flags);
 };
+#define SOIE_COOKIES_NO_THIRD_PARTY 0	/* the default */
+#define SOIE_COOKIES_ALL 1
+#define SOIE_COOKIES_NONE 2
 
 /* The first cookie jar's answer, NULL without one. */
 char *soie_cookies_get(const char *url, const char *first_party,
-	int script);
+	int flags);
 void soie_cookies_set(const char *url, const char *first_party,
-	const char *line, int script);
+	const char *line, int flags);
+void soie_cookies_policy(int policy);
+void soie_cookies_clear(int flags);
 
 /*
  * Scripts. The host gives these services to the script engine; the
@@ -180,7 +194,10 @@ typedef struct {
 	 * must be thread-safe, and request and data stay valid as long as
 	 * the host runs. */
 	soie_request_fn request;
-	/* location changes: the host loads url once the script returns */
+	/* location changes: the host loads url once the script returns;
+	 * replace 1 replaces the history entry, 2 is a new window
+	 * (window.open(), a link of target _blank), which a host opens
+	 * only for the user's click or key */
 	void (*navigate)(void *data, const char *url, int replace);
 	void (*message)(void *data, int kind, const char *text);
 	/* viewport size and scroll position, CSS px; and scrolling */
@@ -190,6 +207,9 @@ typedef struct {
 	 * replaceState()): a new history entry when push, else the
 	 * current one's. May be NULL. */
 	void (*url)(void *data, const char *url, int push);
+	/* SOIE_REQ_PRIVATE for a private window's page: its requests and
+	 * document.cookie use the private jar */
+	int flags;
 } soie_script_host;
 
 #define SOIE_MOD_SHIFT 1

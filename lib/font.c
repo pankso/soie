@@ -20,6 +20,14 @@ static int ft_ready;
 
 struct face *faces;		/* system and web faces */
 const void *font_doc;		/* document whose web fonts are visible */
+
+float doc_zoom(void)
+{
+	const soie_node *d = font_doc;
+
+	return d && d->type == SOIE_DOCUMENT && d->u.doc.zoom > 0 ?
+		d->u.doc.zoom : 1;
+}
 int nfaces;
 static int scanned;
 static int stub_mode;

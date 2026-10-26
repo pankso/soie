@@ -229,7 +229,7 @@ int soie_ext_fetch(const soie_request *req, soie_response *res)
 /* Cookies */
 
 char *soie_cookies_get(const char *url, const char *first_party,
-	int script)
+	int flags)
 {
 	const struct soie_ext_cookies *e;
 	char *(*hook)(void *, const char *, const char *, int);
@@ -237,16 +237,36 @@ char *soie_cookies_get(const char *url, const char *first_party,
 	e = (const void *)soie_ext_get(SOIE_EXT_COOKIES, 0);
 	if (!e || !(hook = SOIE_EXT_HOOK(e, struct soie_ext_cookies, get)))
 		return NULL;
-	return hook(e->base.data, url, first_party, script);
+	return hook(e->base.data, url, first_party, flags);
 }
 
 void soie_cookies_set(const char *url, const char *first_party,
-	const char *line, int script)
+	const char *line, int flags)
 {
 	const struct soie_ext_cookies *e;
 	void (*hook)(void *, const char *, const char *, const char *, int);
 
 	e = (const void *)soie_ext_get(SOIE_EXT_COOKIES, 0);
 	if (e && (hook = SOIE_EXT_HOOK(e, struct soie_ext_cookies, set)))
-		hook(e->base.data, url, first_party, line, script);
+		hook(e->base.data, url, first_party, line, flags);
+}
+
+void soie_cookies_policy(int policy)
+{
+	const struct soie_ext_cookies *e;
+	void (*hook)(void *, int);
+
+	e = (const void *)soie_ext_get(SOIE_EXT_COOKIES, 0);
+	if (e && (hook = SOIE_EXT_HOOK(e, struct soie_ext_cookies, policy)))
+		hook(e->base.data, policy);
+}
+
+void soie_cookies_clear(int flags)
+{
+	const struct soie_ext_cookies *e;
+	void (*hook)(void *, int);
+
+	e = (const void *)soie_ext_get(SOIE_EXT_COOKIES, 0);
+	if (e && (hook = SOIE_EXT_HOOK(e, struct soie_ext_cookies, clear)))
+		hook(e->base.data, flags);
 }

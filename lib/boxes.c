@@ -141,10 +141,11 @@ static float attr_num(const soie_node *n, const char *name, float dflt)
 	return a && *a >= '0' && *a <= '9' ? (float)atof(a) : dflt;
 }
 
-/* Intrinsic sizes of replaced elements, until images load (phase 6). */
+/* Intrinsic sizes of replaced elements, until images load (phase 6).
+ * CSS px are zoomed (doc_zoom()), em ones are already. */
 static void intrinsic(struct box *b, const soie_node *n)
 {
-	float em = b->style->v[P_FONT_SIZE].u.len.px;
+	float em = b->style->v[P_FONT_SIZE].u.len.px, z = doc_zoom();
 	const struct image *im;
 
 	if (n->ns == SOIE_NS_SVG) {
@@ -153,21 +154,23 @@ static void intrinsic(struct box *b, const soie_node *n)
 			b->iw = 300;
 			b->ih = 150;
 		}
+		b->iw *= z;
+		b->ih *= z;
 	} else if ((n->ns == SOIE_NS_HTML && (n->tag == TAG_IMG ||
 		    n->tag == TAG_OBJECT || n->tag == TAG_EMBED ||
 		    n->tag == TAG_INPUT)) && (im = image_for(n))) {
-		b->iw = (float)im->w;
-		b->ih = (float)im->h;
+		b->iw = (float)im->w * z;
+		b->ih = (float)im->h * z;
 	} else if (n->ns == SOIE_NS_HTML && n->tag == TAG_IMG) {
-		b->iw = attr_num(n, "width", 0);
-		b->ih = attr_num(n, "height", 0);
+		b->iw = attr_num(n, "width", 0) * z;
+		b->ih = attr_num(n, "height", 0) * z;
 	} else if (n->ns == SOIE_NS_HTML && n->tag == TAG_INPUT) {
 		const char *t = soie_element_get_attr(n, "type");
 		struct fontm fm;
 
 		font_metrics(b->style, &fm);
 		if (t && (ascii_ieq(t, "checkbox") || ascii_ieq(t, "radio"))) {
-			b->iw = b->ih = 13;
+			b->iw = b->ih = 13 * z;
 		} else if (t && (ascii_ieq(t, "submit") ||
 				 ascii_ieq(t, "reset") ||
 				 ascii_ieq(t, "button"))) {
@@ -189,15 +192,15 @@ static void intrinsic(struct box *b, const soie_node *n)
 		b->iw = em * 5;
 		b->ih = em * 1.25f + 2;
 	} else if (n->ns == SOIE_NS_HTML && !strcmp(n->name, "audio")) {
-		b->iw = 300;
-		b->ih = 54;
+		b->iw = 300 * z;
+		b->ih = 54 * z;
 	} else {
 		b->iw = 300;
 		b->ih = 150;
 		if (n->ns == SOIE_NS_HTML && !strcmp(n->name, "video"))
 			media_size(n, &b->iw, &b->ih);
-		b->iw = attr_num(n, "width", b->iw);
-		b->ih = attr_num(n, "height", b->ih);
+		b->iw = attr_num(n, "width", b->iw) * z;
+		b->ih = attr_num(n, "height", b->ih) * z;
 	}
 }
 

@@ -52,7 +52,8 @@ static struct ucontext unit_ctx(const struct style *st)
 	memset(&u, 0, sizeof(u));
 	u.em = st->v[P_FONT_SIZE].u.len.px;
 	u.ex = u.ch = u.em / 2;
-	u.rem = 16;
+	u.zoom = doc_zoom();
+	u.rem = 16 * u.zoom;
 	u.vw = 1024;
 	u.vh = 768;
 	return u;

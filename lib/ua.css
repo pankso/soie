@@ -11,6 +11,8 @@ noframes, param, rp, script, style, template, title { display: none; }
 embed[hidden] { display: inline; height: 0; width: 0; }
 input[type=hidden i] { display: none !important; }
 dialog:not([open]) { display: none; }
+/* scripts run: <noscript> holds raw text, never shown */
+@media (scripting) { noscript { display: none !important; } }
 
 /* 15.3.2 The page */
 html, body { display: block; }

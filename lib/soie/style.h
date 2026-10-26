@@ -39,6 +39,10 @@ typedef struct {
 	 * no media. */
 	soie_request_fn request;
 	void *request_data;
+	/* Page zoom: CSS px are zoom device pixels (0 is 1); media
+	 * queries see a viewport of width / zoom. A browser's zoom, and
+	 * a screen's scale (HiDPI). */
+	float zoom;
 } soie_style_options;
 
 /*

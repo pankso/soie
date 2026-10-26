@@ -220,6 +220,7 @@ struct len {
 struct ucontext {
 	float em, rem, vw, vh;
 	float ex, ch;
+	float zoom;		/* device px a CSS px (absolute units), 0: 1 */
 };
 /* Set when a length was resolved with viewport units (vw, vh...) */
 extern int vp_units_used;

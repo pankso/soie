@@ -1136,11 +1136,12 @@ static void lin_resolve(const struct lin *l, const struct ucontext *u,
 {
 	double vmin = u->vw < u->vh ? u->vw : u->vh;
 	double vmax = u->vw > u->vh ? u->vw : u->vh;
+	double z = u->zoom > 0 ? u->zoom : 1;
 
 	if (l->k[U_VW] || l->k[U_VH] || l->k[U_VMIN] || l->k[U_VMAX])
 		vp_units_used = 1;
 
-	*px = (float)(l->k[U_PX] + l->k[U_EM] * u->em + l->k[U_REM] * u->rem +
+	*px = (float)(l->k[U_PX] * z + l->k[U_EM] * u->em + l->k[U_REM] * u->rem +
 		l->k[U_EX] * u->ex + l->k[U_CH] * u->ch +
 		(l->k[U_VW] * u->vw + l->k[U_VH] * u->vh +
 		 l->k[U_VMIN] * vmin + l->k[U_VMAX] * vmax) / 100);

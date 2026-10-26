@@ -514,7 +514,8 @@ function activation(el, host) {
 			if (!host) {
 				const h = n.getAttribute('href');
 				if (!/^\s*javascript:/i.test(h))
-					api.navigate(n.href, false);
+					api.navigate(n.href, newWindow(n.target) ?
+						2 : false);
 				else
 					try {
 						(0, eval)(decodeURIComponent(
@@ -3276,6 +3277,11 @@ for (const k of ['protocol', 'host', 'hostname', 'port', 'pathname',
 		enumerable: true,
 	});
 
+/* A browsing context name that is not this one: a new window */
+function newWindow(target) {
+	return !!target && !/^_(self|top|parent)$/i.test(target);
+}
+
 function navigate(url, replace) {
 	const to = api.resolve(href, url) || url;
 	const strip = (u) => u.replace(/#.*$/, '');
@@ -5112,8 +5118,13 @@ const globals = {
 	focus: () => {},
 	blur: () => {},
 	stop: () => {},
-	open: (url) => {
-		if (url)
+	open: (url, target) => {
+		if (!url)
+			return null;
+		if (target === undefined || newWindow(String(target)))
+			api.navigate(api.resolve(href, String(url)) ||
+				String(url), 2);
+		else
 			navigate(String(url), false);
 		return null;
 	},

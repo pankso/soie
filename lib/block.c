@@ -499,9 +499,10 @@ static float tr_len(const char **sp, const struct box *b, float ref)
 		v = v * ref / 100;
 		e++;
 	} else if (!strncmp(e, "px", 2)) {
+		v *= doc_zoom();
 		e += 2;
 	} else if (!strncmp(e, "rem", 3)) {
-		v *= 16;
+		v *= 16 * doc_zoom();
 		e += 3;
 	} else if (!strncmp(e, "em", 2)) {
 		v *= b->style->v[P_FONT_SIZE].u.len.px;
@@ -570,13 +571,13 @@ static void transform_offset(const struct box *b, float *dx, float *dy)
 			*dy += tr_len(&a, b, bh);
 		} else if (n == 6 && !strncmp(name, "matrix", 6)) {
 			if (tr_numbers(a, m, 6) == 6) {
-				*dx += m[4];
-				*dy += m[5];
+				*dx += m[4] * doc_zoom();
+				*dy += m[5] * doc_zoom();
 			}
 		} else if (n == 8 && !strncmp(name, "matrix3d", 8)) {
 			if (tr_numbers(a, m, 16) == 16) {
-				*dx += m[12];
-				*dy += m[13];
+				*dx += m[12] * doc_zoom();
+				*dy += m[13] * doc_zoom();
 			}
 		}
 		while (*s && *s != ')')

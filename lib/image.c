@@ -617,8 +617,9 @@ void draw_fitted(struct canvas *c, const struct box *b,
 	int cx0 = c->cx0, cy0 = c->cy0, cx1 = c->cx1, cy1 = c->cy1;
 	int a, bb;
 
-	iw = (float)im->w;
-	ih = (float)im->h;
+	/* natural size in CSS px, zoomed */
+	iw = (float)im->w * doc_zoom();
+	ih = (float)im->h * doc_zoom();
 	if (kw(st, P_OBJECT_FIT, "contain") || kw(st, P_OBJECT_FIT, "cover") ||
 	    (kw(st, P_OBJECT_FIT, "scale-down") && (iw > w || ih > h))) {
 		s = w / iw < h / ih ? w / iw : h / ih;
@@ -703,7 +704,7 @@ static int parse_stops(struct cur *c, struct stop *s, int max, float len)
 		if (v && (v->type == CT_PERCENT || v->type == CT_DIMENSION ||
 			  v->type == CT_NUMBER)) {
 			s[n].pos = v->type == CT_PERCENT ? (float)v->num / 100 :
-				len > 0 ? (float)v->num / len : 0;
+				len > 0 ? (float)v->num * doc_zoom() / len : 0;
 			cur_next(c);
 			v = cur_peek(c);
 			if (v && (v->type == CT_PERCENT ||
@@ -713,7 +714,7 @@ static int parse_stops(struct cur *c, struct stop *s, int max, float len)
 				n++;
 				s[n].pos = v->type == CT_PERCENT ?
 					(float)v->num / 100 : len > 0 ?
-					(float)v->num / len : 0;
+					(float)v->num * doc_zoom() / len : 0;
 				cur_next(c);
 			}
 		}
@@ -873,7 +874,8 @@ static float bg_len(const struct cv *v, float ref, float dflt)
 	if (v->type == CT_PERCENT)
 		return (float)v->num * ref / 100;
 	if (v->type == CT_DIMENSION || v->type == CT_NUMBER)
-		return (float)v->num;	/* px; em and others approximated */
+		/* px; em and others approximated */
+		return (float)v->num * doc_zoom();
 	return dflt;
 }
 
@@ -953,8 +955,8 @@ void paint_bg_image(struct canvas *c, const struct box *b, float x, float y,
 			im = image_get(paint_doc, v->kids.v[0].str);
 		if (!im || !im->w || !im->h)
 			continue;
-		iw = (float)im->w;
-		ih = (float)im->h;
+		iw = (float)im->w * doc_zoom();
+		ih = (float)im->h * doc_zoom();
 		/* background-size */
 		if (nth_layer(&ls, layer < 0 ? 0 : layer, &cs) ||
 		    nth_layer(&ls, 0, &cs)) {

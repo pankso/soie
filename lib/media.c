@@ -28,7 +28,7 @@ static int mf_value(struct cur *c, struct mval *out)
 {
 	const struct cv *v = cur_peek(c);
 	struct slen *l;
-	struct ucontext u = { 16, 16, 0, 0, 8, 8 };
+	struct ucontext u = { 16, 16, 0, 0, 8, 8, 1 };
 	struct len len;
 
 	memset(out, 0, sizeof(*out));

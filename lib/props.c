@@ -1395,9 +1395,16 @@ static const float font_size_px[] = {
 	9.6f, 12, 13.333333f, 16, 19.2f, 24, 32, 48
 };
 
+/* Device px a CSS px: the page's zoom */
+static float zoom_of(const struct cctx *c)
+{
+	return c->u.zoom > 0 ? c->u.zoom : 1;
+}
+
 static float parent_font_size(const struct cctx *c)
 {
-	return c->parent ? c->parent->v[P_FONT_SIZE].u.len.px : 16;
+	return c->parent ? c->parent->v[P_FONT_SIZE].u.len.px :
+		16 * zoom_of(c);
 }
 
 void compute_value(int prop, const struct sval *sv, struct cctx *c,
@@ -1428,7 +1435,7 @@ void compute_value(int prop, const struct sval *sv, struct cctx *c,
 		if (sv->kw) {
 			static const float w[] = { 1, 3, 5 };
 
-			out->u.len.px = w[sv->kw - 1];
+			out->u.len.px = w[sv->kw - 1] * zoom_of(c);
 		} else if (sv->len) {
 			slen_resolve(sv->len, &c->u, &out->u.len);
 		}
@@ -1467,7 +1474,7 @@ void compute_value(int prop, const struct sval *sv, struct cctx *c,
 			int k = sv->kw - 1;
 
 			if (k < 8)
-				out->u.len.px = font_size_px[k];
+				out->u.len.px = font_size_px[k] * zoom_of(c);
 			else if (k == 8)
 				out->u.len.px = pfs * 1.2f;
 			else if (k == 9)
