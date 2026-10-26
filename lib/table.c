@@ -77,7 +77,7 @@ static void fix_table_part(struct styledb *db, struct box *t)
 			continue;
 		}
 		if (spaces_only(c) && (!run || t->role != R_ROW)) {
-			box_free(c);
+			box_drop(c);
 			continue;
 		}
 		if (!run) {
@@ -113,7 +113,7 @@ static void wrap_orphans(struct styledb *db, struct box *b)
 			continue;
 		}
 		if (run && spaces_only(c)) {
-			box_free(c);
+			box_drop(c);
 			continue;
 		}
 		run = NULL;

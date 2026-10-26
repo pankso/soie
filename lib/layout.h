@@ -123,6 +123,10 @@ void damage_node(soie_node *doc, const soie_node *el);
 struct box *box_new(int type, const struct style *st, soie_node *node);
 void box_append(struct box *parent, struct box *child);
 void box_free(struct box *b);
+/* A box of the tree being built thrown away with what is below: the
+ * elements it was the box of forget it (box_free() alone leaves them
+ * pointing at freed memory for the next incremental layout). */
+void box_drop(struct box *b);
 struct box *build_boxes(soie_node *doc);
 int kw(const struct style *st, int prop, const char *name);
 

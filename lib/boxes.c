@@ -92,6 +92,25 @@ void box_free(struct box *b)
 	free(b);
 }
 
+static void forget(struct box *b)
+{
+	struct box *c;
+
+	if (b->node && b->node->type == SOIE_ELEMENT &&
+	    b->node->u.el.box == b)
+		b->node->u.el.box = NULL;
+	for (c = b->first; c; c = c->next)
+		forget(c);
+}
+
+void box_drop(struct box *b)
+{
+	if (!b)
+		return;
+	forget(b);
+	box_free(b);
+}
+
 static int block_level(const struct box *b)
 {
 	if (b->flags & (BF_FLOAT | BF_ABS))
@@ -647,7 +666,7 @@ static void split_inline(struct box *b, struct box *out)
 	}
 	box_append(out, cur);
 	b->first = b->last = NULL;
-	box_free(b);
+	box_drop(b);
 }
 
 static int collapsible_only(const struct box *b)
@@ -712,7 +731,7 @@ static void fixup(struct styledb *db, struct box *b)
 		while (b->first) {
 			c = b->first;
 			b->first = c->next;
-			box_free(c);
+			box_drop(c);
 		}
 		b->last = NULL;
 		return;
@@ -779,10 +798,10 @@ static void fixup(struct styledb *db, struct box *b)
 					if (k->flags & (BF_FLOAT | BF_ABS))
 						box_append(b, k);
 					else
-						box_free(k);
+						box_drop(k);
 				}
 				c->first = c->last = NULL;
-				box_free(c);
+				box_drop(c);
 				continue;
 			}
 		}
