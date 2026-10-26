@@ -51,7 +51,8 @@ zlib. Its shell (`shell/`) has no toolkit; what its fronts
 share (bars, keys, repainting only what changed) is `browser/front.c`,
 xsoie is the Xlib part (MIT-SHM), `browser/wsoie` the Wayland one
 (built when wayland-client, wayland-cursor and xkbcommon are there). Ctrl+L address (or words to search for,
-`$SOIE_SEARCH`), Ctrl+F find, Ctrl+C/Ctrl+V clipboard, Ctrl+N or the
+`$SOIE_SEARCH`), Ctrl+F find, a drag (a double, triple click) selects
+text, Ctrl+A all of it, Ctrl+C/Ctrl+V clipboard, Ctrl+N or the
 middle button on a link a new window, Alt+arrows history, F5 reload,
 Ctrl+plus, Ctrl+minus, Ctrl+0 zoom. Files that are not pages (archives,
 ISO images) are downloaded to `~/Downloads` (or `$XDG_DOWNLOAD_DIR`).

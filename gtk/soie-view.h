@@ -67,8 +67,9 @@ void soie_download_cancel(SoieDownload *dl);
  *            (NULL: none opens); without a handler uri loads here
  *   "context-menu" (GtkMenu *menu, const char *link_uri,
  *            const char *image_uri) -> gboolean: the right button; menu
- *            has the default items (Back, Forward, Reload, Copy Link
- *            Address, Copy Image Address, Paste in a field), the URIs
+ *            has the default items (Back, Forward, Reload, Copy the
+ *            selection, Copy Link Address, Copy Image Address, Paste
+ *            in a field), the URIs
  *            are absolute or "": a handler adds its own items (Open in
  *            New Tab...) or returns TRUE for no menu
  *   "download-started" (SoieDownload *dl): a load was a download; the
@@ -108,6 +109,16 @@ gboolean soie_view_can_go_forward(SoieView *view);
  * laid out again, the same place at the top. */
 void soie_view_set_zoom_level(SoieView *view, double zoom);
 double soie_view_get_zoom_level(SoieView *view);
+
+/* Text selected in the page: with the mouse (a drag, a double click
+ * for a word, a triple one for its block, Shift+click to go on), or
+ * Ctrl+A; Ctrl+C or the context menu's Copy copies it. A selection
+ * made becomes the PRIMARY one. */
+gboolean soie_view_has_selection(SoieView *view);
+/* g_free() it; NULL without one */
+char *soie_view_get_selected_text(SoieView *view);
+void soie_view_copy_clipboard(SoieView *view);
+void soie_view_select_all(SoieView *view);
 
 /*
  * A URL scheme of the browser's own ("toile"), for all views, like

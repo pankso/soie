@@ -1352,6 +1352,314 @@ int soie_find(soie_node *doc, const char *text, int n, float *x, float *y,
 	return f.n;
 }
 
+/*
+ * Selection: the text fragments in layout order, as find walks them,
+ * numbered; a point stands for the nearest character of the nearest
+ * fragment, and the selection is all between its two points.
+ */
+struct spos {
+	int k;		/* fragment, by number */
+	unsigned off;	/* byte in it */
+};
+
+enum { S_LOCATE, S_BLOCK, S_EMIT };
+
+struct sel {
+	int pass, k;
+	const float *pt;
+	/* locate: the nearest fragment of each point */
+	float best[2];
+	struct spos at[2];
+	const struct frag *frag[2];
+	const struct box *block[2];
+	unsigned last_len;
+	/* the range */
+	struct spos lo, hi;
+	const struct frag *lof, *hif;
+	/* emit: rects, or the text */
+	float *rects;
+	int max, n;
+	struct buf *text;
+	const struct box *pblock;
+	const struct frag *pf;
+	int pline;
+};
+
+/* x of byte i in g, from its left: text_width() and what justify added
+ * to its spaces */
+static float sel_x(const struct frag *g, unsigned i)
+{
+	const struct style *st = g->box->style;
+	const char *s = g->box->text + g->start;
+	float x, extra;
+	unsigned j;
+
+	if (!i)
+		return 0;
+	if (i >= g->len)
+		return g->w;
+	x = text_width(st, s, i);
+	if (g->spaces && (extra = (g->w - text_width(st, s, g->len)) /
+	    (float)g->spaces) > 0)
+		for (j = 0; j < i; j++)
+			if (s[j] == ' ')
+				x += extra;
+	return x;
+}
+
+/* The character boundary of g nearest to page x */
+static unsigned sel_off(const struct frag *g, float x)
+{
+	const char *s = g->box->text + g->start;
+	unsigned i = 0, best = 0;
+	float d, bd = 1e30f;
+
+	x -= g->x;
+	for (;;) {
+		float cx = sel_x(g, i);
+
+		d = cx > x ? cx - x : x - cx;
+		if (d < bd) {
+			bd = d;
+			best = i;
+		} else if (cx > x) {
+			break;
+		}
+		if (i >= g->len)
+			break;
+		i++;
+		while (i < g->len && ((unsigned char)s[i] & 0xc0) == 0x80)
+			i++;
+	}
+	return best;
+}
+
+/* A word's bytes: letters, digits, _ and all of UTF-8 but ASCII */
+static int word_char(char c)
+{
+	unsigned char u = (unsigned char)c;
+
+	return u >= 0x80 || u == '_' || (u >= '0' && u <= '9') ||
+		((u | 32) >= 'a' && (u | 32) <= 'z');
+}
+
+static int line_of(const struct box *b, int i)
+{
+	int l;
+
+	for (l = 0; l < b->nlines; l++)
+		if (i >= b->lines[l].first && i < b->lines[l].first +
+		    b->lines[l].n)
+			return l;
+	return -1;
+}
+
+static void sel_frag(struct sel *s, const struct box *b, int i)
+{
+	const struct frag *g = &b->frags[i];
+	unsigned a, e;
+	int p;
+
+	if (s->pass == S_LOCATE) {
+		for (p = 0; p < 2; p++) {
+			float x = s->pt[2 * p], y = s->pt[2 * p + 1], dx, dy;
+
+			dx = x < g->x ? g->x - x : x > g->x + g->w ?
+				x - g->x - g->w : 0;
+			dy = y < g->y ? g->y - y : y > g->y + g->h ?
+				y - g->y - g->h : 0;
+			/* the nearest line first, then along it */
+			if (dy * 10000 + dx < s->best[p]) {
+				s->best[p] = dy * 10000 + dx;
+				s->at[p].k = s->k;
+				s->frag[p] = g;
+				s->block[p] = b;
+			}
+		}
+		s->last_len = g->len;
+		return;
+	}
+	if (s->pass == S_BLOCK) {
+		if (b == s->block[0] && s->k < s->lo.k) {
+			s->lo.k = s->k;
+			s->lo.off = 0;
+		}
+		if (b == s->block[1]) {
+			s->hi.k = s->k;
+			s->hi.off = g->len;
+		}
+		return;
+	}
+	if (s->k < s->lo.k || s->k > s->hi.k)
+		return;
+	a = s->k == s->lo.k ? s->lo.off : 0;
+	e = s->k == s->hi.k ? s->hi.off : g->len;
+	if (a >= e)
+		return;
+	if (!s->text) {
+		if (s->n < s->max) {
+			float x = sel_x(g, a);
+
+			s->rects[s->n * 4] = g->x + x;
+			s->rects[s->n * 4 + 1] = g->y;
+			s->rects[s->n * 4 + 2] = sel_x(g, e) - x;
+			s->rects[s->n * 4 + 3] = g->h;
+		}
+		s->n++;
+		return;
+	}
+	p = line_of(b, i);
+	if (s->pf) {
+		struct buf *t = s->text;
+		char last = t->len ? t->s[t->len - 1] : '\n';
+
+		if (b == s->pblock && p == s->pline)
+			;
+		else if (b == s->pblock && s->pline >= 0 &&
+			 !b->lines[s->pline].forced) {
+			if (last != ' ')
+				buf_putc(t, ' ');	/* a wrapped line */
+		} else if (b != s->pblock && g->y < s->pf->y + s->pf->h &&
+			   s->pf->y < g->y + g->h) {
+			if (last != ' ' && last != '\n')
+				buf_putc(t, ' ');	/* side by side */
+		} else if (last != '\n' || b == s->pblock) {
+			buf_putc(t, '\n');
+		}
+	}
+	buf_add(s->text, g->box->text + g->start + a, e - a);
+	s->pblock = b;
+	s->pf = g;
+	s->pline = p;
+}
+
+static void sel_in(struct box *b, struct sel *s);
+
+static void sel_out_of_flow(struct box *b, struct sel *s)
+{
+	struct box *c;
+
+	for (c = b->first; c; c = c->next)
+		if (c->flags & (BF_FLOAT | BF_ABS))
+			sel_in(c, s);
+		else if (c->type == B_INLINE)
+			sel_out_of_flow(c, s);
+}
+
+static void sel_in(struct box *b, struct sel *s)
+{
+	struct box *c;
+	int i;
+
+	if (!(b->flags & BF_INLINE_KIDS)) {
+		for (c = b->first; c; c = c->next)
+			sel_in(c, s);
+		return;
+	}
+	for (i = 0; i < b->nfrags; i++) {
+		struct frag *g = &b->frags[i];
+		const struct box *p = g->box->parent;
+
+		if (g->kind == F_ATOMIC)
+			sel_in(g->box, s);
+		/* list markers and generated content are not the page's
+		 * text */
+		if (g->kind != F_TEXT || !g->box->text || !g->len ||
+		    (p && (p->flags & (BF_OUTSIDE | BF_PSEUDO))) ||
+		    (g->box->style && !kw(g->box->style, P_VISIBILITY,
+		    "visible")))
+			continue;
+		sel_frag(s, b, i);
+		s->k++;
+	}
+	sel_out_of_flow(b, s);
+}
+
+/* The range between the points: 0 when it is empty */
+static int sel_range(soie_node *doc, const float *pt, int unit,
+	struct sel *s)
+{
+	struct box *root;
+	int p;
+
+	memset(s, 0, sizeof(*s));
+	if (doc->type != SOIE_DOCUMENT || !doc->u.doc.layout ||
+	    !(root = doc->u.doc.layout->root))
+		return 0;
+	s->pt = pt;
+	s->best[0] = s->best[1] = 1e30f;
+	sel_in(root, s);
+	if (!s->k || !s->frag[0])
+		return 0;
+	if (unit == SOIE_SELECT_ALL) {
+		s->lo.k = 0;
+		s->lo.off = 0;
+		s->hi.k = s->k - 1;
+		s->hi.off = s->last_len;
+		return 1;
+	}
+	for (p = 0; p < 2; p++)
+		s->at[p].off = sel_off(s->frag[p], pt[2 * p]);
+	p = s->at[1].k < s->at[0].k || (s->at[1].k == s->at[0].k &&
+		s->at[1].off < s->at[0].off);
+	s->lo = s->at[p];
+	s->lof = s->frag[p];
+	s->hi = s->at[!p];
+	s->hif = s->frag[!p];
+	if (unit == SOIE_SELECT_WORD) {
+		const char *t = s->lof->box->text + s->lof->start;
+
+		while (s->lo.off && word_char(t[s->lo.off - 1]))
+			s->lo.off--;
+		t = s->hif->box->text + s->hif->start;
+		while (s->hi.off < s->hif->len && word_char(t[s->hi.off]))
+			s->hi.off++;
+		/* a word's UTF-8 bytes are word bytes: off stays on a
+		 * character */
+	} else if (unit == SOIE_SELECT_BLOCK) {
+		const struct box *b0 = s->block[p], *b1 = s->block[!p];
+
+		s->block[0] = b0;
+		s->block[1] = b1;
+		s->lo.k = s->k;
+		s->pass = S_BLOCK;
+		s->k = 0;
+		sel_in(root, s);
+	}
+	return s->lo.k < s->hi.k || (s->lo.k == s->hi.k &&
+		s->lo.off < s->hi.off);
+}
+
+int soie_select(soie_node *doc, const float *points, int unit, float *rects,
+	int max)
+{
+	struct sel s;
+
+	if (!sel_range(doc, points, unit, &s))
+		return 0;
+	s.pass = S_EMIT;
+	s.k = 0;
+	s.rects = rects;
+	s.max = max;
+	sel_in(doc->u.doc.layout->root, &s);
+	return s.n;
+}
+
+char *soie_select_text(soie_node *doc, const float *points, int unit)
+{
+	struct sel s;
+	struct buf t = { NULL, 0, 0 };
+
+	if (!sel_range(doc, points, unit, &s))
+		return NULL;
+	s.pass = S_EMIT;
+	s.k = 0;
+	s.text = &t;
+	s.pline = -1;
+	sel_in(doc->u.doc.layout->root, &s);
+	return t.s;
+}
+
 void soie_set_focus(soie_node *doc, soie_node *el, int caret)
 {
 	if (doc->type != SOIE_DOCUMENT)

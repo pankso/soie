@@ -81,6 +81,24 @@ int soie_find(soie_node *doc, const char *text, int n, float *x, float *y,
 	float *w, float *h);
 
 /*
+ * Text selection between two page points, points[0..1] where the
+ * button went down and points[2..3] where it is now (or the other way):
+ * each stands for the nearest character of the nearest text, snapped
+ * to words (SOIE_SELECT_WORD) or to its blocks (SOIE_SELECT_BLOCK);
+ * SOIE_SELECT_ALL is the whole page. List markers and generated
+ * content are not in it. soie_select() puts the rects of its text, in
+ * page coordinates, in rects (x, y, w, h, at most max) and returns how
+ * many there are, 0 for an empty selection; soie_select_text() returns
+ * its text (malloc()ed, NULL when empty), lines and blocks ended by
+ * newlines.
+ */
+enum { SOIE_SELECT_CHAR, SOIE_SELECT_WORD, SOIE_SELECT_BLOCK,
+	SOIE_SELECT_ALL };
+int soie_select(soie_node *doc, const float *points, int unit, float *rects,
+	int max);
+char *soie_select_text(soie_node *doc, const float *points, int unit);
+
+/*
  * The focused form control (or NULL) and the caret, a byte offset in
  * its value: soie_paint() draws the caret there.
  */

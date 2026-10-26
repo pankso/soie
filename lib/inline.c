@@ -433,6 +433,7 @@ static void finish_line(struct ls *s, int forced, int last)
 	l->baseline = base;
 	l->first = s->start;
 	l->n = b->nfrags - s->start;
+	l->forced = forced;
 	align(s, l, last || forced);
 	for (i = s->start; i < b->nfrags; i++) {
 		struct frag *f = &b->frags[i];

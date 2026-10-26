@@ -61,6 +61,7 @@ struct line {
 	float baseline;
 	float jspace;		/* text-align: justify, added per space */
 	int first, n;		/* fragments */
+	int forced;		/* ended by a newline or a <br> */
 };
 
 struct box {

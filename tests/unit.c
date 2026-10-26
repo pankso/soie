@@ -467,6 +467,51 @@ static void test_script_api(void)
 	soie_node_free(doc);
 }
 
+static void test_select(void)
+{
+	static const char html[] = "<style>body{margin:0;font:16px/20px x}"
+		"p{margin:0}</style><p>hello world</p>"
+		"<p>second line<br>third</p><ul><li>item</ul>";
+	soie_node *doc = soie_html_parse(html, sizeof(html) - 1, NULL);
+	soie_style_options so;
+	float r[8];
+	char *t;
+	/* 8 px a character, 20 px a line */
+	const float in[] = { 17, 10, 35, 10 }, word[] = { 50, 10, 50, 10 },
+		para[] = { 5, 30, 5, 30 }, across[] = { 16, 50, 48, 10 },
+		none[] = { 17, 10, 17, 10 }, below[] = { 5, 1000, 5, 1000 };
+
+	memset(&so, 0, sizeof(so));
+	so.width = 400;
+	so.height = 300;
+	CHECK(soie_style_document(doc, &so) == 0);
+	CHECK(soie_layout_document(doc, 400, 300) == 0);
+	CHECK(soie_select(doc, in, SOIE_SELECT_CHAR, r, 2) == 1 &&
+		r[0] == 16 && r[2] == 16);
+	t = soie_select_text(doc, in, SOIE_SELECT_CHAR);
+	CHECK(t && !strcmp(t, "ll"));
+	free(t);
+	t = soie_select_text(doc, word, SOIE_SELECT_WORD);
+	CHECK(t && !strcmp(t, "world"));
+	free(t);
+	t = soie_select_text(doc, para, SOIE_SELECT_BLOCK);
+	CHECK(t && !strcmp(t, "second line\nthird"));
+	free(t);
+	t = soie_select_text(doc, across, SOIE_SELECT_CHAR);
+	CHECK(t && !strcmp(t, "world\nsecond line\nth"));
+	free(t);
+	/* no list marker */
+	t = soie_select_text(doc, none, SOIE_SELECT_ALL);
+	CHECK(t && !strcmp(t, "hello world\nsecond line\nthird\nitem"));
+	free(t);
+	CHECK(soie_select(doc, none, SOIE_SELECT_CHAR, r, 2) == 0);
+	CHECK(soie_select_text(doc, none, SOIE_SELECT_CHAR) == NULL);
+	t = soie_select_text(doc, below, SOIE_SELECT_BLOCK);
+	CHECK(t && !strcmp(t, "item"));
+	free(t);
+	soie_node_free(doc);
+}
+
 static void test_deep(void)
 {
 	/* Deep nesting must not exhaust the stack when freeing. */
@@ -495,6 +540,7 @@ int main(void)
 	test_resize_late_vw();
 	test_bad_calc();
 	test_script_api();
+	test_select();
 	test_deep();
 	printf("unit: %s (%d failures)\n", failures ? "FAIL" : "ok", failures);
 	return failures != 0;

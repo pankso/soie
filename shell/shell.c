@@ -122,6 +122,14 @@ struct shell {
 		int cur, n;
 		float x, y, w, h;
 	} found;
+	/* The selection: its page points (where the button went down,
+	 * where it is), its unit, its rects (n -1: to find again) */
+	struct {
+		soie_node *doc;
+		float pt[4];
+		int unit, n, cap;
+		float *r;
+	} sel;
 	char loading_text[64];	/* shell_loading()'s */
 	struct download *page_dl;	/* the page load's, its job's */
 };
@@ -739,6 +747,7 @@ static void layout_done(struct shell *s)
 	clamp_scroll(s);
 	set_title(s);
 	find_again(s);
+	s->sel.n = -1;
 }
 
 static void clamp_scroll(struct shell *s)
@@ -2217,6 +2226,86 @@ int shell_find(struct shell *s, const char *text, int dir, int *cur)
 	return s->found.n;
 }
 
+/* Selection */
+
+/* The rects of the selection, found again after a layout; 0 without
+ * one */
+static int sel_rects(struct shell *s)
+{
+	int n;
+
+	if (!s->sel.doc || s->sel.doc != s->page.doc)
+		return 0;
+	if (s->sel.n >= 0)
+		return s->sel.n;
+	n = soie_select(s->page.doc, s->sel.pt, s->sel.unit, s->sel.r,
+		s->sel.cap);
+	if (n > s->sel.cap) {
+		s->sel.cap = n;
+		s->sel.r = realloc(s->sel.r, (size_t)n * 4 * sizeof(float));
+		if (!s->sel.r) {
+			s->sel.cap = 0;
+			return 0;
+		}
+		n = soie_select(s->page.doc, s->sel.pt, s->sel.unit, s->sel.r,
+			s->sel.cap);
+	}
+	return s->sel.n = n;
+}
+
+int shell_select_start(struct shell *s, int x, int y, int unit)
+{
+	char link[16];
+	int had = sel_rects(s) > 0;
+
+	s->sel.doc = NULL;
+	/* a press on a link or a field is theirs */
+	if (!s->page.doc || shell_hover(s, x, y, link, sizeof(link)) !=
+	    SHELL_ARROW)
+		return had;
+	s->sel.doc = s->page.doc;
+	s->sel.pt[0] = s->sel.pt[2] = (float)x;
+	s->sel.pt[1] = s->sel.pt[3] = (float)(y + s->page.scroll);
+	s->sel.unit = unit;
+	s->sel.n = -1;
+	return had || sel_rects(s) > 0;
+}
+
+int shell_select_to(struct shell *s, int x, int y)
+{
+	if (!s->sel.doc || s->sel.doc != s->page.doc)
+		return 0;
+	if (s->sel.pt[2] == (float)x && s->sel.pt[3] == (float)(y +
+	    s->page.scroll))
+		return 0;
+	s->sel.pt[2] = (float)x;
+	s->sel.pt[3] = (float)(y + s->page.scroll);
+	s->sel.n = -1;
+	return 1;
+}
+
+void shell_select_all(struct shell *s)
+{
+	s->sel.doc = s->page.doc;
+	s->sel.unit = SOIE_SELECT_ALL;
+	s->sel.n = -1;
+}
+
+int shell_select_clear(struct shell *s)
+{
+	int had = sel_rects(s) > 0;
+
+	s->sel.doc = NULL;
+	return had;
+}
+
+char *shell_selection(struct shell *s)
+{
+	if (!sel_rects(s))
+		return NULL;
+	return soie_select_text(s->page.doc, s->sel.pt, s->sel.unit);
+}
+
 /* The loop */
 
 int shell_tick(struct shell *s, int *repaint)
@@ -2342,6 +2431,38 @@ static void highlight(struct shell *s, unsigned char *rgba, int stride, int x,
 		}
 }
 
+/* The selection, in blue, in the view's rect x, y, w, h */
+static void sel_paint(struct shell *s, unsigned char *rgba, int stride, int x,
+	int y, int w, int h)
+{
+	int n = sel_rects(s), k, i, j;
+	int r = s->bgra ? 2 : 0;
+
+	for (k = 0; k < n; k++) {
+		const float *f = s->sel.r + k * 4;
+		/* rounded alike: rects side by side do not overlap */
+		int x0 = (int)floorf(f[0] + 0.5f);
+		int y0 = (int)floorf(f[1] + 0.5f) - s->page.scroll;
+		int x1 = (int)floorf(f[0] + f[2] + 0.5f);
+		int y1 = (int)floorf(f[1] + f[3] + 0.5f) - s->page.scroll;
+
+		x0 = x0 < x ? x : x0;
+		y0 = y0 < y ? y : y0;
+		x1 = x1 > x + w ? x + w : x1;
+		y1 = y1 > y + h ? y + h : y1;
+		for (j = y0; j < y1; j++)
+			for (i = x0; i < x1; i++) {
+				unsigned char *p = rgba + (size_t)j *
+					(size_t)stride + (size_t)i * 4;
+
+				p[r] = (unsigned char)((p[r] + 0x3d) / 2);
+				p[1] = (unsigned char)((p[1] + 0x8e) / 2);
+				p[2 - r] = (unsigned char)((p[2 - r] + 0xe6) /
+					2);
+			}
+	}
+}
+
 /*
  * Paint the view's rect x, y, w, h (rgba is the view's top left
  * corner): the page, or until the new one is laid out the old one, or
@@ -2355,6 +2476,7 @@ static soie_node *paint_view(struct shell *s, unsigned char *rgba,
 
 	if (s->page.doc && !paint_doc(s, s->page.doc, p, w, h, stride, x,
 	    s->page.scroll + y)) {
+		sel_paint(s, rgba, stride, x, y, w, h);
 		highlight(s, rgba, stride, x, y, w, h);
 		return s->page.doc;
 	}
@@ -2736,6 +2858,7 @@ void shell_free(struct shell *s)
 	free(s->pending_open);
 	free(s->refresh_url);
 	free(s->found.text);
+	free(s->sel.r);
 	free(s);
 }
 

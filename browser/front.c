@@ -71,6 +71,7 @@ static int url_caret, url_fresh;	/* fresh: typing replaces it all */
 static int find_on, find_caret, find_n, find_cur;
 static char status[4096];
 static int drag = -1;		/* scroll bar thumb grabbed, at that offset */
+static int selecting;		/* button 1 down on the page */
 
 /*
  * What to paint again: the toolbar, the whole page view, the find
@@ -868,9 +869,25 @@ void front_key(const char *k, const char *text, int mods)
 		const char *v = field == F_URL ? soie_element_get_attr(
 			find_id(chrome, "url"), "value") : field == F_FIND ?
 			NULL : shell_field(sh);
+		char *t;
 
-		if (v && *v)
+		if (v && *v) {
 			tk_copy(1, v);
+		} else if (field == F_NONE && !v && (t = shell_selection(sh))) {
+			tk_copy(1, t);
+			free(t);
+		}
+		return;
+	}
+	if (ctrl && is(k, 'a') && field == F_NONE && !shell_field(sh)) {
+		char *t;
+
+		shell_select_all(sh);
+		if ((t = shell_selection(sh))) {
+			tk_copy(0, t);
+			free(t);
+		}
+		dirty |= D_PAGE;
 		return;
 	}
 	if (field != F_NONE && modifier(k, txt))
@@ -898,6 +915,14 @@ void front_motion(int x, int y)
 	int c = SHELL_ARROW, ty, th;
 	char link[4096];
 
+	if (selecting) {
+		/* past the top or the bottom, the page comes */
+		if (y < BAR || y >= win_h)
+			shell_scroll(sh, y < BAR ? y - BAR : y - win_h);
+		if (shell_select_to(sh, x, y - BAR))
+			dirty |= D_PAGE;
+		return;
+	}
 	if (drag >= 0) {
 		int scroll, height, view;
 
@@ -952,6 +977,33 @@ void front_wheel(int dy)
 	shell_scroll(sh, dy);
 }
 
+/* Button 1 on the page: a click, then a selection from there; again
+ * at once at the same place, a word, a third time its block. Shift
+ * goes on with the selection. */
+static void press_select(int x, int y, int mods)
+{
+	static double last;
+	static int lx, ly, clicks;
+	struct timespec ts;
+	double t;
+
+	clock_gettime(CLOCK_MONOTONIC, &ts);
+	t = (double)ts.tv_sec + (double)ts.tv_nsec / 1e9;
+	clicks = t - last < 0.4 && abs(x - lx) < 5 && abs(y - ly) < 5 ?
+		clicks % 3 + 1 : 1;
+	last = t;
+	lx = x;
+	ly = y;
+	selecting = 1;
+	if (clicks == 1 && (mods & SOIE_MOD_SHIFT) &&
+	    shell_select_to(sh, x, y - BAR))
+		return;
+	if (clicks == 1)
+		shell_click(sh, x, y - BAR, mods);
+	shell_select_start(sh, x, y - BAR, clicks == 3 ? SOIE_SELECT_BLOCK :
+		clicks == 2 ? SOIE_SELECT_WORD : SOIE_SELECT_CHAR);
+}
+
 void front_button(int button, int x, int y, int mods)
 {
 	char link[4096];
@@ -999,12 +1051,19 @@ void front_button(int button, int x, int y, int mods)
 			tk_paste(0, F_NONE);
 		return;
 	}
-	shell_click(sh, x, y - BAR, mods);
+	press_select(x, y, mods);
 }
 
 void front_release(void)
 {
+	char *t;
+
 	drag = -1;
+	if (selecting && (t = shell_selection(sh))) {
+		tk_copy(0, t);	/* the PRIMARY selection */
+		free(t);
+	}
+	selecting = 0;
 }
 
 /* Window */

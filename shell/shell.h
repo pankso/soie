@@ -169,6 +169,17 @@ const char *shell_field(shell *s);
  * (from 1); it shows highlighted, scrolled to. NULL or "" ends it. */
 int shell_find(shell *s, const char *text, int dir, int *cur);
 
+/* Select text: from view x,y (unit SOIE_SELECT_CHAR, _WORD, _BLOCK for
+ * a single, double, triple click; none starts on a link or a field,
+ * theirs), then to x,y as the pointer moves. A click clears it. They
+ * return 1 when the view must be painted again (shell_paint()). */
+int shell_select_start(shell *s, int x, int y, int unit);
+int shell_select_to(shell *s, int x, int y);
+void shell_select_all(shell *s);
+int shell_select_clear(shell *s);
+/* Its text, malloc()ed; NULL without one. */
+char *shell_selection(shell *s);
+
 /* Offscreen: load url, wait for it and its scripts, render to a PNG. */
 int shell_render_png(shell *s, const char *url, const char *path);
 

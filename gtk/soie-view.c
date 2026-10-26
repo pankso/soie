@@ -46,6 +46,7 @@ struct _SoieView {
 	char *open;		/* a new window asked for, the same */
 	gboolean started;	/* a load started or a page came */
 	int cursor;
+	gboolean selecting;	/* button 1 down, selecting text */
 	gboolean loading;
 	/* what changed during the shell's calls, notified after them */
 	gboolean title_changed, uri_changed;
@@ -725,6 +726,19 @@ static gboolean key_press(GtkWidget *w, GdkEventKey *e)
 			GDK_SELECTION_CLIPBOARD), pasted, g_object_ref(v));
 		return TRUE;
 	}
+	/* Ctrl+C, Ctrl+A on the page's text */
+	if (!shell_field(v->sh) && (mods & SOIE_MOD_CTRL) &&
+	    (e->keyval == GDK_KEY_c || e->keyval == GDK_KEY_C)) {
+		if (!soie_view_has_selection(v))
+			return FALSE;
+		soie_view_copy_clipboard(v);
+		return TRUE;
+	}
+	if (!shell_field(v->sh) && (mods & SOIE_MOD_CTRL) &&
+	    (e->keyval == GDK_KEY_a || e->keyval == GDK_KEY_A)) {
+		soie_view_select_all(v);
+		return TRUE;
+	}
 	if (!(k = key_name(e->keyval, buf, sizeof(buf))))
 		return FALSE;
 	/* shortcuts type nothing; what the page does not take goes on
@@ -782,6 +796,17 @@ static gboolean motion(GtkWidget *w, GdkEventMotion *e)
 	SoieView *v = SOIE_VIEW(w);
 	char link[4096];
 
+	if (v->selecting && (e->state & GDK_BUTTON1_MASK)) {
+		/* past the top or the bottom, the page comes */
+		if (e->y < 0 || e->y >= v->h)
+			shell_scroll(v->sh, (int)(e->y < 0 ? e->y :
+				e->y - v->h) * v->scale);
+		if (shell_select_to(v->sh, DEV(v, e->x), DEV(v, e->y))) {
+			v->full = TRUE;
+			redraw(v);
+		}
+		return TRUE;
+	}
 	set_cursor(v, shell_hover(v->sh, DEV(v, e->x), DEV(v, e->y), link,
 		sizeof(link)));
 	hovered(v, link);
@@ -869,7 +894,7 @@ static void menu_hidden(GtkWidget *menu, gpointer data)
 static void context_menu(SoieView *v, GdkEventButton *e)
 {
 	GtkWidget *menu = gtk_menu_new();
-	char link[4096], image[4096];
+	char link[4096], image[4096], *text;
 	gboolean field, stop = FALSE;
 
 	g_object_ref_sink(menu);
@@ -880,9 +905,13 @@ static void context_menu(SoieView *v, GdkEventButton *e)
 	menu_item(menu, "_Forward", G_CALLBACK(menu_forward), v,
 		soie_view_can_go_forward(v));
 	menu_item(menu, "_Reload", G_CALLBACK(menu_reload), v, TRUE);
-	if (*link || *image || field)
+	text = shell_selection(v->sh);
+	if (*link || *image || field || text)
 		gtk_menu_shell_append(GTK_MENU_SHELL(menu),
 			gtk_separator_menu_item_new());
+	if (text)
+		copy_item(menu, "_Copy", text);
+	free(text);
 	if (*link)
 		copy_item(menu, "Copy _Link Address", link);
 	if (*image)
@@ -906,8 +935,19 @@ static gboolean button_press(GtkWidget *w, GdkEventButton *e)
 	SoieView *v = SOIE_VIEW(w);
 	char link[4096];
 
+	/* a double click selects a word, a triple one its block; the
+	 * first click did the rest */
+	if (e->button == 1 && (e->type == GDK_2BUTTON_PRESS ||
+	    e->type == GDK_3BUTTON_PRESS)) {
+		v->selecting = shell_select_start(v->sh, DEV(v, e->x),
+			DEV(v, e->y), e->type == GDK_2BUTTON_PRESS ?
+			SOIE_SELECT_WORD : SOIE_SELECT_BLOCK);
+		v->full = TRUE;
+		redraw(v);
+		return TRUE;
+	}
 	if (e->type != GDK_BUTTON_PRESS)
-		return FALSE;	/* double clicks: the first did it */
+		return FALSE;
 	gtk_widget_grab_focus(w);
 	switch (e->button) {
 	case 1:
@@ -918,7 +958,20 @@ static gboolean button_press(GtkWidget *w, GdkEventButton *e)
 			open_new(v, link);
 			return TRUE;
 		}
+		/* Shift+click: the selection goes on to there */
+		if ((e->state & GDK_SHIFT_MASK) && shell_select_to(v->sh,
+		    DEV(v, e->x), DEV(v, e->y))) {
+			v->selecting = TRUE;
+			v->full = TRUE;
+			break;
+		}
 		shell_click(v->sh, DEV(v, e->x), DEV(v, e->y), mods_of(e->state));
+		/* a press clears the selection, starts one off links and
+		 * fields */
+		shell_select_start(v->sh, DEV(v, e->x), DEV(v, e->y),
+			SOIE_SELECT_CHAR);
+		v->selecting = TRUE;
+		v->full = TRUE;
 		break;
 	case 2:
 		/* a link in a new window */
@@ -948,6 +1001,23 @@ static gboolean button_press(GtkWidget *w, GdkEventButton *e)
 	}
 	redraw(v);
 	tick_soon(v);
+	return TRUE;
+}
+
+/* The selection made becomes the PRIMARY one, for a middle click */
+static gboolean button_release(GtkWidget *w, GdkEventButton *e)
+{
+	SoieView *v = SOIE_VIEW(w);
+	char *text;
+
+	if (e->button != 1 || !v->selecting)
+		return FALSE;
+	v->selecting = FALSE;
+	if ((text = shell_selection(v->sh))) {
+		gtk_clipboard_set_text(gtk_widget_get_clipboard(w,
+			GDK_SELECTION_PRIMARY), text, -1);
+		free(text);
+	}
 	return TRUE;
 }
 
@@ -1178,6 +1248,7 @@ static void soie_view_class_init(SoieViewClass *c)
 	wc->motion_notify_event = motion;
 	wc->leave_notify_event = leave;
 	wc->button_press_event = button_press;
+	wc->button_release_event = button_release;
 	wc->scroll_event = scroll;
 	props[PROP_URI] = g_param_spec_string("uri", "URI",
 		"The page's address", NULL, G_PARAM_READABLE |
@@ -1396,6 +1467,56 @@ double soie_view_get_zoom_level(SoieView *v)
 {
 	g_return_val_if_fail(SOIE_IS_VIEW(v), 1);
 	return v->zoom;
+}
+
+gboolean soie_view_has_selection(SoieView *v)
+{
+	char *t;
+
+	g_return_val_if_fail(SOIE_IS_VIEW(v), FALSE);
+	if (!(t = shell_selection(v->sh)))
+		return FALSE;
+	free(t);
+	return TRUE;
+}
+
+char *soie_view_get_selected_text(SoieView *v)
+{
+	char *t, *r;
+
+	g_return_val_if_fail(SOIE_IS_VIEW(v), NULL);
+	if (!(t = shell_selection(v->sh)))
+		return NULL;
+	r = g_strdup(t);
+	free(t);
+	return r;
+}
+
+void soie_view_copy_clipboard(SoieView *v)
+{
+	char *t;
+
+	g_return_if_fail(SOIE_IS_VIEW(v));
+	if (!(t = shell_selection(v->sh)))
+		return;
+	gtk_clipboard_set_text(gtk_widget_get_clipboard(GTK_WIDGET(v),
+		GDK_SELECTION_CLIPBOARD), t, -1);
+	free(t);
+}
+
+void soie_view_select_all(SoieView *v)
+{
+	char *t;
+
+	g_return_if_fail(SOIE_IS_VIEW(v));
+	shell_select_all(v->sh);
+	if ((t = shell_selection(v->sh))) {
+		gtk_clipboard_set_text(gtk_widget_get_clipboard(GTK_WIDGET(v),
+			GDK_SELECTION_PRIMARY), t, -1);
+		free(t);
+	}
+	v->full = TRUE;
+	redraw(v);
 }
 
 void soie_view_set_cookie_policy(SoieCookiePolicy policy)

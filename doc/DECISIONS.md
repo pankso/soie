@@ -553,8 +553,8 @@ reversed, edit the entry and say why; do not leave stale rules here.
   Xutf8LookupString): dead keys, compose and every character, not
   just Latin-1 (`€`, `œ` could not be typed before). No input method:
   XLookupString as before.
-- Clipboard: Ctrl+C copies the address or the focused field's value
-  (there is no text selection in the page yet), Ctrl+V pastes the
+- Clipboard: Ctrl+C copies the address, the focused field's value or
+  the text selected in the page, Ctrl+V pastes the
   CLIPBOARD, Shift+Insert and the middle button the PRIMARY selection.
   A focused address is PRIMARY, as a selected one would be. UTF-8 and
   Latin-1 targets, no INCR (pastes up to 256 KB).
@@ -671,8 +671,7 @@ reversed, edit the entry and say why; do not leave stale rules here.
   it, mapped on the WebKit call it replaces, and tested in Toile too.
 - Adblock: no hook in the widget; Soie's block.so
   (~/.config/soie/block.txt) blocks for every view. Still missing:
-  text selection in the page (engine work), Web Workers
-  (hg.slitaz.org's Anubis page waits for them).
+  Web Workers (hg.slitaz.org's Anubis page waits for them).
 
 ## SoieView for Toile: what a browser needs
 
@@ -761,6 +760,25 @@ reversed, edit the entry and say why; do not leave stale rules here.
   fonts, scripts' requests); the offscreen render paints again once
   late background images came. make asan-sites keeps cookies in
   memory (the sites wrote into the user's jar).
+- Text selection in the page, asked by pankso after the night: no DOM
+  ranges, two page points (where the button went down, where it is)
+  and a unit (characters, words, blocks, all). The engine walks the
+  text fragments in layout order, as find does; a point stands for the
+  nearest character of the nearest fragment (nearest line first, then
+  along it; justified spaces counted). soie_select() gives the rects,
+  soie_select_text() the text: a wrapped line joins with a space, a
+  forced break (newline, <br>: line boxes now remember it) and a new
+  block with a newline, blocks side by side (table cells) with a
+  space; list markers and generated content are left out. The points
+  stay in page coordinates: after a relayout the shell finds the rects
+  again, the same place of the page selected. Fronts: a drag, a double
+  click for a word, a triple one for the block, Shift+click to go on,
+  Ctrl+A, Ctrl+C; a selection made is the PRIMARY one; SoieView adds
+  Copy to its context menu and soie_view_has_selection(),
+  get_selected_text(), copy_clipboard(), select_all() (WebKit's
+  editing commands). A press on a link or a field is theirs: no
+  selection starts there. Not done: user-select, text in form
+  controls, selecting by keyboard, dragging the selection.
 
 ## YouTube, the first round
 
