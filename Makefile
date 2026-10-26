@@ -140,12 +140,14 @@ ext/script/script.o: CPPFLAGS += -isystem $(QJS_INC)
 ext/script/script.o: $(wildcard $(QJS_INC)/quickjs.h)
 ext/script/dom-js.o: CFLAGS += -Wno-overlength-strings
 ext/script/script.o ext/script/dom-js.o: $(HEADERS)
+ext/script/script.o ext/script/digest.o: ext/script/digest.h
 # Without QuickJS it would link with the engine missing: refused
 ifneq ($(QJS_OBJS),)
-ext/script.so: ext/script/script.o ext/script/dom-js.o $(QJS_OBJS) \
-	lib/libsoie.so.$(SOVERSION)
+ext/script.so: ext/script/script.o ext/script/digest.o ext/script/dom-js.o \
+	$(QJS_OBJS) lib/libsoie.so.$(SOVERSION)
 	$(CC) -shared $(LDFLAGS) -o $@ ext/script/script.o \
-		ext/script/dom-js.o $(QJS_OBJS) lib/libsoie.so.$(SOVERSION) \
+		ext/script/digest.o ext/script/dom-js.o $(QJS_OBJS) \
+		lib/libsoie.so.$(SOVERSION) \
 		-lm -lpthread $(QJS_ATOMIC)
 else
 ext/script.so:

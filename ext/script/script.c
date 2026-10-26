@@ -26,11 +26,14 @@
 
 #include <soie/soie.h>
 #include <soie/ext.h>
+#include "digest.h"
 
 #define RUN_MS 5000		/* longest a script may run at once */
 /* JavaScript heap per page: a quarter of the RAM, 256 MB to 1 GB */
 #define MEMORY_MIN (256UL << 20)
 #define MEMORY_MAX (1024UL << 20)
+/* a worker's: a quarter of its page's, at least 64 MB */
+#define WORKER_MEMORY_MIN (64UL << 20)
 /* C stack for scripts: a JS call takes 800 bytes of it, a few KB for
  * big compiled functions. QuickJS's 1 MB is 1300 calls deep, 4 MB
  * 5200 (browsers allow 10000 or more). At most half the thread's
@@ -83,7 +86,47 @@ struct sctx {
 	/* the heap measured last (every 10 s), in 32 MB steps logged */
 	double heap_at;
 	int heap_step;
+	/* Web Workers: a page's, and a worker's own (self) */
+	struct wk *workers, *self;
+	int next_worker;
+	int closing;		/* the worker called close() */
+	JSValue wevent;		/* api.workerEvent(id, type, data) */
 };
+
+/* Web Workers (see below): their messages, and a worker */
+enum { W_MESSAGE, W_ERROR, W_LOG };
+
+struct wmsg {
+	struct wmsg *next;
+	int kind, level;	/* W_*; a log's SOIE_MSG_* */
+	size_t len;
+	char data[];		/* serialized value, or text */
+};
+
+struct wk {
+	int id;
+	struct sctx *page;	/* its page's context */
+	soie_script_host host;	/* the page's request and data, no more */
+	char *url, *src;	/* src: NULL until the page fetched it */
+	size_t srclen;
+	int module;
+	struct wmsg *in, *out;	/* to the worker, to the page */
+	int started;		/* the thread runs */
+	int stop;		/* terminate() or the page gone: atomic */
+	int dropped;		/* terminate(): its messages are not told */
+	int done;		/* the thread ended */
+	pthread_t thread;
+	pthread_cond_t wake;
+	struct wk *next;	/* the page's workers */
+};
+
+#define WORKER_WAIT 10		/* ms a page looks for its workers' messages */
+
+/* stop is read while the worker runs (interrupt()), unlocked */
+static int stopped(struct wk *w)
+{
+	return __atomic_load_n(&w->stop, __ATOMIC_RELAXED);
+}
 
 static JSClassID node_class;
 
@@ -100,9 +143,14 @@ static struct sctx *ctx_of(JSContext *js)
 	return JS_GetContextOpaque(js);
 }
 
+static void wk_log(struct wk *w, int kind, const char *text, int error);
+
 static void message(struct sctx *c, int kind, const char *text)
 {
-	if (c->host->message)
+	/* a worker's go to its page, the host is the main thread's */
+	if (c->self)
+		wk_log(c->self, kind, text, 0);
+	else if (c->host->message)
 		c->host->message(c->host->data, kind, text);
 }
 
@@ -124,6 +172,9 @@ static void report(struct sctx *c)
 		message(c, SOIE_MSG_ERROR, line);
 		free(line);
 	}
+	/* a worker's uncaught error: an error event on its Worker */
+	if (c->self)
+		wk_log(c->self, 0, msg ? msg : "error", 1);
 	JS_FreeCString(c->js, msg);
 	if (st)
 		JS_FreeCString(c->js, st);
@@ -149,6 +200,9 @@ static int interrupt(JSRuntime *rt, void *opaque)
 	struct sctx *c = opaque;
 
 	(void)rt;
+	/* a worker may compute as long as it likes, until terminated */
+	if (c->self)
+		return stopped(c->self);
 	return c->deadline && now_ms() > c->deadline;
 }
 
@@ -1354,8 +1408,37 @@ static void *worker(void *arg)
 		for (p = &j->c->done; *p; p = &(*p)->next)
 			;
 		*p = j;
+		/* a worker waits for its answers */
+		if (j->c->self)
+			pthread_cond_signal(&j->c->self->wake);
 	}
 	return NULL;
+}
+
+/* j in every job and in the queue, a thread to run it; jobs_lock
+ * held */
+static void job_queue(struct job *j)
+{
+	pthread_t t;
+	pthread_attr_t a;
+
+	j->anext = all_jobs;
+	if (all_jobs)
+		all_jobs->aprev = j;
+	all_jobs = j;
+	if (queue_last)
+		queue_last->next = j;
+	else
+		queue = j;
+	queue_last = j;
+	if (!idle && workers < WORKERS) {
+		pthread_attr_init(&a);
+		pthread_attr_setdetachstate(&a, PTHREAD_CREATE_DETACHED);
+		if (!pthread_create(&t, &a, worker, NULL))
+			workers++;
+		pthread_attr_destroy(&a);
+	}
+	pthread_cond_signal(&jobs_wake);
 }
 
 /* requestAsync(method, url, headers, body, flags): an id, answered by
@@ -1368,8 +1451,6 @@ static JSValue n_request_async(JSContext *js, JSValueConst this, int argc,
 	const char *s;
 	size_t n;
 	int32_t flags = 0;
-	pthread_t t;
-	pthread_attr_t a;
 
 	(void)this;
 	if (!j)
@@ -1399,24 +1480,8 @@ static JSValue n_request_async(JSContext *js, JSValueConst this, int argc,
 		JS_ToInt32(js, &flags, argv[4]);
 	j->flags = flags | (c->host->flags & SOIE_REQ_PRIVATE);
 	pthread_mutex_lock(&jobs_lock);
-	j->anext = all_jobs;
-	if (all_jobs)
-		all_jobs->aprev = j;
-	all_jobs = j;
-	if (queue_last)
-		queue_last->next = j;
-	else
-		queue = j;
-	queue_last = j;
+	job_queue(j);
 	c->inflight++;
-	if (!idle && workers < WORKERS) {
-		pthread_attr_init(&a);
-		pthread_attr_setdetachstate(&a, PTHREAD_CREATE_DETACHED);
-		if (!pthread_create(&t, &a, worker, NULL))
-			workers++;
-		pthread_attr_destroy(&a);
-	}
-	pthread_cond_signal(&jobs_wake);
 	pthread_mutex_unlock(&jobs_lock);
 	return JS_NewInt32(js, j->id);
 fail:
@@ -1455,6 +1520,65 @@ static void deliver(struct sctx *c)
 	}
 }
 
+static void wk_wait(struct wk *w, int ms);
+
+/*
+ * A request waited for: the host's, called here; a worker's through
+ * the job threads, so that it stops at once when its page goes.
+ */
+static int request_blocking(struct sctx *c, const soie_request *rq,
+	soie_response *res)
+{
+	struct job *j, **p;
+	int r;
+
+	if (!c->self)
+		return c->host->request ? c->host->request(c->host->data, rq,
+			res) : -1;
+	if (!c->host->request || !(j = calloc(1, sizeof(*j))))
+		return -1;
+	j->c = c;
+	j->fn = c->host->request;
+	j->data = c->host->data;
+	j->r = -1;
+	j->method = dup_or_null(rq->method, rq->method ?
+		strlen(rq->method) : 0);
+	j->url = dup_or_null(rq->url, strlen(rq->url));
+	j->headers = dup_or_null(rq->headers, rq->headers ?
+		strlen(rq->headers) : 0);
+	j->first_party = dup_or_null(rq->first_party, rq->first_party ?
+		strlen(rq->first_party) : 0);
+	if (rq->body && (j->body = malloc(rq->body_len + 1))) {
+		memcpy(j->body, rq->body, rq->body_len);
+		j->blen = rq->body_len;
+	}
+	j->flags = rq->flags;
+	pthread_mutex_lock(&jobs_lock);
+	job_queue(j);
+	for (;;) {
+		for (p = &c->done; *p && *p != j; p = &(*p)->next)
+			;
+		if (*p) {
+			*p = j->next;
+			break;
+		}
+		/* terminated: the job is the context's, stop() frees it */
+		if (stopped(c->self)) {
+			pthread_mutex_unlock(&jobs_lock);
+			return -1;
+		}
+		wk_wait(c->self, -1);
+	}
+	r = j->r;
+	if (!r) {
+		*res = j->res;
+		j->r = -1;	/* the response is the caller's now */
+	}
+	job_free(j);
+	pthread_mutex_unlock(&jobs_lock);
+	return r;
+}
+
 static JSValue n_request(JSContext *js, JSValueConst this, int argc,
 	JSValueConst *argv)
 {
@@ -1490,8 +1614,7 @@ static JSValue n_request(JSContext *js, JSValueConst this, int argc,
 		double saved = c->deadline, left = saved - now_ms();
 
 		c->deadline = 0;
-		r = c->host->request ? c->host->request(c->host->data, &rq,
-			&res) : -1;
+		r = request_blocking(c, &rq, &res);
 		if (saved)
 			c->deadline = now_ms() + left;
 	}
@@ -1841,6 +1964,433 @@ static JSValue n_map_module(JSContext *js, JSValueConst this, int argc,
 	return JS_UNDEFINED;
 }
 
+/*
+ * Web Workers: each a thread with a runtime and a context of its own,
+ * dom.js run in it without a document (api.worker). Messages go as
+ * QuickJS's serialization (JS_WriteObject: objects, arrays, typed
+ * arrays and their buffers, dates, cycles), copied, not transferred.
+ * One lock for all, jobs_lock: a worker waits on its condition for a
+ * message, an answer to its requests (the job threads signal it), its
+ * next timer or its end. Its requests go through the job threads,
+ * never the worker's own: a worker stops at once when its page does,
+ * which waits for it (the host's data must outlive it).
+ */
+
+static struct sctx *ctx_new(soie_node *doc, const char *url,
+	const soie_script_host *host, struct wk *self);
+static void stop(void *ctx);
+static int tick(void *ctx);
+
+/* Append m to *list; jobs_lock held */
+static void wmsg_add(struct wmsg **list, struct wmsg *m)
+{
+	while (*list)
+		list = &(*list)->next;
+	m->next = NULL;
+	*list = m;
+}
+
+static struct wmsg *wmsg_text(int kind, int level, const char *text)
+{
+	size_t n = strlen(text);
+	struct wmsg *m = malloc(sizeof(*m) + n + 1);
+
+	if (!m)
+		abort();
+	m->kind = kind;
+	m->level = level;
+	m->len = n;
+	memcpy(m->data, text, n + 1);
+	return m;
+}
+
+/* A worker's message, log or error, for its page */
+static void to_page(struct wk *w, struct wmsg *m)
+{
+	pthread_mutex_lock(&jobs_lock);
+	wmsg_add(&w->out, m);
+	pthread_mutex_unlock(&jobs_lock);
+}
+
+static void wmsg_free_all(struct wmsg *m)
+{
+	struct wmsg *next;
+
+	for (; m; m = next) {
+		next = m->next;
+		free(m);
+	}
+}
+
+/* v serialized; NULL with an exception (a function, a symbol...) */
+static struct wmsg *wmsg_value(JSContext *js, JSValueConst v)
+{
+	size_t len;
+	uint8_t *b = JS_WriteObject(js, &len, v, JS_WRITE_OBJ_REFERENCE);
+	struct wmsg *m;
+
+	if (!b)
+		return NULL;
+	m = malloc(sizeof(*m) + len);
+	if (!m)
+		abort();
+	m->kind = W_MESSAGE;
+	m->len = len;
+	memcpy(m->data, b, len);
+	js_free(js, b);
+	return m;
+}
+
+static JSValue wmsg_read(JSContext *js, const struct wmsg *m)
+{
+	return JS_ReadObject(js, (const uint8_t *)m->data, m->len,
+		JS_READ_OBJ_REFERENCE);
+}
+
+static struct wk *worker_of(struct sctx *c, int id)
+{
+	struct wk *w;
+
+	for (w = c->workers; w; w = w->next)
+		if (w->id == id)
+			return w;
+	return NULL;
+}
+
+/* Wait on w's condition, at most ms (-1: until signalled); jobs_lock
+ * held */
+static void wk_wait(struct wk *w, int ms)
+{
+	struct timespec t;
+
+	if (ms < 0) {
+		pthread_cond_wait(&w->wake, &jobs_lock);
+		return;
+	}
+	clock_gettime(CLOCK_REALTIME, &t);
+	t.tv_sec += ms / 1000;
+	t.tv_nsec += (long)(ms % 1000) * 1000000L;
+	if (t.tv_nsec >= 1000000000L) {
+		t.tv_sec++;
+		t.tv_nsec -= 1000000000L;
+	}
+	pthread_cond_timedwait(&w->wake, &jobs_lock, &t);
+}
+
+static void *wk_main(void *arg)
+{
+	struct wk *w = arg;
+	struct sctx *c = ctx_new(NULL, w->url, &w->host, w);
+	struct wmsg *in, *m;
+	JSValue v, args[3];
+	int d;
+
+	if (!c) {
+		to_page(w, wmsg_text(W_ERROR, 0, "the worker could not start"));
+		goto out;
+	}
+	v = JS_Eval(c->js, w->src, w->srclen, w->url, w->module ?
+		JS_EVAL_TYPE_MODULE : JS_EVAL_TYPE_GLOBAL);
+	settle(c, v);
+	free(w->src);
+	w->src = NULL;
+	for (;;) {
+		pthread_mutex_lock(&jobs_lock);
+		in = w->in;
+		w->in = NULL;
+		pthread_mutex_unlock(&jobs_lock);
+		for (m = in; m && !stopped(w) && !c->closing; m = m->next) {
+			v = wmsg_read(c->js, m);
+			if (JS_IsException(v)) {
+				settle(c, v);
+				continue;
+			}
+			args[0] = JS_NewInt32(c->js, 0);
+			args[1] = JS_NewString(c->js, "message");
+			args[2] = v;
+			v = JS_Call(c->js, c->wevent, JS_UNDEFINED, 3, args);
+			JS_FreeValue(c->js, args[1]);
+			JS_FreeValue(c->js, args[2]);
+			settle(c, v);
+		}
+		wmsg_free_all(in);
+		d = tick(c);
+		pthread_mutex_lock(&jobs_lock);
+		if (stopped(w) || c->closing) {
+			pthread_mutex_unlock(&jobs_lock);
+			break;
+		}
+		if (!w->in && !c->done && d != 0)
+			wk_wait(w, d);
+		pthread_mutex_unlock(&jobs_lock);
+	}
+	stop(c);
+out:
+	pthread_mutex_lock(&jobs_lock);
+	w->done = 1;
+	pthread_mutex_unlock(&jobs_lock);
+	return NULL;
+}
+
+/* The worker's thread, once it has its source */
+static void wk_start(struct wk *w)
+{
+	pthread_attr_t a;
+
+	pthread_attr_init(&a);
+	/* QuickJS takes the stack it is given (STACK_SIZE): room for it */
+	pthread_attr_setstacksize(&a, 2 * STACK_SIZE);
+	if (!pthread_create(&w->thread, &a, wk_main, w))
+		w->started = 1;
+	else
+		w->done = 1;
+	pthread_attr_destroy(&a);
+}
+
+static void wk_free(struct wk *w)
+{
+	wmsg_free_all(w->in);
+	wmsg_free_all(w->out);
+	pthread_cond_destroy(&w->wake);
+	free(w->url);
+	free(w->src);
+	free(w);
+}
+
+/* workerNew(url, module): the page's new worker, its id; its source
+ * comes with workerRun() */
+static JSValue n_worker_new(JSContext *js, JSValueConst this, int argc,
+	JSValueConst *argv)
+{
+	struct sctx *c = ctx_of(js);
+	struct wk *w;
+	STR(0, url);
+
+	(void)this;
+	if (!(w = calloc(1, sizeof(*w))) || !(w->url = strdup(url)))
+		abort();
+	JS_FreeCString(js, url);
+	w->module = argc > 1 && JS_ToBool(js, argv[1]);
+	w->id = ++c->next_worker;
+	w->page = c;
+	w->host.data = c->host->data;
+	w->host.request = c->host->request;
+	w->host.flags = c->host->flags;
+	pthread_cond_init(&w->wake, NULL);
+	pthread_mutex_lock(&jobs_lock);
+	w->next = c->workers;
+	c->workers = w;
+	pthread_mutex_unlock(&jobs_lock);
+	return JS_NewInt32(js, w->id);
+}
+
+/* workerRun(id, source) */
+static JSValue n_worker_run(JSContext *js, JSValueConst this, int argc,
+	JSValueConst *argv)
+{
+	struct sctx *c = ctx_of(js);
+	struct wk *w;
+	const char *s;
+	size_t n;
+	int32_t id = 0;
+
+	(void)this;
+	if (argc < 2 || JS_ToInt32(js, &id, argv[0]) ||
+	    !(s = JS_ToCStringLen(js, &n, argv[1])))
+		return JS_EXCEPTION;
+	w = worker_of(c, id);
+	if (w && !w->started && !w->done && !stopped(w)) {
+		if (!(w->src = malloc(n + 1)))
+			abort();
+		memcpy(w->src, s, n + 1);
+		w->srclen = n;
+		wk_start(w);
+	}
+	JS_FreeCString(js, s);
+	return JS_UNDEFINED;
+}
+
+/* workerPost(id, value): to worker id, or from a worker (id 0) to its
+ * page */
+static JSValue n_worker_post(JSContext *js, JSValueConst this, int argc,
+	JSValueConst *argv)
+{
+	struct sctx *c = ctx_of(js);
+	struct wk *w = NULL;
+	struct wmsg *m;
+	int32_t id = 0;
+
+	(void)this;
+	if (argc < 2 || JS_ToInt32(js, &id, argv[0]))
+		return JS_EXCEPTION;
+	if (id ? !(w = worker_of(c, id)) : !c->self)
+		return JS_UNDEFINED;
+	if (!(m = wmsg_value(js, argv[1])))
+		return JS_EXCEPTION;
+	pthread_mutex_lock(&jobs_lock);
+	if (id && (w->done || stopped(w))) {
+		free(m);
+	} else if (id) {
+		wmsg_add(&w->in, m);
+		pthread_cond_signal(&w->wake);
+	} else {
+		wmsg_add(&c->self->out, m);
+	}
+	pthread_mutex_unlock(&jobs_lock);
+	return JS_UNDEFINED;
+}
+
+/* workerStop(id): terminate(); workerStop() in a worker: close() */
+static JSValue n_worker_stop(JSContext *js, JSValueConst this, int argc,
+	JSValueConst *argv)
+{
+	struct sctx *c = ctx_of(js);
+	struct wk *w;
+	int32_t id = 0;
+
+	(void)this;
+	if (argc < 1 || JS_ToInt32(js, &id, argv[0]))
+		return JS_EXCEPTION;
+	if (!id) {
+		c->closing = 1;
+		return JS_UNDEFINED;
+	}
+	if (!(w = worker_of(c, id)))
+		return JS_UNDEFINED;
+	pthread_mutex_lock(&jobs_lock);
+	__atomic_store_n(&w->stop, 1, __ATOMIC_RELAXED);
+	w->dropped = 1;
+	if (!w->started)
+		w->done = 1;
+	pthread_cond_signal(&w->wake);
+	pthread_mutex_unlock(&jobs_lock);
+	return JS_UNDEFINED;
+}
+
+/* The workers' messages, logs and errors, to the page; the ended
+ * ones freed */
+static void deliver_workers(struct sctx *c)
+{
+	struct wk *w, **p;
+	struct wmsg *out, *m;
+	JSValue v, args[3];
+	int id;
+
+	for (p = &c->workers; (w = *p);) {
+		pthread_mutex_lock(&jobs_lock);
+		out = w->out;
+		w->out = NULL;
+		id = w->id;
+		pthread_mutex_unlock(&jobs_lock);
+		for (m = out; m && !w->dropped; m = m->next) {
+			if (m->kind == W_LOG) {
+				message(c, m->level, m->data);
+				continue;
+			}
+			v = m->kind == W_MESSAGE ? wmsg_read(c->js, m) :
+				JS_NewStringLen(c->js, m->data, m->len);
+			if (JS_IsException(v)) {
+				settle(c, v);
+				continue;
+			}
+			args[0] = JS_NewInt32(c->js, id);
+			args[1] = JS_NewString(c->js, m->kind == W_MESSAGE ?
+				"message" : "error");
+			args[2] = v;
+			v = JS_Call(c->js, c->wevent, JS_UNDEFINED, 3, args);
+			JS_FreeValue(c->js, args[1]);
+			JS_FreeValue(c->js, args[2]);
+			settle(c, v);
+		}
+		wmsg_free_all(out);
+		pthread_mutex_lock(&jobs_lock);
+		if (!w->done || w->out) {
+			pthread_mutex_unlock(&jobs_lock);
+			p = &w->next;
+			continue;
+		}
+		*p = w->next;
+		pthread_mutex_unlock(&jobs_lock);
+		if (w->started)
+			pthread_join(w->thread, NULL);
+		wk_free(w);
+	}
+}
+
+/* The page goes: its workers stop, waited for */
+static void stop_workers(struct sctx *c)
+{
+	struct wk *w, *next;
+
+	pthread_mutex_lock(&jobs_lock);
+	for (w = c->workers; w; w = w->next) {
+		__atomic_store_n(&w->stop, 1, __ATOMIC_RELAXED);
+		pthread_cond_signal(&w->wake);
+	}
+	pthread_mutex_unlock(&jobs_lock);
+	for (w = c->workers; w; w = next) {
+		next = w->next;
+		if (w->started)
+			pthread_join(w->thread, NULL);
+		wk_free(w);
+	}
+	c->workers = NULL;
+}
+
+/* workerError(text): an uncaught error in a worker's listener */
+static JSValue n_worker_error(JSContext *js, JSValueConst this, int argc,
+	JSValueConst *argv)
+{
+	struct sctx *c = ctx_of(js);
+	STR(0, text);
+
+	(void)this;
+	if (c->self)
+		wk_log(c->self, 0, text, 1);
+	JS_FreeCString(js, text);
+	return JS_UNDEFINED;
+}
+
+/* clone(value): structuredClone() */
+static JSValue n_clone_value(JSContext *js, JSValueConst this, int argc,
+	JSValueConst *argv)
+{
+	struct wmsg *m;
+	JSValue v;
+
+	(void)this;
+	if (argc < 1 || !(m = wmsg_value(js, argv[0])))
+		return JS_EXCEPTION;
+	v = wmsg_read(js, m);
+	free(m);
+	return v;
+}
+
+/* digest(algorithm, bytes): an ArrayBuffer, null for an algorithm we
+ * do not have */
+static JSValue n_digest(JSContext *js, JSValueConst this, int argc,
+	JSValueConst *argv)
+{
+	uint8_t out[64];
+	const uint8_t *b;
+	size_t n = 0;
+	int k;
+	STR(0, alg);
+
+	(void)this;
+	b = argc > 1 ? bytes_of(js, argv[1], &n) : NULL;
+	k = digest(alg, b ? b : (const uint8_t *)"", n, out);
+	JS_FreeCString(js, alg);
+	return k < 0 ? JS_NULL : JS_NewArrayBufferCopy(js, out, (size_t)k);
+}
+
+/* What a worker tells its page: a log line, or an uncaught error
+ * (error) for its error event */
+static void wk_log(struct wk *w, int kind, const char *text, int error)
+{
+	to_page(w, wmsg_text(error ? W_ERROR : W_LOG, kind, text));
+}
+
 static const JSCFunctionListEntry natives[] = {
 	JS_CFUNC_DEF("type", 1, n_type),
 	JS_CFUNC_DEF("name", 1, n_name),
@@ -1910,6 +2460,13 @@ static const JSCFunctionListEntry natives[] = {
 	JS_CFUNC_DEF("utf8Decode", 1, n_utf8_decode),
 	JS_CFUNC_DEF("utf8Encode", 1, n_utf8_encode),
 	JS_CFUNC_DEF("mapModule", 2, n_map_module),
+	JS_CFUNC_DEF("workerNew", 2, n_worker_new),
+	JS_CFUNC_DEF("workerRun", 2, n_worker_run),
+	JS_CFUNC_DEF("workerPost", 2, n_worker_post),
+	JS_CFUNC_DEF("workerStop", 1, n_worker_stop),
+	JS_CFUNC_DEF("workerError", 1, n_worker_error),
+	JS_CFUNC_DEF("cloneValue", 1, n_clone_value),
+	JS_CFUNC_DEF("digest", 2, n_digest),
 };
 
 /* Modules: specifiers are URLs, fetched through the host. */
@@ -1961,8 +2518,12 @@ static JSModuleDef *mod_load(JSContext *js, const char *name, void *opaque)
 	memset(&rq, 0, sizeof(rq));
 	rq.url = name;
 	rq.first_party = c->url;
-	if (!c->host->request || c->host->request(c->host->data, &rq, &res) ||
-	    res.status >= 400) {
+	if (request_blocking(c, &rq, &res)) {
+		JS_ThrowReferenceError(js, "cannot load module %s", name);
+		return NULL;
+	}
+	if (res.status >= 400) {
+		soie_response_free(&res);
 		JS_ThrowReferenceError(js, "cannot load module %s", name);
 		return NULL;
 	}
@@ -1984,18 +2545,20 @@ static JSModuleDef *mod_load(JSContext *js, const char *name, void *opaque)
 
 /* The hooks */
 
-static void *start(void *data, soie_node *doc, const char *url,
-	const soie_script_host *host)
+/* A page's context, or with self a worker's (no document) */
+static struct sctx *ctx_new(soie_node *doc, const char *url,
+	const soie_script_host *host, struct wk *self)
 {
 	struct sctx *c = calloc(1, sizeof(*c));
 	JSValue global, v;
 
-	(void)data;
 	if (!c)
 		return NULL;
 	c->doc = doc;
 	c->docw = JS_UNDEFINED;
+	c->wevent = JS_UNDEFINED;
 	c->host = host;
+	c->self = self;
 	c->url = strdup(url);
 	c->rt = JS_NewRuntime();
 	if (!c->url || !c->rt) {
@@ -2003,7 +2566,12 @@ static void *start(void *data, soie_node *doc, const char *url,
 		free(c);
 		return NULL;
 	}
-	JS_SetMemoryLimit(c->rt, memory_limit());
+	if (self)
+		JS_SetMemoryLimit(c->rt, memory_limit() / 4 <
+			WORKER_MEMORY_MIN ? WORKER_MEMORY_MIN :
+			memory_limit() / 4);
+	else
+		JS_SetMemoryLimit(c->rt, memory_limit());
 	{
 		struct rlimit rl;
 		size_t st = STACK_SIZE;
@@ -2029,6 +2597,7 @@ static void *start(void *data, soie_node *doc, const char *url,
 	JS_SetPropertyFunctionList(c->js, c->api, natives,
 		sizeof(natives) / sizeof(natives[0]));
 	JS_SetPropertyStr(c->js, c->api, "url", JS_NewString(c->js, url));
+	JS_SetPropertyStr(c->js, c->api, "worker", JS_NewBool(c->js, !!self));
 	global = JS_GetGlobalObject(c->js);
 	JS_SetPropertyStr(c->js, global, "__soie", JS_DupValue(c->js,
 		c->api));
@@ -2052,8 +2621,9 @@ static void *start(void *data, soie_node *doc, const char *url,
 	c->tick = JS_GetPropertyStr(c->js, c->api, "tick");
 	c->frame = JS_GetPropertyStr(c->js, c->api, "frame");
 	c->received = JS_GetPropertyStr(c->js, c->api, "received");
+	c->wevent = JS_GetPropertyStr(c->js, c->api, "workerEvent");
 	/* the document object */
-	{
+	if (doc) {
 		JSValue set = JS_GetPropertyStr(c->js, c->api, "setDocument");
 		JSValue d = wrap(c, doc);
 
@@ -2066,12 +2636,21 @@ static void *start(void *data, soie_node *doc, const char *url,
 	return c;
 }
 
+static void *start(void *data, soie_node *doc, const char *url,
+	const soie_script_host *host)
+{
+	(void)data;
+	return ctx_new(doc, url, host, NULL);
+}
+
 static void stop(void *ctx)
 {
 	struct sctx *c = ctx;
 	struct wref *w;
 	size_t i;
 
+	/* its workers end first: they use the host */
+	stop_workers(c);
 	/* finalizers called from here on find no node, the collector no
 	 * edges: all wrappers first, then what they held */
 	JS_SetRuntimeOpaque(c->rt, NULL);
@@ -2103,6 +2682,7 @@ static void stop(void *ctx)
 	JS_FreeValue(c->js, c->tick);
 	JS_FreeValue(c->js, c->frame);
 	JS_FreeValue(c->js, c->received);
+	JS_FreeValue(c->js, c->wevent);
 	JS_FreeValue(c->js, c->api);
 	/* requests still out: abandoned, their threads free them */
 	{
@@ -2273,6 +2853,7 @@ static int tick(void *ctx)
 	c->deadline = now_ms() + RUN_MS;
 	sweep(c);
 	deliver(c);
+	deliver_workers(c);
 	v = JS_Call(c->js, c->tick, JS_UNDEFINED, 0, NULL);
 	if (!JS_IsException(v))
 		JS_ToFloat64(c->js, &d, v);
@@ -2289,6 +2870,9 @@ static int tick(void *ctx)
 	/* answers are looked for while requests are out */
 	if (c->inflight && (d < 0 || d > 20))
 		d = 20;
+	/* and while workers run, their messages */
+	if (c->workers && (d < 0 || d > WORKER_WAIT))
+		d = WORKER_WAIT;
 	return d < 0 ? -1 : d > 1e9 ? 1000000000 : (int)d;
 }
 

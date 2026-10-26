@@ -670,8 +670,8 @@ reversed, edit the entry and say why; do not leave stale rules here.
   session porting Toile (toile-soie): each item below was asked by
   it, mapped on the WebKit call it replaces, and tested in Toile too.
 - Adblock: no hook in the widget; Soie's block.so
-  (~/.config/soie/block.txt) blocks for every view. Still missing:
-  Web Workers (hg.slitaz.org's Anubis page waits for them).
+  (~/.config/soie/block.txt) blocks for every view. Web Workers came
+  later (see JavaScript): hg.slitaz.org's Anubis page passes.
 
 ## SoieView for Toile: what a browser needs
 
@@ -1273,8 +1273,10 @@ on the same frozen DOM.
   fail cleanly: no shadow DOM, iframes are empty, canvas has no
   context, MutationObserver never fires, IntersectionObserver reports
   every target visible once (what lazy loaders wait for), no service
-  workers, localStorage lasts as long as the page, crypto has
-  getRandomValues and randomUUID (from /dev/urandom) but no subtle.
+  or shared workers, localStorage lasts as long as the page, crypto
+  has getRandomValues and randomUUID (from /dev/urandom), and of
+  subtle only digest() (SHA-1, SHA-256, SHA-384, SHA-512, ext/script/
+  digest.c); its other methods reject with NotSupportedError.
   ES modules with import maps (imports, not scopes).
 - Limits: 5 s of running per entry (then an exception), a quarter of
   the RAM of JavaScript heap per page, 256 MB to 1 GB (see QuickJS
@@ -1301,6 +1303,33 @@ on the same frozen DOM.
   wrapping YouTube's player objects from `SOIE_DEBUG_JS_START`. The
   loadCSS pattern (`rel=preload onload="this.rel='stylesheet'"`), on
   many sites, needed it too. Test: `tests/js/link-load.html`.
+- Web Workers (dedicated ones), for hg.slitaz.org's Anubis page: its
+  proof of work runs in workers (`sha256-webcrypto.mjs`, a classic
+  script despite the name, crypto.subtle.digest in a loop). Each
+  worker is a thread with a QuickJS runtime of its own, running
+  dom.js with `api.worker` set: no document, the rest that needs none
+  (events, timers, fetch, XHR, TextEncoder, URL, Blob, crypto), plus
+  self, location, postMessage, close and importScripts. The page
+  fetches the worker's script (blob: and data: URLs too) and hands
+  it over. Messages are QuickJS's serialization (JS_WriteObject:
+  objects, arrays, typed arrays and buffers, dates, cycles; a function
+  throws), copied and never transferred; structuredClone() uses it
+  too. A worker's console lines and uncaught errors go to its page
+  (the host's message() is the main thread's), the errors as error
+  events on its Worker. One lock, the request jobs': a worker sleeps
+  on its condition until a message, an answer, its next timer or its
+  end. Its requests, importScripts and modules too, go through the
+  job threads, never its own, and interrupt() looks at its stop flag:
+  terminate() or a closed page stops it at once, even in an endless
+  loop, and the page waits for it, so the host's data outlives it. A
+  page with workers looks for their messages every 10 ms. A worker's
+  heap is a quarter of a page's, at least 64 MB; it runs without the
+  5 s limit. Checked with ThreadSanitizer (gcc-83 -fsanitize=thread):
+  no race. Not done: nested workers, SharedWorker, transfer lists,
+  MessagePorts in messages. Anubis passes in 0.2 s (difficulty 4).
+  Fixed on the way: addEventListener() called bare (Anubis's worker,
+  pages' `addEventListener('load', ...)`) threw: the global's
+  EventTarget methods are bound to it. Test: `tests/js/worker.html`.
 
 ## Audio and video (phase 11)
 

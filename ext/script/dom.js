@@ -34,6 +34,9 @@ function report(e) {
 		s = 'error';
 	}
 	api.message(2, s);
+	/* in a worker, an error event on its Worker too */
+	if (api.worker)
+		api.workerError(String(e));
 }
 
 function str(v) {
@@ -365,7 +368,7 @@ function handlerOf(target, type) {
 		return h;
 	let el = null;
 	if (target === g)
-		el = BODY_WINDOW.test(type) ? document.body : null;
+		el = BODY_WINDOW.test(type) && document ? document.body : null;
 	else if (target instanceof Element)
 		el = target;
 	const src = el && el.getAttribute && el.getAttribute('on' + type);
@@ -5027,6 +5030,94 @@ const crypto = {
 	},
 };
 
+/* crypto.subtle: digests only (SHA-1, SHA-256, SHA-384, SHA-512) */
+const subtle = {
+	digest(alg, data) {
+		try {
+			const name = String(alg && typeof alg === 'object' ?
+				alg.name : alg).toUpperCase();
+			const b = asBytes(data);
+			if (!b)
+				throw new TypeError('digest: not a BufferSource');
+			const r = api.digest(name, b);
+			return r ? Promise.resolve(r) : Promise.reject(
+				new DOMException('digest: ' + name + ' is not ' +
+				'supported', 'NotSupportedError'));
+		} catch (e) {
+			return Promise.reject(e);
+		}
+	},
+};
+for (const k of ['encrypt', 'decrypt', 'sign', 'verify', 'generateKey',
+	'deriveKey', 'deriveBits', 'importKey', 'exportKey', 'wrapKey',
+	'unwrapKey'])
+	subtle[k] = () => Promise.reject(new DOMException(k + ' is not ' +
+		'supported', 'NotSupportedError'));
+crypto.subtle = subtle;
+
+/*
+ * Web Workers: each a thread of script.c, with dom.js of its own
+ * without a document; messages copied (QuickJS's serialization). The
+ * page fetches the worker's script, as browsers do.
+ */
+const workerObjs = new Map();
+class Worker extends EventTarget {
+	constructor(url, opts = {}) {
+		super();
+		const u = api.resolve(href, String(url)) || String(url);
+		const id = api.workerNew(u, !!(opts && opts.type === 'module'));
+		this._id = id;
+		workerObjs.set(id, this);
+		const fail = (e) => api.workerEvent(id, 'error',
+			'cannot load the worker ' + u + (e ? ': ' + e : ''));
+		const local = localURL(u);
+		if (local) {
+			addTimer(() => api.workerRun(id,
+				new TextDecoder().decode(local.body)), 0, [], false);
+			return;
+		}
+		fetch(u).then((r) => {
+			if (!r.ok)
+				throw new Error('HTTP ' + r.status);
+			return r.text();
+		}).then((t) => api.workerRun(id, t), fail);
+	}
+	postMessage(data) {
+		api.workerPost(this._id, data);
+	}
+	terminate() {
+		api.workerStop(this._id);
+		workerObjs.delete(this._id);
+	}
+}
+function handlerProps(proto, events) {
+	for (const ev of events)
+		Object.defineProperty(proto, 'on' + ev, {
+			get() {
+				return (this[HANDLERS] && this[HANDLERS][ev]) || null;
+			},
+			set(v) {
+				(this[HANDLERS] || (this[HANDLERS] =
+					Object.create(null)))[ev] =
+					typeof v === 'function' ? v : null;
+			},
+			configurable: true,
+		});
+}
+handlerProps(Worker.prototype, ['message', 'error', 'messageerror']);
+/* script.c: worker id's message or error for the page; id 0, the
+ * page's message in a worker */
+api.workerEvent = function (id, type, data) {
+	const t = id ? workerObjs.get(id) : g;
+	if (!t)
+		return;
+	if (type === 'message')
+		dispatch(t, new MessageEvent('message', { data }));
+	else
+		dispatch(t, new ErrorEvent('error', { message: String(data),
+			cancelable: true }));
+};
+
 const CSS = {
 	supports(a, b) {
 		const t = b === undefined ? String(a) : a + ':' + b;
@@ -5083,7 +5174,7 @@ const globals = {
 	TreeWalker, NodeIterator: TreeWalker, Range,
 	NodeList: Array, HTMLCollection: Array, URL, URLSearchParams,
 	TextEncoder, TextDecoder, Blob, File, FormData, Headers, Request,
-	ReadableStream,
+	ReadableStream, Worker,
 	Response, fetch, XMLHttpRequest, AbortController, AbortSignal,
 	Storage, MutationObserver, MutationRecord, IntersectionObserver,
 	IntersectionObserverEntry, ResizeObserver, ResizeObserverEntry,
@@ -5105,8 +5196,7 @@ const globals = {
 		timeRemaining: () => 10 }), 1, [], false),
 	cancelIdleCallback: (id) => { timers.delete(id); },
 	queueMicrotask: (fn) => { Promise.resolve().then(fn).catch(report); },
-	structuredClone: (v) => v === undefined ? v :
-		JSON.parse(JSON.stringify(v)),
+	structuredClone: (v) => api.cloneValue(v),
 	reportError: report,
 	alert: (m) => api.message(3, str(m === undefined ? '' : m)),
 	confirm: (m) => {
@@ -5160,6 +5250,61 @@ globals.origin = (() => {
 		return 'null';
 	}
 })();
+
+/* addEventListener(...) called bare: this is undefined there, the
+ * global object for browsers (Anubis's worker, pages' load listeners) */
+for (const k of ['addEventListener', 'removeEventListener', 'dispatchEvent'])
+	Object.defineProperty(g, k, { value: EventTarget.prototype[k].bind(g),
+		writable: true, configurable: true });
+
+/* A worker's global scope: what does not need a document */
+if (api.worker) {
+	class WorkerGlobalScope extends EventTarget {}
+	class DedicatedWorkerGlobalScope extends WorkerGlobalScope {}
+	class WorkerLocation {}
+	const u = new URL(href);
+	const wloc = Object.create(WorkerLocation.prototype);
+	for (const k of ['href', 'origin', 'protocol', 'host', 'hostname',
+		'port', 'pathname', 'search', 'hash'])
+		Object.defineProperty(wloc, k, { value: u[k], enumerable: true });
+	Object.defineProperty(wloc, 'toString', { value: () => u.href });
+	const w = {
+		self: g, location: wloc, name: '', WorkerGlobalScope,
+		DedicatedWorkerGlobalScope, WorkerLocation,
+		WorkerNavigator: Navigator,
+		postMessage: (data) => api.workerPost(0, data),
+		close: () => api.workerStop(0),
+		importScripts: (...urls) => {
+			for (const s of urls) {
+				const a = api.resolve(href, String(s)) || String(s);
+				const r = api.request('GET', a, null, null, 0);
+				if (!r || r.status >= 400)
+					throw new DOMException('importScripts: cannot ' +
+						'load ' + a, 'NetworkError');
+				(0, eval)(api.utf8Decode(r.body));
+			}
+		},
+	};
+	for (const k of ['navigator', 'performance', 'console', 'crypto',
+		'isSecureContext', 'crossOriginIsolated', 'origin',
+		'EventTarget', 'Event', 'CustomEvent', 'ErrorEvent',
+		'MessageEvent', 'ProgressEvent', 'DOMException',
+		'MessageChannel', 'MessagePort', 'URL', 'URLSearchParams',
+		'TextEncoder', 'TextDecoder', 'Blob', 'File', 'FormData',
+		'Headers', 'Request', 'Response', 'ReadableStream', 'fetch',
+		'XMLHttpRequest', 'AbortController', 'AbortSignal', 'btoa',
+		'atob', 'setTimeout', 'setInterval', 'clearTimeout',
+		'clearInterval', 'queueMicrotask', 'structuredClone',
+		'reportError'])
+		w[k] = globals[k];
+	for (const k of Object.keys(w))
+		Object.defineProperty(g, k, { value: w[k], writable: true,
+			configurable: true, enumerable: false });
+	handlerProps(g, ['message', 'error', 'messageerror',
+		'unhandledrejection', 'rejectionhandled']);
+	Object.setPrototypeOf(g, DedicatedWorkerGlobalScope.prototype);
+	return;
+}
 for (const k of Object.keys(globals))
 	Object.defineProperty(g, k, { value: globals[k], writable: true,
 		configurable: true, enumerable: false });

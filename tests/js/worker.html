@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<p>Web Workers, crypto.subtle.digest, structuredClone</p>
+<script>
+var log = (...a) => console.log(a.map(String).join(' '));
+var hex = (b) => [...new Uint8Array(b)].map((x) => x.toString(16).padStart(2, '0')).join('');
+log('Worker', typeof Worker, 'digest', typeof crypto.subtle.digest);
+var c = structuredClone({ a: [1, 2, { b: new Uint8Array([3, 4]) }], d: new Date(0) });
+log('clone', c.a[2].b instanceof Uint8Array, c.a[2].b[1], c.d.getTime());
+try {
+	structuredClone({ f() {} });
+	log('never: a function cloned');
+} catch (e) {
+	log('clone of a function throws');
+}
+crypto.subtle.digest('SHA-256', new TextEncoder().encode('abc')).then((b) => {
+	log('sha256', hex(b));
+	return crypto.subtle.digest({ name: 'sha-512' }, new Uint8Array(0));
+}).then((b) => {
+	log('sha512 of nothing', hex(b).slice(0, 16));
+	return crypto.subtle.digest('MD5', new Uint8Array(1));
+}).catch((e) => {
+	log('md5', e.name);
+	first();
+});
+
+/* a worker from a file: importScripts, messages both ways, terminate */
+function first() {
+	var w = new Worker('worker.js');
+	w.onmessage = (e) => {
+		log('from worker', JSON.stringify(e.data));
+		if (e.data.done) {
+			w.terminate();
+			w.postMessage('never seen');
+			log('terminated');
+			second();
+		}
+	};
+	w.onerror = (e) => log('never: error', e.message);
+	w.postMessage({ n: 5, bytes: new Uint8Array([1, 2, 3]) });
+}
+
+/* from a blob: no document, an uncaught error is an error event */
+function second() {
+	var b = new Worker(URL.createObjectURL(new Blob([
+		'postMessage(typeof document + " " + typeof window + " " + location.protocol);' +
+		'onmessage = (e) => { if (e.data === "throw") throw new Error("boom"); close(); };'])));
+	b.onmessage = (e) => {
+		log('blob worker', e.data);
+		b.postMessage('throw');
+	};
+	b.addEventListener('error', (e) => {
+		log('blob worker error', e.message);
+		third();
+	});
+}
+
+/* a script that is not there */
+function third() {
+	var m = new Worker('missing-worker.js');
+	m.onerror = (e) => log('missing worker', e.type, e.message.startsWith('cannot load the worker'));
+}
+</script>

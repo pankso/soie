@@ -1,0 +1,15 @@
+log: Worker function digest function
+log: clone true 4 0
+log: clone of a function throws
+log: sha256 ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad
+log: sha512 of nothing cf83e1357eefb8bd
+log: md5 NotSupportedError
+log: from worker {"got":5,"sum":6,"self":true,"scope":true,"file":"worker.js"}
+log: in the worker: sha1 a9
+log: from worker {"sha1":[169,153,62,54],"done":true}
+log: terminated
+log: blob worker undefined undefined blob:
+error: Error: boom
+
+log: blob worker error Error: boom
+log: missing worker error true
