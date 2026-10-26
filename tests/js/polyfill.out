@@ -1,0 +1,6 @@
+log: sync
+log: defaultChecked true true true
+log: defaultChecked false false
+log: microtask ran, jobs 0
+error: Error: reported
+

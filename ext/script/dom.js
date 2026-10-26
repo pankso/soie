@@ -25,6 +25,10 @@ let document = null;	/* the document's wrapper, from setDocument() */
 const LISTENERS = Symbol('listeners');
 const HANDLERS = Symbol('handlers');
 const STYLE = Symbol('style');
+/* A microtask on the engine's own job queue: a page may replace
+ * Promise and its then (core-js's polyfill does, on the BBC, then
+ * queues its jobs with queueMicrotask: ours would run on its own) */
+const RESOLVED = Promise.resolve(), THEN = Promise.prototype.then;
 
 function report(e) {
 	let s;
@@ -1998,6 +2002,7 @@ html('HTMLInputElement', ['input'], (B) => class extends formControl(B) {
 		}
 	}
 	get defaultChecked() { return this.checked; }
+	set defaultChecked(v) { this.checked = v; }
 	get valueAsNumber() { return parseFloat(this.value); }
 	set valueAsNumber(v) { this.value = String(v); }
 	get files() { return list([]); }
@@ -5195,7 +5200,15 @@ const globals = {
 	requestIdleCallback: (fn) => addTimer(() => fn({ didTimeout: false,
 		timeRemaining: () => 10 }), 1, [], false),
 	cancelIdleCallback: (id) => { timers.delete(id); },
-	queueMicrotask: (fn) => { Promise.resolve().then(fn).catch(report); },
+	queueMicrotask: (fn) => {
+		THEN.call(RESOLVED, () => {
+			try {
+				fn();
+			} catch (e) {
+				report(e);
+			}
+		});
+	},
 	structuredClone: (v) => api.cloneValue(v),
 	reportError: report,
 	alert: (m) => api.message(3, str(m === undefined ? '' : m)),

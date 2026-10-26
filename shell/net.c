@@ -886,6 +886,45 @@ static void add_headers(struct response *req, const char *h)
 }
 
 /* Whether a "Name: value\r\n" list has the header. */
+/*
+ * Accept-Language from the locale (LC_ALL, LC_MESSAGES, LANG):
+ * fr_CH.UTF-8 asks fr-CH, then fr, then en; C or none, en. Without it
+ * Google answered in the language of the country of the address.
+ */
+static char lang_line[96];
+static pthread_once_t lang_once = PTHREAD_ONCE_INIT;
+
+static void lang_init(void)
+{
+	const char *l = getenv("LC_ALL");
+	char tag[16];
+	size_t n;
+
+	if (!l || !*l)
+		l = getenv("LC_MESSAGES");
+	if (!l || !*l)
+		l = getenv("LANG");
+	for (n = 0; l && n < sizeof(tag) - 1 && (isalpha((unsigned char)l[n]) ||
+	     (n == 2 && l[n] == '_')); n++)
+		tag[n] = l[n] == '_' ? '-' : l[n];
+	tag[n] = 0;
+	if (n < 2 || (n == 2 && !strcmp(tag, "en")))
+		strcpy(lang_line, "Accept-Language: en\r\n");
+	else if (n == 2)
+		snprintf(lang_line, sizeof(lang_line),
+			"Accept-Language: %s,en;q=0.8\r\n", tag);
+	else
+		snprintf(lang_line, sizeof(lang_line),
+			"Accept-Language: %s,%.2s;q=0.9%s\r\n", tag, tag,
+			strncmp(tag, "en", 2) ? ",en;q=0.8" : "");
+}
+
+static const char *accept_language(void)
+{
+	pthread_once(&lang_once, lang_init);
+	return lang_line;
+}
+
 static int has_header(const char *h, const char *name)
 {
 	size_t n = strlen(name);
@@ -975,6 +1014,8 @@ static int request(const char *url, const soie_request *rq,
 	if (!has_header(headers, "Accept"))
 		adds(&req, "Accept: text/html,application/xhtml+xml,*/*;"
 			"q=0.8\r\n");
+	if (!has_header(headers, "Accept-Language"))
+		adds(&req, accept_language());
 	if (!(rq->flags & SOIE_REQ_NO_COOKIES) &&
 	    (cookie = soie_cookies_get(url, fp, rq->flags & SOIE_REQ_PRIVATE ?
 	    SOIE_COOKIE_PRIVATE : 0))) {

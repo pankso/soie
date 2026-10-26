@@ -95,7 +95,8 @@ static void base_size(struct item *it, int row, float W, float H)
 	struct box *b = it->b;
 	const struct style *st = b->style;
 	const struct cval *fb = &st->v[P_FLEX_BASIS];
-	float mn, mx, sz = -1;
+	float mn, mx, sz = -1, cw = -1;
+	int content = 0;
 
 	if (!fb->kw)
 		sz = len_val(fb, row ? W : (H >= 0 ? H : 0));
@@ -105,16 +106,18 @@ static void base_size(struct item *it, int row, float W, float H)
 	if (sz < 0 || (fb->kw && kw(st, P_FLEX_BASIS, "auto")))
 		sz = row ? box_spec_w(b, P_WIDTH, W) :
 			box_spec_h(b, P_HEIGHT, H);
+	if (!row) {
+		cw = box_spec_w(b, P_WIDTH, W);
+		if (cw < 0)
+			cw = W - it->cbefore - it->cafter;
+	}
 	if (sz < 0) {
 		/* content: max-content in the main axis */
-		content_sizes(b, &mn, &mx);
+		content = 1;
 		if (row) {
+			content_sizes(b, &mn, &mx);
 			sz = mx;
 		} else {
-			float cw = box_spec_w(b, P_WIDTH, W);
-
-			if (cw < 0)
-				cw = W - it->cbefore - it->cafter;
 			sz = b->type == B_REPLACED ? b->ih :
 				max_content_height(b, cw);
 		}
@@ -138,6 +141,17 @@ static void base_size(struct item *it, int row, float W, float H)
 	} else {
 		float smn = box_spec_h(b, P_MIN_HEIGHT, H);
 
+		/* its content height, its height if smaller (flex: 1 is
+		 * a basis of 0: go.dev's <main> was 0 high, the footer
+		 * over it) */
+		if (smn < 0 && b->type != B_REPLACED &&
+		    kw(st, P_OVERFLOW_Y, "visible")) {
+			float h = box_spec_h(b, P_HEIGHT, H);
+
+			smn = content ? sz : max_content_height(b, cw);
+			if (h >= 0 && h < smn)
+				smn = h;
+		}
 		it->mn = smn < 0 ? 0 : smn;
 		it->mx = box_spec_h(b, P_MAX_HEIGHT, H);
 	}
@@ -312,6 +326,19 @@ float layout_flex(struct box *f, float cbh)
 			break;
 		{
 			float avail = main_avail >= 1e29f ? used : main_avail;
+
+			/* a column of auto height: its content's, within
+			 * its min and max (body { min-height: 100vh }: the
+			 * footer at the bottom of the screen) */
+			if (main_avail >= 1e29f && nlines == 1 && end == n) {
+				float lo = box_spec_h(f, P_MIN_HEIGHT, cbh);
+				float hi = box_spec_h(f, P_MAX_HEIGHT, cbh);
+
+				if (hi >= 0 && avail > hi)
+					avail = hi;
+				if (lo >= 0 && avail < lo)
+					avail = lo;
+			}
 
 			flex_line(v + start, end - start, avail -
 				mgap * (float)(end - start - 1));

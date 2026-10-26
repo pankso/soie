@@ -152,3 +152,42 @@ width=100
 |     block <div> 0,80 100x80
 |       block <div> 0,80 100x80
 |         block <div> 0,80 100x40
+
+#data
+<!DOCTYPE html><body style="margin:0;display:flex;flex-direction:column;min-height:300px"><header style="height:50px"></header><main style="flex:1"><div style="height:100px"></div></main><footer style="height:20px"></footer>
+#errors
+#layout
+width=200
+#document
+| block <html> 0,0 200x300
+|   block <body> 0,0 200x300
+|     block <header> 0,0 200x50
+|     block <main> 0,50 200x230
+|       block <div> 0,50 200x100
+|     block <footer> 0,280 200x20
+
+#data
+<!DOCTYPE html><body style="margin:0;display:flex;flex-direction:column"><header style="height:50px"></header><main style="flex:1"><div style="height:500px"></div></main><footer style="height:20px"></footer>
+#errors
+#layout
+width=200
+#document
+| block <html> 0,0 200x570
+|   block <body> 0,0 200x570
+|     block <header> 0,0 200x50
+|     block <main> 0,50 200x500
+|       block <div> 0,50 200x500
+|     block <footer> 0,550 200x20
+
+#data
+<!DOCTYPE html><body style="margin:0"><div style="display:flex;flex-direction:column;height:100px"><div style="flex:1;overflow:hidden"><div style="height:500px"></div></div><div style="height:20px"></div></div>
+#errors
+#layout
+width=200
+#document
+| block <html> 0,0 200x100
+|   block <body> 0,0 200x100
+|     block <div> 0,0 200x100
+|       block <div> 0,0 200x80
+|         block <div> 0,0 200x500
+|       block <div> 0,80 200x20

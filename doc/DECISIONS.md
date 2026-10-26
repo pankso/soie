@@ -620,6 +620,11 @@ reversed, edit the entry and say why; do not leave stale rules here.
   browsers. A fragment link updates the address too. YouTube's address
   followed none of its videos before.
 
+- Requests carry Accept-Language from the locale (LC_ALL, LC_MESSAGES,
+  LANG): fr_CH.UTF-8 asks "fr-CH,fr;q=0.9,en;q=0.8", C asks "en".
+  Without it Google answered in the language of the address's country
+  (German, from Switzerland).
+
 ## The shell on its own, many page views
 
 - The shell left browser/ for shell/ (shell.c, net.c, fetch.c,
@@ -1237,6 +1242,14 @@ on the same frozen DOM.
   margins first, justify-content (start, end, center, space-*),
   align-items/align-self (stretch by default), align-content, gaps,
   reverse directions and columns. Baseline alignment is start.
+- In a column, the automatic minimum size is the content height (its
+  height if smaller; 0 for a scroll container or a replaced box), and
+  a column of auto height resolves its flexible lengths against its
+  content's height clamped by its min-height and max-height. go.dev
+  and rust-lang.org: body { display: flex; flex-direction: column;
+  min-height: 100vh }, main { flex: 1 }, a basis of 0 (0% and 0px are
+  the same once computed): <main> was 0 high, the footer drawn over
+  the page; with a short page the footer now ends the screen.
 - Grid: track lists with px, %, em, fr, auto, min/max-content,
   minmax(), fit-content(), repeat() including auto-fill and auto-fit
   (both behave as auto-fill: empty tracks are kept), line names and
@@ -1372,6 +1385,13 @@ on the same frozen DOM.
   Fixed on the way: addEventListener() called bare (Anubis's worker,
   pages' `addEventListener('load', ...)`) threw: the global's
   EventTarget methods are bound to it. Test: `tests/js/worker.html`.
+- dom.js keeps the engine's Promise.prototype.then and a resolved
+  promise of its own for queueMicrotask: core-js, on the BBC, finds
+  the native Promise wanting, replaces it and queues its own jobs with
+  queueMicrotask, which then went through its Promise again: endless,
+  1 GB of heap in three seconds, a blank page. React's input
+  hydration also set defaultChecked, which had no setter. Test:
+  `tests/js/polyfill.html`.
 
 ## Audio and video (phase 11)
 
@@ -1500,6 +1520,13 @@ MSE, not through an HLS/DASH loader of our own.
   not always trusted. Same cookies and User-Agent on the test bench
   played whole videos with status 1; pankso's sessions were cut. Not
   solved: what BotGuard finds odd in Soie is not known.
+- Google Search (2026-10) asks every browser for its BotGuard
+  challenge first, then reloads: Soie runs it and gets the 429 "sorry"
+  page with a reCAPTCHA, with a Firefox User-Agent too, while Firefox
+  from the same address and with the same consent cookie gets the
+  results. The home page works (the plain one Google gives unknown
+  browsers), the consent page and its forms too. The shell's search
+  stays DuckDuckGo Lite.
 - Bodies of fetch and XHR given as typed arrays (every segment) were
   first tried as an ArrayBuffer: QuickJS threw, with a backtrace, and
   the typed array path came next. About 30 000 exceptions a minute on

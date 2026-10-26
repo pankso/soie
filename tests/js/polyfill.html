@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<!-- Pages replacing built-ins: core-js's Promise (the BBC) queues its
+     jobs with queueMicrotask, which must not go through it; React's
+     input hydration sets defaultChecked -->
+<input id="c" type="checkbox" name="n">
+<script>
+var log = (...a) => console.log(a.map(String).join(' '));
+var Native = Promise, jobs = 0;
+function Fake(ex) {
+	var p = new Native(ex);
+	this.then = (a, b) => { jobs++; queueMicrotask(() => {}); return p.then(a, b); };
+}
+Fake.resolve = (v) => { jobs++; queueMicrotask(() => {}); return Native.resolve(v); };
+Promise = Fake;
+Native.prototype.then = function () { throw new Error('patched then used'); };
+queueMicrotask(() => log('microtask ran, jobs', jobs));
+queueMicrotask(() => { throw new Error('reported'); });
+log('sync');
+var c = document.getElementById('c');
+c.defaultChecked = true;
+log('defaultChecked', c.defaultChecked, c.checked, c.hasAttribute('checked'));
+c.defaultChecked = false;
+log('defaultChecked', c.defaultChecked, c.checked);
+</script>
