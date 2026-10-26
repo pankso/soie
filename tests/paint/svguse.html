@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<!-- SVG sprites: <symbol>s used by <use> (GitHub-style, in HTML),
+     an element used with x/y, nested <svg>s each with its viewport and
+     viewBox (Wikipedia's sprite), clipped to it, a <use> loop drawing
+     nothing -->
+<style>body{margin:8px} svg{margin:2px}</style>
+<svg style="display:none">
+  <symbol id="star" viewBox="0 0 20 20"><path d="M10 1l3 6 6 1-4.5 4 1 6-5.5-3-5.5 3 1-6L1 8l6-1z"/></symbol>
+  <g id="dot"><circle cx="5" cy="5" r="5"/></g>
+  <use id="loop" href="#loop"/>
+</svg>
+<svg width="40" height="40" fill="#36c"><use href="#star"/></svg>
+<svg width="60" height="60" fill="#c33"><use xlink:href="#star" width="30" height="30" x="15" y="15"/></svg>
+<svg width="40" height="40" fill="#393"><use href="#dot" x="10" y="10"/><use href="#dot" x="25" y="25"/></svg>
+<svg width="40" height="40"><use href="#loop"/></svg>
+<br>
+<svg width="200" height="60" viewBox="0 0 200 60">
+  <rect width="200" height="60" fill="#eee"/>
+  <svg x="0" y="0" width="60" height="60" viewBox="0 0 10 10"><rect width="10" height="10" fill="#f80"/><circle cx="10" cy="10" r="8" fill="#80f"/></svg>
+  <svg x="70" y="10" width="40" height="40" viewBox="-5 -5 10 10"><circle r="5" fill="#0a8"/></svg>
+  <svg x="120" y="0" width="50%" height="100%" viewBox="0 0 20 20" fill="#36c"><use href="#star"/></svg>
+</svg>

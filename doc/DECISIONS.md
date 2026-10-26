@@ -464,8 +464,13 @@ reversed, edit the entry and say why; do not leave stale rules here.
   commands, arcs), g/a with transforms, fill, stroke, opacities,
   fill-rule, currentColor, viewBox and preserveAspectRatio, stroke
   joins (miter with stroke-miterlimit, round, bevel) and caps (butt,
-  round, square). Not yet: text, gradients and patterns (drawn gray),
-  clipping, masks, <use>, CSS in <style>, dashes.
+  round, square), nested <svg> (each its viewport, viewBox and
+  clipping, percentages of the one around: Wikipedia's sprite is 23 of
+  them) and <use> of a <symbol>, an <svg> or any element of the
+  document (href or xlink:href, x, y, width, height; 8 deep at most,
+  so a loop draws nothing). Not yet: text, gradients and patterns
+  (drawn gray), clipPath, masks, <use> of another file, CSS in
+  <style>, dashes.
 - Strokes have their own list of segments: they were drawn from the
   fill's edges, which leave out horizontal ones (a rect's top and
   bottom were missing, Toile's tab icon was two brackets), and without
@@ -1230,6 +1235,10 @@ on the same frozen DOM.
   as 1024x768).
 - Text directly in a flex or grid container becomes an anonymous item,
   even when there are no block children.
+- A replaced item (image, <svg>) given its width but no height takes
+  the height of its natural ratio, or its natural height: it kept 0,
+  and every icon and image of a flex row without a CSS height vanished
+  (GitHub's octicons, whose width and height are attributes).
 - Real sites built on complex grids (Wikipedia's Vector skin, the
   Tailwind site) render largely right but not yet like browsers: the
   remaining gaps are in grid placement details and in var()-computed

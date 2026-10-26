@@ -1048,8 +1048,14 @@ void layout_item(struct box *b, float x, float y, float w, float h)
 		b->x = x;
 		b->y = y;
 		b->w = w;
-		if (h >= 0)
-			b->h = h;
+		/* no height given: the width's through the natural ratio, or
+		 * the natural height (it was left 0: icons and images of
+		 * flex rows vanished) */
+		if (h < 0 && b->iw > 0 && b->ih > 0 && has_ratio(b))
+			h = w * b->ih / b->iw;
+		else if (h < 0)
+			h = b->ih > 0 ? b->ih : 0;
+		b->h = clamp_h(b, h, -1);
 		return;
 	}
 	layout_alone(b, x, y, w < 0 ? 0 : w, -1, h);

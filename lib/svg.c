@@ -569,6 +569,7 @@ struct paintstate {
 	char join, cap;		/* 'm'iter, 'r'ound, 'b'evel; 'b'utt, 'r'ound,
 				 * 's'quare */
 	float miter;		/* stroke-miterlimit */
+	float vw, vh;		/* the viewport, for percentages */
 	const unsigned char *current;	/* currentColor */
 };
 
@@ -899,64 +900,39 @@ static void shape(struct canvas *c, const soie_node *n, const struct mat *m,
 	free(segs.e);
 }
 
-static void walk(struct canvas *c, const soie_node *n, struct mat m,
-	struct paintstate ps)
+#define USE_DEPTH 8	/* <use> in <use>: no further (and no loop) */
+
+/* A length attribute of a viewport, its percentages of ref */
+static float vlen(const soie_node *n, const char *name, float ref,
+	float dflt)
 {
-	const soie_node *k;
-	const char *a;
+	const char *a = soie_element_get_attr(n, name);
 
-	for (k = n->first; k; k = k->next) {
-		struct mat km = m;
-		struct paintstate kps = ps;
-		char buf[128];
-
-		if (k->type != SOIE_ELEMENT || k->ns != SOIE_NS_SVG)
-			continue;
-		if (!strcmp(k->name, "defs") || !strcmp(k->name, "title") ||
-		    !strcmp(k->name, "desc") || !strcmp(k->name, "clipPath") ||
-		    !strcmp(k->name, "mask") || !strcmp(k->name, "symbol") ||
-		    !strcmp(k->name, "linearGradient") ||
-		    !strcmp(k->name, "radialGradient") ||
-		    !strcmp(k->name, "style") || !strcmp(k->name, "text"))
-			continue;
-		if ((a = prop(k, "display", buf, sizeof(buf))) &&
-		    !strcmp(a, "none"))
-			continue;
-		if ((a = soie_element_get_attr(k, "transform")))
-			parse_transform(a, &km);
-		inherit_paint(k, &kps);
-		if (!strcmp(k->name, "g") || !strcmp(k->name, "a") ||
-		    !strcmp(k->name, "switch"))
-			walk(c, k, km, kps);
-		else
-			shape(c, k, &km, kps);
-	}
+	if (!a)
+		return dflt;
+	return strchr(a, '%') ? fnum(a) * ref / 100 : fnum(a);
 }
 
-/* Draw <svg> element el into the box (x, y, w, h), page coordinates. */
-void svg_render(struct canvas *c, const soie_node *el, float x, float y,
-	float w, float h, const unsigned char *current)
+/*
+ * The transform of a viewport (x, y, w, h) in m's user units for el's
+ * viewBox and preserveAspectRatio, onto m; the viewport size for the
+ * percentages inside in *ps.
+ */
+static void viewport(struct mat *m, const soie_node *el, float x, float y,
+	float w, float h, struct paintstate *ps)
 {
-	struct mat m = { 1, 0, 0, 1, 0, 0 };
-	struct paintstate ps;
 	const char *vb = soie_element_get_attr(el, "viewBox");
 	const char *par = soie_element_get_attr(el, "preserveAspectRatio");
+	struct mat t = { 1, 0, 0, 1, 0, 0 };
 	float v[4];
+	int i;
 
-	memset(&ps, 0, sizeof(ps));
-	ps.fill[3] = 255;	/* black */
-	ps.has_fill = 1;
-	ps.sw = 1;
-	ps.join = 'm';
-	ps.cap = 'b';
-	ps.miter = 4;
-	ps.opacity = c->alpha;
-	ps.current = current;
-	m.e = x - c->ox;
-	m.f = y - c->oy;
+	t.e = x;
+	t.f = y;
+	ps->vw = w;
+	ps->vh = h;
 	if (vb) {
 		const char *s = vb;
-		int i;
 
 		for (i = 0; i < 4; i++)
 			v[i] = num(&s);
@@ -968,22 +944,190 @@ void svg_render(struct canvas *c, const soie_node *el, float x, float y,
 
 				if (par && strstr(par, "slice"))
 					s1 = sx > sy ? sx : sy;
-				m.e += (w - v[2] * s1) / 2;
-				m.f += (h - v[3] * s1) / 2;
+				t.e += (w - v[2] * s1) / 2;
+				t.f += (h - v[3] * s1) / 2;
 				sx = sy = s1;
 			}
-			m.a = sx;
-			m.d = sy;
-			m.e -= v[0] * sx;
-			m.f -= v[1] * sy;
+			t.a = sx;
+			t.d = sy;
+			t.e -= v[0] * sx;
+			t.f -= v[1] * sy;
+			ps->vw = v[2];
+			ps->vh = v[3];
 		}
 	}
+	mul(m, &t);
+}
+
+static const soie_node *by_id(const soie_node *n, const char *id)
+{
+	const soie_node *k, *r;
+	const char *a;
+
+	for (k = n->first; k; k = k->next) {
+		if (k->type != SOIE_ELEMENT)
+			continue;
+		if ((a = soie_element_get_attr(k, "id")) && !strcmp(a, id))
+			return k;
+		if ((r = by_id(k, id)))
+			return r;
+	}
+	return NULL;
+}
+
+static void walk(struct canvas *c, const soie_node *n, struct mat m,
+	struct paintstate ps, int depth);
+
+/* <use>'s href, else its xlink:href (SVG 1.1, the namespaced one) */
+static const char *use_href(const soie_node *n)
+{
+	const char *a = soie_element_get_attr(n, "href");
+	size_t i;
+
+	for (i = 0; !a && i < soie_element_attr_count(n); i++)
+		if (soie_element_attr_ns(n, i) == SOIE_NS_XLINK &&
+		    !strcmp(soie_element_attr_name(n, i), "href"))
+			a = soie_element_attr_value(n, i);
+	return a;
+}
+
+/*
+ * A nested <svg> or a used <symbol>: its viewport (x, y, w, h) in m's
+ * units, its content clipped to it when m keeps rectangles.
+ */
+static void nested(struct canvas *c, const soie_node *el, struct mat m,
+	struct paintstate ps, float x, float y, float w, float h, int depth)
+{
+	int cx0 = c->cx0, cy0 = c->cy0, cx1 = c->cx1, cy1 = c->cy1;
+
+	if (w <= 0 || h <= 0)
+		return;
+	if (m.b == 0 && m.c == 0) {
+		float ax, ay, bx, by;
+		int i0, j0, i1, j1;
+
+		tx(&m, x, y, &ax, &ay);
+		tx(&m, x + w, y + h, &bx, &by);
+		i0 = (int)floorf(ax < bx ? ax : bx);
+		j0 = (int)floorf(ay < by ? ay : by);
+		i1 = (int)ceilf(ax < bx ? bx : ax);
+		j1 = (int)ceilf(ay < by ? by : ay);
+		if (i0 > c->cx0)
+			c->cx0 = i0;
+		if (j0 > c->cy0)
+			c->cy0 = j0;
+		if (i1 < c->cx1)
+			c->cx1 = i1;
+		if (j1 < c->cy1)
+			c->cy1 = j1;
+	}
+	viewport(&m, el, x, y, w, h, &ps);
+	walk(c, el, m, ps, depth);
+	c->cx0 = cx0;
+	c->cy0 = cy0;
+	c->cx1 = cx1;
+	c->cy1 = cy1;
+}
+
+/* One element of the tree, with its paint state and transform */
+static void element(struct canvas *c, const soie_node *k, struct mat m,
+	struct paintstate ps, int depth)
+{
+	const char *a;
+	char buf[128];
+
+	if (k->type != SOIE_ELEMENT || k->ns != SOIE_NS_SVG)
+		return;
+	if (!strcmp(k->name, "defs") || !strcmp(k->name, "title") ||
+	    !strcmp(k->name, "desc") || !strcmp(k->name, "clipPath") ||
+	    !strcmp(k->name, "mask") || !strcmp(k->name, "symbol") ||
+	    !strcmp(k->name, "linearGradient") ||
+	    !strcmp(k->name, "radialGradient") ||
+	    !strcmp(k->name, "style") || !strcmp(k->name, "text"))
+		return;
+	if ((a = prop(k, "display", buf, sizeof(buf))) && !strcmp(a, "none"))
+		return;
+	if ((a = soie_element_get_attr(k, "transform")))
+		parse_transform(a, &m);
+	inherit_paint(k, &ps);
+	if (!strcmp(k->name, "g") || !strcmp(k->name, "a") ||
+	    !strcmp(k->name, "switch")) {
+		walk(c, k, m, ps, depth);
+	} else if (!strcmp(k->name, "svg")) {
+		nested(c, k, m, ps, vlen(k, "x", ps.vw, 0),
+			vlen(k, "y", ps.vh, 0), vlen(k, "width", ps.vw, ps.vw),
+			vlen(k, "height", ps.vh, ps.vh), depth);
+	} else if (!strcmp(k->name, "use")) {
+		/* a symbol, an svg or an element of this document */
+		const soie_node *t, *root = k;
+		struct mat um = m;
+		float x = vlen(k, "x", ps.vw, 0), y = vlen(k, "y", ps.vh, 0);
+
+		a = use_href(k);
+		if (!a || *a != '#' || depth >= USE_DEPTH)
+			return;
+		while (root->parent)
+			root = root->parent;
+		if (!(t = by_id(root, a + 1)) || t->type != SOIE_ELEMENT ||
+		    t->ns != SOIE_NS_SVG)
+			return;
+		if (!strcmp(t->name, "symbol") || !strcmp(t->name, "svg")) {
+			float w = vlen(k, "width", ps.vw, -1);
+			float h = vlen(k, "height", ps.vh, -1);
+
+			if (w < 0)
+				w = vlen(t, "width", ps.vw, ps.vw);
+			if (h < 0)
+				h = vlen(t, "height", ps.vh, ps.vh);
+			inherit_paint(t, &ps);
+			nested(c, t, m, ps, x, y, w, h, depth + 1);
+		} else {
+			struct mat tr = { 1, 0, 0, 1, 0, 0 };
+
+			tr.e = x;
+			tr.f = y;
+			mul(&um, &tr);
+			element(c, t, um, ps, depth + 1);
+		}
+	} else {
+		shape(c, k, &m, ps);
+	}
+}
+
+static void walk(struct canvas *c, const soie_node *n, struct mat m,
+	struct paintstate ps, int depth)
+{
+	const soie_node *k;
+
+	for (k = n->first; k; k = k->next)
+		element(c, k, m, ps, depth);
+}
+
+/* Draw <svg> element el into the box (x, y, w, h), page coordinates. */
+void svg_render(struct canvas *c, const soie_node *el, float x, float y,
+	float w, float h, const unsigned char *current)
+{
+	struct mat m = { 1, 0, 0, 1, 0, 0 };
+	struct paintstate ps;
+
+	memset(&ps, 0, sizeof(ps));
+	ps.fill[3] = 255;	/* black */
+	ps.has_fill = 1;
+	ps.sw = 1;
+	ps.join = 'm';
+	ps.cap = 'b';
+	ps.miter = 4;
+	ps.opacity = c->alpha;
+	ps.current = current;
+	m.e = -c->ox;
+	m.f = -c->oy;
+	viewport(&m, el, x, y, w, h, &ps);
 	inherit_paint(el, &ps);
 	{
 		float a = c->alpha;
 
 		c->alpha = 1;	/* opacity is in the paint state */
-		walk(c, el, m, ps);
+		walk(c, el, m, ps, 0);
 		c->alpha = a;
 	}
 }
