@@ -8,7 +8,8 @@
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
-#define _POSIX_C_SOURCE 200809L
+#define _GNU_SOURCE		/* dladdr() */
+#include <dlfcn.h>
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -870,7 +871,7 @@ static void load(struct shell *s, const char *url, const char *post, int push)
 
 /* The finished jobs to the inboxes of the shells whose page asked for
  * them: gens are unique, a job no page has now is dropped. */
-static void route_jobs(void)
+void shell_route(void)
 {
 	struct job *j, **in;
 	struct shell *s;
@@ -893,7 +894,7 @@ static struct job *next_job(struct shell *s)
 {
 	struct job *j;
 
-	route_jobs();
+	shell_route();
 	if ((j = s->inbox))
 		s->inbox = j->next;
 	return j;
@@ -1410,11 +1411,21 @@ int shell_key(struct shell *s, const char *key, const char *text, int mods)
 			if (strncmp(key, "Arrow", 5) && strcmp(key, "Home") &&
 			    strcmp(key, "End"))
 				fire(s, s->focus, "input", 0, 0, NULL, 0);
+		} else if (mods & (SOIE_MOD_CTRL | SOIE_MOD_ALT |
+		    SOIE_MOD_META)) {
+			/* a shortcut the field does not know: the front's */
+			after_scripts(s);
+			return 0;
 		}
 		after_scripts(s);
 		return 1;
 	}
-	if (!strcmp(key, "ArrowDown"))
+	/* with Ctrl, Alt or Meta a key is the front's shortcut (Ctrl+Page
+	 * Up a tab), but Ctrl+Home and Ctrl+End */
+	if ((mods & (SOIE_MOD_CTRL | SOIE_MOD_ALT | SOIE_MOD_META)) &&
+	    strcmp(key, "Home") && strcmp(key, "End"))
+		r = 0;
+	else if (!strcmp(key, "ArrowDown"))
 		s->page.scroll += 40;
 	else if (!strcmp(key, "ArrowUp"))
 		s->page.scroll -= 40;
@@ -1955,29 +1966,67 @@ int shell_dump(struct shell *s, char *path, size_t size)
 	return 0;
 }
 
-int shell_init(void)
+/*
+ * The source tree path is in: a directory above it (three at most)
+ * with the engine's sources (lib/soie/soie.h) and ext/. Its ext/ in
+ * out; 0 when path is not in a tree (installed).
+ */
+static int tree_ext(const char *path, char *out, size_t size)
+{
+	char d[4096], t[4200];
+	char *e;
+	int up;
+
+	if (!path || !realpath(path, d))
+		return 0;
+	for (up = 0; up < 4 && (e = strrchr(d, '/')) && e != d; up++) {
+		*e = '\0';
+		snprintf(t, sizeof(t), "%s/lib/soie/soie.h", d);
+		if (access(t, F_OK))
+			continue;
+		snprintf(out, size, "%s/ext", d);
+		return !access(out, F_OK);
+	}
+	return 0;
+}
+
+/*
+ * The extensions of the build in use: $SOIE_EXT_DIR, else those of the
+ * source tree the program (xsoie, a demo) or libsoie (a program built
+ * on the tree's) runs from, else the installed ones.
+ */
+static const char *ext_dir(char *buf, size_t size)
 {
 	const char *dir = getenv("SOIE_EXT_DIR");
-	char tree[4200];
-	ssize_t n;
+	const char *(*fn)(void) = soie_version;
+	Dl_info info;
+	void *at;
+
+	if (dir && *dir)
+		return dir;
+	if (tree_ext("/proc/self/exe", buf, size))
+		return buf;
+	/* a function's address as data, without a cast ISO C forbids */
+	memcpy(&at, &fn, sizeof(at));
+	if (dladdr(at, &info) &&
+	    tree_ext(info.dli_fname, buf, size))
+		return buf;
+	return SOIE_EXT_DIR;
+}
+
+int shell_init(void)
+{
+	char buf[4200];
+	const char *dir;
 	int k;
 
 	if (fetch_fd >= 0)
 		return fetch_fd;
 	debug_init();
 	main_thread = pthread_self();
-	/* not installed: run from the source tree, its extensions */
-	if (!dir && access(SOIE_EXT_DIR, F_OK) &&
-	    (n = readlink("/proc/self/exe", tree, 4096)) > 0) {
-		tree[n] = '\0';
-		if (strrchr(tree, '/'))
-			strcpy(strrchr(tree, '/'), "/../ext");
-		if (!access(tree, F_OK))
-			dir = tree;
-	}
-	k = soie_ext_load_dir(dir ? dir : SOIE_EXT_DIR);
-	debug(1, "soie %s, %d extensions from %s", soie_version(), k,
-		dir ? dir : SOIE_EXT_DIR);
+	dir = ext_dir(buf, sizeof(buf));
+	k = soie_ext_load_dir(dir);
+	debug(1, "soie %s, %d extensions from %s", soie_version(), k, dir);
 	fetch_fd = fetch_start(6);
 	return fetch_fd;
 }
@@ -2111,6 +2160,13 @@ void shell_go(struct shell *s, const char *typed)
 	load(s, url, NULL, 1);
 	free(url);
 	free(v);
+}
+
+int shell_can_go(struct shell *s, int delta)
+{
+	int to = s->hist.cur + delta;
+
+	return delta && to >= 0 && to < s->hist.n;
 }
 
 void shell_history(struct shell *s, int delta)

@@ -39,6 +39,10 @@ struct shell_ui {
  * descriptor to poll, readable when resources arrive, -1 on failure.
  * It is all shells': when it is readable, shell_tick() each. */
 int shell_init(void);
+/* What came on the descriptor to the shells that asked for it, the
+ * rest dropped; shell_tick() does it, a front without a shell (all
+ * closed) calls it instead. */
+void shell_route(void);
 /* A new page view, empty until a load; scripts: 0 turns them off. ui
  * is copied. */
 shell *shell_new(const struct shell_ui *ui, void *data, int scripts);
@@ -79,6 +83,8 @@ void shell_load(shell *s, const char *url);
  * to search for ($SOIE_SEARCH, a URL with %s, or DuckDuckGo Lite). */
 void shell_go(shell *s, const char *typed);
 void shell_history(shell *s, int delta);
+/* 1 when shell_history(s, delta) has a page to go to */
+int shell_can_go(shell *s, int delta);
 void shell_reload(shell *s);
 const char *shell_url(shell *s);
 /* Resources on their way, the page itself counting as one; *text is a
@@ -88,7 +94,8 @@ int shell_loading(shell *s, const char **text);
 /* Input. mods are SOIE_MOD_*. Keys are DOM key values ("Enter",
  * "ArrowLeft", "a"), text what the key typed, in UTF-8. */
 void shell_click(shell *s, int x, int y, int mods);
-/* 1 when the page took the key, 2 when it only scrolled the page */
+/* 1 when the page took the key, 2 when it only scrolled the page, 0
+ * when it is the front's (with Ctrl, Alt or Meta: its shortcuts) */
 int shell_key(shell *s, const char *key, const char *text, int mods);
 /* The cursor for x,y; the link under it in link, or "". */
 int shell_hover(shell *s, int x, int y, char *link, size_t size);
