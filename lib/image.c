@@ -576,12 +576,10 @@ void draw_image(struct canvas *c, const struct image *im, float x, float y,
 		int y0 = (int)floorf(sy), y1 = y0 + 1;
 		float fy = sy - (float)y0;
 
-		if (y0 < 0)
-			y0 = 0;
-		if (y1 >= im->h)
-			y1 = im->h - 1;
-		if (y0 >= im->h)
-			y0 = im->h - 1;
+		/* the edges' neighbours: a shrunk image's first row maps
+		 * rows before its own, which do not exist */
+		y0 = y0 < 0 ? 0 : y0 >= im->h ? im->h - 1 : y0;
+		y1 = y1 < 0 ? 0 : y1 >= im->h ? im->h - 1 : y1;
 		for (i = i0; i < i1; i++) {
 			float sx = ((float)i + c->ox + 0.5f - x) * (float)im->w /
 				w - 0.5f;
@@ -590,12 +588,8 @@ void draw_image(struct canvas *c, const struct image *im, float x, float y,
 			unsigned char o[4];
 			const unsigned char *a, *b, *cc, *d;
 
-			if (x0 < 0)
-				x0 = 0;
-			if (x1 >= im->w)
-				x1 = im->w - 1;
-			if (x0 >= im->w)
-				x0 = im->w - 1;
+			x0 = x0 < 0 ? 0 : x0 >= im->w ? im->w - 1 : x0;
+			x1 = x1 < 0 ? 0 : x1 >= im->w ? im->w - 1 : x1;
 			if (fx < 0)
 				fx = 0;
 			if (fy < 0)
