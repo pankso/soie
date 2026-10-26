@@ -20,3 +20,4 @@ tests/exttest
 ext/*.so
 ext/script/dom-js.c
 gtk/gsoie
+asan-build

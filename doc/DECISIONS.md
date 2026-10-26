@@ -1426,10 +1426,22 @@ checked one by one in the code and fixed; what came out of it:
   need form state (option selectedness), not parsing.
 - libpng is used by soie-render (-o) and the paint tests now; the
   library itself needs it from phase 6 (image decoding).
-- No valgrind or ASan on the SliTaz toolchain: leaks are checked with
-  glibc `mtrace()` through an `LD_PRELOAD` shim, crashes with a random
-  tag-soup fuzzer under `MALLOC_CHECK_=3`. Both live outside the repo
-  for now.
+- Leaks are checked with glibc `mtrace()` through an `LD_PRELOAD`
+  shim, crashes with a random tag-soup fuzzer under `MALLOC_CHECK_=3`.
+  Both live outside the repo for now.
+- AddressSanitizer: SliTaz's gcc 6.3 is built without it, gcc83 (gcc
+  8.3, `gcc-83`, installed beside it) has it. `make asan`
+  (tools/asan.sh) copies the tracked files into asan-build/ with their
+  dates (the next run builds only what changed, ~20 s), builds there
+  with `-fsanitize=address` and runs the tests, check-js when
+  QUICKJS_SRC is given; `make asan-sites` renders a dozen real sites
+  whole with xsoie too. libasan is in gcc83's own directory, not the
+  loader's path (a gap of the gcc83 package, libstdc++ is copied to
+  /usr/lib, the sanitizers are not): the build gives its rpath. The
+  first sweep found a use after free in the incremental layout (boxes
+  thrown away by the fix-ups, box_drop()), a read before shrunk
+  images' pixels (the distrowatch.com crash) and a test passing an int
+  as a size_t.
 
 ## Version and repository
 

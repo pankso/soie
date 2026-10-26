@@ -279,6 +279,14 @@ $(CSSTESTS):
 check-css: tests/csstest tests/cssvalue $(CSSTESTS)
 	python3 tests/css-parsing.py $(CSSTESTS)
 
+# The same under AddressSanitizer, in asan-build/ (tools/asan.sh): the
+# tests, and with asan-sites real pages too.
+asan:
+	QUICKJS_SRC="$(QUICKJS_SRC)" sh tools/asan.sh
+
+asan-sites:
+	QUICKJS_SRC="$(QUICKJS_SRC)" sh tools/asan.sh -s
+
 install: all
 	mkdir -p $(DESTDIR)$(PREFIX)/lib $(DESTDIR)$(PREFIX)/include/soie \
 		$(DESTDIR)$(PREFIX)/bin
@@ -307,4 +315,5 @@ clean:
 		tests/paint/*.out.png ext/*.so \
 		ext/script/*.o ext/script/dom-js.c
 
-.PHONY: all check check-js check-html5lib check-css install clean
+.PHONY: all check check-js check-html5lib check-css asan asan-sites install \
+	clean

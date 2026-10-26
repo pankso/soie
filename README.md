@@ -19,6 +19,8 @@ FreeType/HarfBuzz text (phase 4) and tables; flexbox and grid.
     make check          # unit tests and the local corpus, no network
     make check-html5lib # fetches the html5lib corpus, runs it
     make check-css      # fetches css-parsing-tests, runs it (Python 3)
+    make asan           # the tests under AddressSanitizer (gcc-83), in asan-build/
+    make asan-sites     # the same, and real sites rendered whole (network)
     make install PREFIX=/usr DESTDIR=...
 
 Needs a C99 compiler, GNU make, pkg-config, FreeType, libpng, libjpeg
