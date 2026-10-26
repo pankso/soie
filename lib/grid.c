@@ -472,23 +472,56 @@ static void size_tracks(struct tracks *t, float avail, float g)
 	}
 	sum += g * (float)(t->n > 0 ? t->n - 1 : 0);
 	free_space = avail >= 0 ? avail - sum : 0;
-	/* grow auto and max-content maxima toward their content */
-	for (i = 0; i < t->n && (free_space > 0 || avail < 0); i++) {
-		struct track *k = &t->t[i];
-		float want = 0;
+	/* maximize tracks (12.6): the free space shared equally by the
+	 * inflexible tracks, each up to its growth limit (a fixed maximum,
+	 * else its content). MDN's minmax(0, 48rem) content column stayed
+	 * 0 wide, its text one letter a line. */
+	if (avail < 0) {
+		for (i = 0; i < t->n; i++) {
+			struct track *k = &t->t[i];
 
-		if (k->max.kind == TK_AUTO || k->max.kind == TK_MAX)
-			want = k->cmax - k->base;
-		else if ((k->max.kind == TK_LEN || k->max.kind == TK_PCT) &&
-			 k->min.kind == TK_AUTO)
-			want = (fixed_size(&k->max, avail) < k->cmax ?
-				fixed_size(&k->max, avail) : k->cmax) - k->base;
-		if (want <= 0)
-			continue;
-		if (avail >= 0 && want > free_space)
-			want = free_space;
-		k->base += want;
-		free_space -= want;
+			if ((k->max.kind == TK_AUTO || k->max.kind == TK_MAX) &&
+			    k->cmax > k->base)
+				k->base = k->cmax;
+		}
+	} else {
+		float *gl = xmalloc((size_t)(t->n + 1) * sizeof(*gl));
+		int open;
+
+		for (i = 0; i < t->n; i++) {
+			struct track *k = &t->t[i];
+
+			gl[i] = k->base;
+			if (k->max.kind == TK_LEN || k->max.kind == TK_PCT)
+				gl[i] = fixed_size(&k->max, avail);
+			else if (k->max.kind == TK_AUTO || k->max.kind == TK_MAX)
+				gl[i] = k->cmax;
+			if (gl[i] < k->base)
+				gl[i] = k->base;
+		}
+		do {
+			float share;
+
+			open = 0;
+			for (i = 0; i < t->n; i++)
+				open += t->t[i].max.kind != TK_FR &&
+					gl[i] > t->t[i].base;
+			if (!open || free_space <= 0.01f)
+				break;
+			share = free_space / (float)open;
+			for (i = 0; i < t->n; i++) {
+				struct track *k = &t->t[i];
+				float d = gl[i] - k->base;
+
+				if (k->max.kind == TK_FR || d <= 0)
+					continue;
+				if (d > share)
+					d = share;
+				k->base += d;
+				free_space -= d;
+			}
+		} while (open);
+		free(gl);
 	}
 	/* flexible tracks share what is left (12.7) */
 	for (i = 0; i < t->n; i++)

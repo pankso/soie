@@ -386,6 +386,16 @@ reversed, edit the entry and say why; do not leave stale rules here.
   9.8): laid out again at its stretched height when the container's
   height is definite, single line, and the height changed, so that
   not every row of cards is laid out twice. Checked against Firefox.
+- A padding below 0 (a calc() result: lwn.net's
+  calc(50% * 0 - 65em / 2)) is 0; the column was drawn 352 px to the
+  left, under the sidebar.
+- A replaced box with a percentage width or max-width is compressible
+  (CSS Sizing 3): its min-content contribution is 0. debian.org's
+  icons, width="512" and max-width: 96%, made each column of its
+  flex-wrap rows 512 px at least: the two columns one under the other.
+- text-transform maps ASCII and the letters that are two bytes in both
+  cases (Latin-1, Latin Extended-A, Greek, Cyrillic), in place: the É
+  of "LA COMMUNAUTÉ" stayed é. ß stays, its capital being two letters.
 
 ## Fonts and text (phase 4)
 
@@ -1262,6 +1272,11 @@ on the same frozen DOM.
   alignment. Not yet: multi-span contributions, subgrid, masonry,
   baseline alignment, auto-fit collapsing, vw/vh in track sizes (taken
   as 1024x768).
+- Grid tracks are maximized (12.6) before the fr sharing: the free
+  space goes in equal shares to the inflexible tracks, each up to its
+  growth limit (a fixed maximum, else its content). MDN's content
+  column, minmax(0, 48rem) between two 1fr ones, stayed 0 wide: the
+  page one letter a line.
 - Text directly in a flex or grid container becomes an anonymous item,
   even when there are no block children.
 - A replaced item (image, <svg>) given its width but no height takes

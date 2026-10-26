@@ -191,3 +191,36 @@ width=200
 |       block <div> 0,0 200x80
 |         block <div> 0,0 200x500
 |       block <div> 0,80 200x20
+
+#data
+<!DOCTYPE html><body style="margin:0"><div style="display:grid;grid-template-columns:minmax(50px,1fr) 20px minmax(0,200px) minmax(0,1fr)"><div>a</div><div></div><div>b</div></div>
+#errors
+#layout
+width=400
+#document
+| block <html> 0,0 400x20
+|   block <body> 0,0 400x20
+|     block <div> 0,0 400x20
+|       block <div> 0,0 90x20
+|         line 0,0 90x20
+|           text "a" 0,2 8x16
+|       block <div> 90,0 20x20
+|       block <div> 110,0 200x20
+|         line 110,0 200x20
+|           text "b" 110,2 8x16
+
+#data
+<!DOCTYPE html><body style="margin:0"><div style="display:flex;flex-wrap:wrap"><div style="flex:1;width:50%"><img style="max-width:96%;height:20px" width="512"></div><div style="flex:1;width:50%">b</div></div>
+#errors
+#layout
+width=400
+#document
+| block <html> 0,0 400x26
+|   block <body> 0,0 400x26
+|     block <div> 0,0 400x26
+|       block <div> 0,0 200x26
+|         line 0,0 200x26
+|           replaced <img> 0,0 192x20
+|       block <div> 200,0 200x26
+|         line 200,0 200x20
+|           text "b" 200,2 8x16

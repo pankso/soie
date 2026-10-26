@@ -159,3 +159,30 @@ width=100
 |       block abs <div> 0,0 100x50
 |         block <div> 0,0 100x50
 |           block <div> 0,0 100x25
+
+#data
+<!DOCTYPE html><body style="margin:0"><div style="padding-left:calc(0% - 100px);background:red">x</div>
+#errors
+#layout
+width=400
+#document
+| block <html> 0,0 400x20
+|   block <body> 0,0 400x20
+|     block <div> 0,0 400x20
+|       line 0,0 400x20
+|         text "x" 0,2 8x16
+
+#data
+<!DOCTYPE html><body style="margin:0"><p style="text-transform:uppercase;margin:0">communauté ωσς</p><p style="text-transform:lowercase;margin:0">ÉCOLE ŁÓDŹ</p>
+#errors
+#layout
+width=400
+#document
+| block <html> 0,0 400x40
+|   block <body> 0,0 400x40
+|     block <p> 0,0 400x20
+|       line 0,0 400x20
+|         text "COMMUNAUTÉ ΩΣΣ" 0,2 112x16
+|     block <p> 0,20 400x20
+|       line 0,20 400x20
+|         text "école łódź" 0,22 80x16

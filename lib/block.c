@@ -216,6 +216,8 @@ static void edges(struct box *b, float cbw)
 	for (i = 0; i < 4; i++) {
 		b->b[i] = st->v[bw[i]].u.len.px;
 		b->p[i] = len_val(&st->v[pd[i]], cbw);
+		if (b->p[i] < 0)	/* a calc() below 0: lwn.net's column */
+			b->p[i] = 0;
 		b->m[i] = is_auto(st, mg[i]) ? 0 : len_val(&st->v[mg[i]], cbw);
 	}
 	if (b->type == B_INLINE || b->type == B_TEXT || b->type == B_BREAK) {
@@ -329,6 +331,12 @@ void content_sizes(struct box *b, float *mn, float *mx)
 	if (b->type == B_REPLACED) {
 		w = spec_width(b, P_WIDTH, -1);
 		*mn = *mx = w >= 0 ? w : b->iw > 0 ? b->iw : 0;
+		/* compressible (CSS Sizing 3, 5.2.2): a percentage width
+		 * or max-width makes its min-content contribution 0
+		 * (debian.org's 512 px icons, max-width: 96%, put its two
+		 * columns one under the other) */
+		if (is_pct(b->style, P_WIDTH) || is_pct(b->style, P_MAX_WIDTH))
+			*mn = 0;
 		return;
 	}
 	w = spec_width(b, P_WIDTH, -1);

@@ -83,6 +83,48 @@ static int is_space(int c)
 	return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\f';
 }
 
+/* The other case of a two-byte letter (Latin-1, Latin Extended-A,
+ * Greek, Cyrillic: both cases are two bytes in UTF-8), or c. */
+static unsigned other_case(unsigned c, int up)
+{
+	if (up) {
+		if ((c >= 0xe0 && c <= 0xfe && c != 0xf7) ||
+		    (c >= 0x3b1 && c <= 0x3c9 && c != 0x3c2) ||
+		    (c >= 0x430 && c <= 0x44f))
+			return c - 0x20;
+		if (c == 0x3c2)
+			return 0x3a3;	/* final sigma */
+		if (c == 0xff)
+			return 0x178;
+		if (c >= 0x450 && c <= 0x45f)
+			return c - 0x50;
+		if (((c >= 0x101 && c <= 0x137) || (c >= 0x14b &&
+		    c <= 0x177)) && (c & 1))
+			return c - 1;
+		if (((c >= 0x13a && c <= 0x148) || (c >= 0x17a &&
+		    c <= 0x17e)) && !(c & 1))
+			return c - 1;
+	} else {
+		if ((c >= 0xc0 && c <= 0xde && c != 0xd7) ||
+		    (c >= 0x391 && c <= 0x3a9 && c != 0x3a2) ||
+		    (c >= 0x410 && c <= 0x42f))
+			return c + 0x20;
+		if (c == 0x178)
+			return 0xff;
+		if (c >= 0x400 && c <= 0x40f)
+			return c + 0x50;
+		if (((c >= 0x100 && c <= 0x136) || (c >= 0x14a &&
+		    c <= 0x176)) && !(c & 1) && c != 0x130)
+			return c + 1;
+		if (((c >= 0x139 && c <= 0x147) || (c >= 0x179 &&
+		    c <= 0x17d)) && (c & 1))
+			return c + 1;
+	}
+	return c;
+}
+
+/* text-transform, in place: ASCII and the two-byte letters (the é of
+ * debian.org's "LA COMMUNAUTÉ"); ß stays, its capital being two */
 static void transform(const struct style *st, char *s, size_t n)
 {
 	int up = kw(st, P_TEXT_TRANSFORM, "uppercase");
@@ -94,11 +136,23 @@ static void transform(const struct style *st, char *s, size_t n)
 		return;
 	for (i = 0; i < n; i++) {
 		int start = i == 0 || s[i - 1] == ' ';
+		unsigned char c = (unsigned char)s[i];
 
-		if ((up || (cap && start)) && s[i] >= 'a' && s[i] <= 'z')
-			s[i] = (char)(s[i] - 32);
-		else if (low && s[i] >= 'A' && s[i] <= 'Z')
-			s[i] = (char)(s[i] + 32);
+		if ((c & 0xe0) == 0xc0 && i + 1 < n &&
+		    ((unsigned char)s[i + 1] & 0xc0) == 0x80) {
+			unsigned u = (unsigned)(c & 0x1f) << 6 |
+				((unsigned char)s[i + 1] & 0x3f);
+			unsigned v = up || (cap && start) ? other_case(u, 1) :
+				low ? other_case(u, 0) : u;
+
+			s[i] = (char)(0xc0 | v >> 6);
+			s[i + 1] = (char)(0x80 | (v & 0x3f));
+			i++;
+		} else if ((up || (cap && start)) && c >= 'a' && c <= 'z') {
+			s[i] = (char)(c - 32);
+		} else if (low && c >= 'A' && c <= 'Z') {
+			s[i] = (char)(c + 32);
+		}
 	}
 }
 
