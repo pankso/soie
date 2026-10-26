@@ -617,6 +617,60 @@ reversed, edit the entry and say why; do not leave stale rules here.
   pages with scripts, so two QuickJS runtimes, one network page, one
   freed while loading, under MALLOC_CHECK_=3) paint exactly what each
   paints alone.
+- The extensions are those of the build in use: $SOIE_EXT_DIR, else
+  the source tree's when the program (xsoie, gsoie) or libsoie (a
+  program built on the tree's, found with dladdr()) is in one (a
+  directory up to four levels above with lib/soie/soie.h and ext/),
+  else the installed ones. Before, a program of the tree took the
+  installed extensions whenever there were some (another ABI), and
+  only a program one level down found the tree's.
+- With Ctrl, Alt or Meta a key the page does not take is the front's:
+  the shell no longer scrolls the page on Ctrl+Page Up or Alt+Down
+  (Ctrl+Home and Ctrl+End still do), and a text field gives back the
+  shortcuts it does not know. A GTK notebook's Ctrl+Page Up never
+  reached it.
+
+## SoieView, the GTK 3 widget
+
+- gtk/soie-view.[ch]: SoieView, a GtkWidget on a shell, for Toile's
+  Soie build (toile-soie) the way WebKitWebView is for its WebKit one;
+  the API follows WebKit's names where it has the same thing
+  (load_uri, reload, go_back, can_go_back, "uri", "title"). Its own
+  directory, not browser/: it is a library, not a front, and does not
+  use front.c (Toile has its bars). Built when GTK 3 is there, as
+  gtk/libsoie-gtk.so.0 (the shell inside, linking libsoie.so) with the
+  header installed as soie/soie-view.h.
+- Painting: a cairo ARGB32 image surface is B G R A on a little endian
+  machine, what shell_bgra() paints, no conversion. A repaint is the
+  shell's damage, a scroll moved pixels, or all of it, and only those
+  rects are queued to GTK; video frames their rect.
+- The loop: one g_unix_fd_add() on the shells' descriptor for all the
+  views (shell_route() then a tick of each, so it never spins when no
+  view is left), a GLib timeout per view for its next tick, an idle
+  tick after input (scripts' new timers, a load started).
+- What the shell tells (title, address, alert) is kept and told after
+  its call returns, as GObject notifications ("uri", "title",
+  "loading", "can-go-back", "can-go-forward") and signals ("alert",
+  "link-hovered"): a handler may destroy the view, never inside the
+  shell.
+- Keys through a GtkIMMulticontext (dead keys, compose, the user's
+  input method); shortcuts (Ctrl, Alt, Meta) skip it, and a key the
+  page does not take goes on to the window. Ctrl+V and Shift+Insert
+  paste into a page's text field, the middle button the PRIMARY
+  selection.
+- GtkScrollable: in a GtkScrolledWindow the page has a real scroll
+  bar; the vertical adjustment follows the page (height, scroll), its
+  moves scroll the page. No horizontal scrolling yet.
+- gtk/gsoie: a little tabbed browser on it (address bar, back,
+  forward, reload, status line, Ctrl+T/W/L, F5), to try the widget
+  and show its use; installed too. Checked on Xvfb: tabs loading at
+  once, Ctrl+Page Up between them, the address bar, history, tabs
+  closed while YouTube's and Wikipedia's scripts load (MALLOC_CHECK_).
+- Not yet (step 3, what Toile needs): zoom and the screen's scale
+  (HiDPI: the page is painted at 1 px per CSS px), context menu, new
+  window and target=_blank, downloads, toile:// scheme, private mode,
+  load_html, an adblock hook. Seen on the way: hg.slitaz.org's Anubis
+  wants Web Workers.
 
 ## YouTube, the first round
 

@@ -50,8 +50,9 @@ share (bars, keys, repainting only what changed) is `browser/front.c`,
 xsoie is the Xlib part (MIT-SHM), `browser/wsoie` the Wayland one
 (built when wayland-client, wayland-cursor and xkbcommon are there). Ctrl+L address (or words to search for,
 `$SOIE_SEARCH`), Ctrl+F find, Ctrl+C/Ctrl+V clipboard, Ctrl+N or the
-middle button on a link a new window, Alt+arrows history, F5 reload. It loads the installed extensions, or those of
-`$SOIE_EXT_DIR`: `SOIE_EXT_DIR=ext browser/xsoie` in the tree.
+middle button on a link a new window, Alt+arrows history, F5 reload.
+It loads the extensions of `$SOIE_EXT_DIR`, else those of the source
+tree when run from it, else the installed ones.
 Cookies live in `~/.local/share/soie/cookies.txt`; a hosts-style
 block list in `~/.config/soie/block.txt` turns content blocking on.
 `soie-render -x ext/webp.so page.html` loads an extension;
@@ -60,6 +61,10 @@ block list in `~/.config/soie/block.txt` turns content blocking on.
 `SOIE_DEBUG=1` prints loads, timings and script errors (2: the input too), F12 saves the page for a bug report, a crash writes `~/.cache/soie/crash-PID.txt`. A click plays a video;
 `SOIE_AUDIO=none` keeps players silent.
 
+With GTK 3, `gtk/libsoie-gtk.so` is SoieView, a widget for a browser
+to show its pages with Soie (`gtk/soie-view.h`), and `gtk/gsoie [URL...]`
+a little tabbed browser on it.
+
 ## Layout
 
     lib/         libsoie (public headers in lib/soie/)
@@ -67,6 +72,8 @@ block list in `~/.config/soie/block.txt` turns content blocking on.
                  and TLS, fetch threads, debugging
     browser/     the browser's fronts: their common part, xsoie (Xlib),
                  wsoie (Wayland)
+    gtk/         SoieView, a GTK 3 widget (libsoie-gtk) for browsers like
+                 Toile, and gsoie, a little tabbed browser on it
     ext/         extensions (cookies, block, webp, script, media)
     tools/       soie-render, generators
     tests/       unit tests, html5lib test runner, local corpus

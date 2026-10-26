@@ -47,6 +47,11 @@ ifeq ($(shell pkg-config --exists wayland-client wayland-cursor xkbcommon \
 WSOIE = browser/wsoie
 endif
 
+# The GTK 3 widget (libsoie-gtk) and its demo, when GTK 3 is there
+ifeq ($(shell pkg-config --exists gtk+-3.0 && echo y),y)
+GTK = gtk/libsoie-gtk.so.$(SOVERSION) gtk/gsoie
+endif
+
 # Extensions: those without dependencies always, the others when
 # their libraries are there (or list them: make EXTS="ext/cookies.so").
 EXTS = ext/cookies.so ext/block.so
@@ -75,7 +80,7 @@ QJS_OBJS = $(QUICKJS)/lib/quickjs/libquickjs.a
 endif
 
 all: lib/libsoie.a lib/libsoie.so.$(SOVERSION) tools/soie-render browser/xsoie \
-	$(WSOIE) $(EXTS)
+	$(WSOIE) $(GTK) $(EXTS)
 
 lib/libsoie.a: $(LIB_OBJS)
 	rm -f $@
@@ -185,6 +190,26 @@ browser/wsoie.o $(WL_OBJS): CPPFLAGS += \
 	$(shell pkg-config --cflags $(WL_PKGS))
 tools/soie-render.o: CPPFLAGS += -DSOIE_EXT_DIR='"$(EXTDIR)"'
 
+# SoieView, the GTK 3 widget: the shell in a library of its own for
+# the browsers built on it (Toile), and gsoie, a little one to try it.
+GTK_CFLAGS = $(shell pkg-config --cflags gtk+-3.0)
+GTK_LIBS = $(shell pkg-config --libs gtk+-3.0)
+gtk/libsoie-gtk.so.$(SOVERSION): gtk/soie-view.o $(SHELL_OBJS) \
+	lib/libsoie.so.$(SOVERSION)
+	$(CC) -shared -Wl,-soname,libsoie-gtk.so.$(SOVERSION) $(LDFLAGS) \
+		-o $@ gtk/soie-view.o $(SHELL_OBJS) \
+		lib/libsoie.so.$(SOVERSION) $(LIBS) \
+		$(shell pkg-config --libs $(SHELL_PKGS)) $(GTK_LIBS) -lpthread
+gtk/gsoie: gtk/gsoie.o gtk/libsoie-gtk.so.$(SOVERSION)
+	$(CC) $(LDFLAGS) -Wl,-rpath,'$$ORIGIN:$$ORIGIN/../lib' -o $@ \
+		gtk/gsoie.o gtk/libsoie-gtk.so.$(SOVERSION) \
+		lib/libsoie.so.$(SOVERSION) $(GTK_LIBS)
+gtk/soie-view.o: $(SHELL_HEADERS) gtk/soie-view.h $(HEADERS)
+gtk/gsoie.o: gtk/soie-view.h
+# GTK's headers are not ISO C
+gtk/soie-view.o gtk/gsoie.o: CPPFLAGS += -Ishell $(GTK_CFLAGS)
+gtk/soie-view.o gtk/gsoie.o: CFLAGS += -Wno-pedantic
+
 tests/exttest: tests/exttest.o lib/libsoie.so.$(SOVERSION)
 	$(CC) $(LDFLAGS) $(RPATH) -o $@ tests/exttest.o \
 		lib/libsoie.so.$(SOVERSION)
@@ -255,12 +280,20 @@ install: all
 	ln -sf libsoie.so.$(SOVERSION) $(DESTDIR)$(PREFIX)/lib/libsoie.so
 	cp $(HEADERS) $(DESTDIR)$(PREFIX)/include/soie/
 	cp tools/soie-render browser/xsoie $(WSOIE) $(DESTDIR)$(PREFIX)/bin/
+ifneq ($(GTK),)
+	cp gtk/libsoie-gtk.so.$(SOVERSION) $(DESTDIR)$(PREFIX)/lib/
+	ln -sf libsoie-gtk.so.$(SOVERSION) \
+		$(DESTDIR)$(PREFIX)/lib/libsoie-gtk.so
+	cp gtk/soie-view.h $(DESTDIR)$(PREFIX)/include/soie/
+	cp gtk/gsoie $(DESTDIR)$(PREFIX)/bin/
+endif
 	mkdir -p $(DESTDIR)$(EXTDIR)
 	cp $(EXTS) $(DESTDIR)$(EXTDIR)/
 
 clean:
 	rm -f lib/*.o lib/libsoie.a lib/libsoie.so.* tools/*.o \
 		tools/soie-render shell/*.o browser/*.o browser/xsoie browser/wsoie \
+		gtk/*.o gtk/libsoie-gtk.so.* gtk/gsoie \
 		browser/xdg-shell.[ch] browser/xdg-decoration.[ch] \
 		tests/*.o tests/html5lib tests/unit \
 		tests/csstest tests/cssvalue tests/painttest tests/exttest lib/ua-css.c \

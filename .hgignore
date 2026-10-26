@@ -19,3 +19,4 @@ browser/xdg-decoration.[ch]
 tests/exttest
 ext/*.so
 ext/script/dom-js.c
+gtk/gsoie
