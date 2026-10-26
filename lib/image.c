@@ -526,6 +526,8 @@ static void blend_px(struct canvas *c, int x, int y, const unsigned char *s,
 	if (x < c->cx0 || y < c->cy0 || x >= c->cx1 || y >= c->cy1)
 		return;
 	al = (int)(s[3] * a * c->alpha + 0.5f);
+	if (c->mask)
+		al = al * mask_at(c, x, y) / 255;
 	if (al <= 0)
 		return;
 	p = c->px + (size_t)y * (size_t)c->stride + (size_t)x * 4;
@@ -897,11 +899,18 @@ static int nth_layer(const struct cvlist *l, int k, struct cur *out)
 	return 0;
 }
 
-void paint_bg_image(struct canvas *c, const struct box *b, float x, float y,
-	float w, float h)
+/* The image layers of property img (background-image, mask-image) and
+ * their position, size and repeat, into the box (x, y, w, h). */
+void paint_layers_of(struct canvas *c, const struct box *b, int img_p,
+	float x, float y, float w, float h)
 {
 	const struct style *st = b->style;
-	const char *img = st->v[P_BACKGROUND_IMAGE].u.str;
+	const char *img = st->v[img_p].u.str;
+	int pos_p = img_p == P_MASK_IMAGE ? P_MASK_POSITION :
+		P_BACKGROUND_POSITION;
+	int size_p = img_p == P_MASK_IMAGE ? P_MASK_SIZE : P_BACKGROUND_SIZE;
+	int rep_p = img_p == P_MASK_IMAGE ? P_MASK_REPEAT :
+		P_BACKGROUND_REPEAT;
 	struct cvlist li, lp, ls, lr;
 	unsigned char cur[4];
 	int layer, nlayers = 0, i;
@@ -910,12 +919,12 @@ void paint_bg_image(struct canvas *c, const struct box *b, float x, float y,
 	if (!img || !strcmp(img, "none"))
 		return;
 	css_component_values(img, strlen(img), &li);
-	css_component_values(st->v[P_BACKGROUND_POSITION].u.str,
-		strlen(st->v[P_BACKGROUND_POSITION].u.str), &lp);
-	css_component_values(st->v[P_BACKGROUND_SIZE].u.str,
-		strlen(st->v[P_BACKGROUND_SIZE].u.str), &ls);
-	css_component_values(st->v[P_BACKGROUND_REPEAT].u.str,
-		strlen(st->v[P_BACKGROUND_REPEAT].u.str), &lr);
+	css_component_values(st->v[pos_p].u.str, strlen(st->v[pos_p].u.str),
+		&lp);
+	css_component_values(st->v[size_p].u.str, strlen(st->v[size_p].u.str),
+		&ls);
+	css_component_values(st->v[rep_p].u.str, strlen(st->v[rep_p].u.str),
+		&lr);
 	color_to_rgba(st->v[P_COLOR].u.color, cur);
 	for (i = 0; i < li.n; i++)
 		if (li.v[i].type == CT_COMMA)
@@ -1046,4 +1055,10 @@ void paint_bg_image(struct canvas *c, const struct box *b, float x, float y,
 	cvlist_free(&lp);
 	cvlist_free(&ls);
 	cvlist_free(&lr);
+}
+
+void paint_bg_image(struct canvas *c, const struct box *b, float x, float y,
+	float w, float h)
+{
+	paint_layers_of(c, b, P_BACKGROUND_IMAGE, x, y, w, h);
 }

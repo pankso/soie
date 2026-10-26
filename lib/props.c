@@ -405,7 +405,7 @@ enum {
 	SH_GRID_ROW, SH_GRID_COLUMN, SH_GRID_AREA, SH_MARGIN_INLINE,
 	SH_MARGIN_BLOCK, SH_PADDING_INLINE, SH_PADDING_BLOCK,
 	SH_INSET_INLINE, SH_INSET_BLOCK, SH_BORDER_INLINE, SH_BORDER_BLOCK,
-	SH_ALL, NSHORTHANDS
+	SH_MASK, SH_ALL, NSHORTHANDS
 };
 
 static const char *const shorthand_names[NSHORTHANDS] = {
@@ -417,7 +417,7 @@ static const char *const shorthand_names[NSHORTHANDS] = {
 	"text-decoration", "white-space", "text-wrap", "grid-row",
 	"grid-column", "grid-area", "margin-inline", "margin-block",
 	"padding-inline", "padding-block", "inset-inline", "inset-block",
-	"border-inline", "border-block", "all"
+	"border-inline", "border-block", "mask", "all"
 };
 
 /* Logical and legacy names, for a horizontal left-to-right page. */
@@ -454,6 +454,10 @@ static const char *const aliases[][2] = {
 	{ "word-wrap", "overflow-wrap" },
 	{ "grid-row-gap", "row-gap" }, { "grid-column-gap", "column-gap" },
 	{ "-webkit-box-sizing", "box-sizing" },
+	{ "-webkit-mask-image", "mask-image" },
+	{ "-webkit-mask-repeat", "mask-repeat" },
+	{ "-webkit-mask-position", "mask-position" },
+	{ "-webkit-mask-size", "mask-size" },
 	{ "-webkit-text-decoration-line", "text-decoration-line" },
 	{ NULL, NULL }
 };
@@ -464,6 +468,7 @@ static const char *const short_aliases[][2] = {
 	{ "border-block-start", "border-top" },
 	{ "border-block-end", "border-bottom" },
 	{ "grid-gap", "gap" },
+	{ "-webkit-mask", "mask" },
 	{ NULL, NULL }
 };
 
@@ -546,6 +551,10 @@ static int shorthand_longhands(int sh, int *out)
 		L(P_BACKGROUND_REPEAT), L(P_BACKGROUND_POSITION);
 		L(P_BACKGROUND_SIZE), L(P_BACKGROUND_ATTACHMENT);
 		L(P_BACKGROUND_CLIP), L(P_BACKGROUND_ORIGIN);
+		break;
+	case SH_MASK:
+		L(P_MASK_IMAGE), L(P_MASK_REPEAT), L(P_MASK_POSITION);
+		L(P_MASK_SIZE);
 		break;
 	case SH_FONT:
 		L(P_FONT_STYLE), L(P_FONT_VARIANT_CAPS), L(P_FONT_WEIGHT);
@@ -792,7 +801,10 @@ static int is_box_kw(const struct cv *v)
 		cv_ident(v, "content-box") || cv_ident(v, "text");
 }
 
-static int sh_background(struct cur *c, struct svec *out)
+/* background, or with mask the mask shorthand: the same layers
+ * without a color, and with mask keywords (mode, composite, boxes) that
+ * Soie does not use */
+static int sh_background(struct cur *c, struct svec *out, int mask)
 {
 	struct buf img = { 0 }, pos = { 0 }, size = { 0 }, rep = { 0 },
 		clip = { 0 }, org = { 0 };
@@ -833,6 +845,11 @@ static int sh_background(struct cur *c, struct svec *out)
 				   "scroll|fixed|local", v->str) >= 0) {
 				att = kw_index("scroll|fixed|local", v->str);
 				cur_next(c);
+			} else if (mask && v->type == CT_IDENT && kw_index(
+				   "alpha|luminance|match-source|add|subtract|"
+				   "intersect|exclude|fill-box|stroke-box|"
+				   "view-box|no-clip", v->str) >= 0) {
+				cur_next(c);
 			} else if (is_box_kw(v)) {
 				/* first box: origin, second: clip */
 				struct buf *bb = boxes++ ? &clip : &org;
@@ -856,7 +873,7 @@ static int sh_background(struct cur *c, struct svec *out)
 					buf_putc(bb, ' ');
 				css_serialize(bb, v, 1);
 				cur_next(c);
-			} else if (parse_color(c, &col)) {
+			} else if (!mask && parse_color(c, &col)) {
 				if (have_color)
 					goto bad;
 				color = col;
@@ -886,13 +903,17 @@ static int sh_background(struct cur *c, struct svec *out)
 		if (have_color)
 			goto bad;	/* the color only in the last layer */
 	}
-	shorthand_longhands(SH_BACKGROUND, lh);
+	shorthand_longhands(mask ? SH_MASK : SH_BACKGROUND, lh);
 	for (i = 0; lh[i] >= 0; i++) {
 		struct sval *d = svec_add(out, lh[i]);
-		struct buf *src = lh[i] == P_BACKGROUND_IMAGE ? &img :
-			lh[i] == P_BACKGROUND_POSITION ? &pos :
-			lh[i] == P_BACKGROUND_SIZE ? &size :
-			lh[i] == P_BACKGROUND_REPEAT ? &rep :
+		struct buf *src = lh[i] == P_BACKGROUND_IMAGE ||
+			lh[i] == P_MASK_IMAGE ? &img :
+			lh[i] == P_BACKGROUND_POSITION ||
+			lh[i] == P_MASK_POSITION ? &pos :
+			lh[i] == P_BACKGROUND_SIZE || lh[i] == P_MASK_SIZE ?
+			&size :
+			lh[i] == P_BACKGROUND_REPEAT || lh[i] == P_MASK_REPEAT ?
+			&rep :
 			lh[i] == P_BACKGROUND_CLIP ? &clip :
 			lh[i] == P_BACKGROUND_ORIGIN ? &org : NULL;
 
@@ -1215,7 +1236,8 @@ int parse_shorthand_value(int sh, const struct cvlist *value,
 		ok = sh_pair(P_OVERFLOW_X, P_OVERFLOW_Y, &c, out, 0);
 		break;
 	case SH_BACKGROUND:
-		ok = sh_background(&c, out);
+	case SH_MASK:
+		ok = sh_background(&c, out, sh == SH_MASK);
 		break;
 	case SH_FONT:
 		ok = sh_font(&c, out);

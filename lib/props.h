@@ -154,6 +154,12 @@ PROP(BACKGROUND_ATTACHMENT, "background-attachment", 0, K_KW, 0,
 PROP(BACKGROUND_CLIP, "background-clip", 0, K_RAW, 0, "", "border-box")
 PROP(BACKGROUND_ORIGIN, "background-origin", 0, K_RAW, 0, "",
 	"padding-box")
+/* masks: image layers as backgrounds', their alpha (icons painted in
+ * currentColor through an SVG) */
+PROP(MASK_IMAGE, "mask-image", 0, K_RAW, 0, "", "none")
+PROP(MASK_REPEAT, "mask-repeat", 0, K_RAW, 0, "", "repeat")
+PROP(MASK_POSITION, "mask-position", 0, K_RAW, 0, "", "0% 0%")
+PROP(MASK_SIZE, "mask-size", 0, K_RAW, 0, "", "auto")
 PROP(VERTICAL_ALIGN, "vertical-align", 0, K_LEN, 0,
 	"baseline|sub|super|text-top|text-bottom|middle|top|bottom",
 	"baseline")

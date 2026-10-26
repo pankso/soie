@@ -178,6 +178,8 @@ static void poly_fill(struct canvas *c, struct poly *p, int evenodd,
 				if (y >= c->cy0 && y < c->cy1) {
 					a = rgba[3] * cov / 255;
 					a = (int)((float)a * c->alpha + 0.5f);
+					if (c->mask)
+						a = a * mask_at(c, i, y) / 255;
 					px = c->px + (size_t)y * (size_t)c->stride +
 						(size_t)i * 4;
 					px[0] = (unsigned char)((rgba[r] * a +

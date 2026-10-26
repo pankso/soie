@@ -433,6 +433,16 @@ reversed, edit the entry and say why; do not leave stale rules here.
   (shaded); corners are not mitred. Rounded borders draw one color.
 - overflow other than visible clips to the padding box (rectangles
   only; rounded clipping later).
+- mask-image (and -webkit-mask-*, the mask shorthands): the way icons
+  are drawn now, a box of background-color currentColor through an
+  SVG (Wikipedia, the Arch wiki, MDN: black squares without it). Like
+  opacity, no layer: the mask's layers (images, SVG, gradients, with
+  mask-size, -position and -repeat, painted by the background code)
+  go into a buffer of the box's border box, whose alpha then weighs
+  every pixel the box and its descendants paint (blend(), images,
+  SVG); a mask inside a mask multiplies both. A masked box is a
+  stacking context; mask-mode (alpha only), mask-composite, -clip and
+  -origin are not used. Test: `tests/paint/mask.html`.
 - Paint tests (`tests/paint/*.html`, 320x240, stub font drawn as one
   box per character) compare pixels with reference PNGs. References
   are written with `tests/painttest -u` and checked by eye before

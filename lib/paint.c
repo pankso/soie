@@ -44,6 +44,8 @@ static void blend(struct canvas *c, int x, int y, const unsigned char *rgba,
 		return;
 	a = rgba[3] * cov / 255;
 	a = (int)((float)a * c->alpha + 0.5f);
+	if (c->mask)
+		a = a * mask_at(c, x, y) / 255;
 	if (a <= 0)
 		return;
 	p = c->px + (size_t)y * (size_t)c->stride + (size_t)x * 4;
@@ -566,11 +568,90 @@ static void zadd(struct box *b)
 /* A positioned box with a z-index, fixed, or translucent, is a
  * stacking context: its positioned descendants are ordered within it,
  * then it takes its place among its own siblings. */
+static int masked(const struct box *b)
+{
+	const char *m = b->style ? b->style->v[P_MASK_IMAGE].u.str : NULL;
+
+	return m && strcmp(m, "none");
+}
+
 static int stacking_context(const struct box *b)
 {
 	return positioned(b) && (!b->style->v[P_Z_INDEX].kw ||
 		kw(b->style, P_POSITION, "fixed") ||
-		b->style->v[P_OPACITY].u.num < 1);
+		b->style->v[P_OPACITY].u.num < 1 || masked(b));
+}
+
+/*
+ * mask-image: b's mask layers painted into a buffer of its border box
+ * (clipped), whose alpha then weighs every pixel painted (blend());
+ * inside another mask, both. *save keeps the mask before, for
+ * mask_pop(). 0 when b has no mask.
+ */
+static int mask_push(struct canvas *c, const struct box *b,
+	struct canvas *save)
+{
+	struct canvas t;
+	float x, y, w, h;
+	int x0, y0, x1, y1, i, j;
+	unsigned char *m;
+
+	if (!masked(b))
+		return 0;
+	*save = *c;
+	x = b->x - b->p[3] - b->b[3];
+	y = b->y - b->p[0] - b->b[0];
+	w = b->w + b->p[1] + b->p[3] + b->b[1] + b->b[3];
+	h = b->h + b->p[0] + b->p[2] + b->b[0] + b->b[2];
+	x0 = (int)floorf(x - c->ox);
+	y0 = (int)floorf(y - c->oy);
+	x1 = (int)ceilf(x + w - c->ox);
+	y1 = (int)ceilf(y + h - c->oy);
+	x0 = x0 < c->cx0 ? c->cx0 : x0;
+	y0 = y0 < c->cy0 ? c->cy0 : y0;
+	x1 = x1 > c->cx1 ? c->cx1 : x1;
+	y1 = y1 > c->cy1 ? c->cy1 : y1;
+	if (x1 < x0)
+		x1 = x0;
+	if (y1 < y0)
+		y1 = y0;
+	memset(&t, 0, sizeof(t));
+	t.w = x1 - x0;
+	t.h = y1 - y0;
+	t.stride = t.w * 4;
+	t.px = calloc((size_t)t.w * (size_t)t.h + 1, 4);
+	m = malloc((size_t)t.w * (size_t)t.h + 1);
+	if (!t.px || !m)
+		abort();
+	t.ox = c->ox + (float)x0;
+	t.oy = c->oy + (float)y0;
+	t.cx1 = t.w;
+	t.cy1 = t.h;
+	t.alpha = 1;
+	paint_layers_of(&t, b, P_MASK_IMAGE, x, y, w, h);
+	for (j = 0; j < t.h; j++)
+		for (i = 0; i < t.w; i++)
+			m[(size_t)j * (size_t)t.w + (size_t)i] = (unsigned char)
+				(t.px[(size_t)j * (size_t)t.stride +
+				(size_t)i * 4 + 3] * mask_at(c, x0 + i,
+				y0 + j) / 255);
+	free(t.px);
+	c->mask = m;
+	c->mx0 = x0;
+	c->my0 = y0;
+	c->mx1 = x1;
+	c->my1 = y1;
+	return 1;
+}
+
+static void mask_pop(struct canvas *c, const struct canvas *save)
+{
+	free(c->mask);
+	c->mask = save->mask;
+	c->mx0 = save->mx0;
+	c->my0 = save->my0;
+	c->mx1 = save->mx1;
+	c->my1 = save->my1;
 }
 
 static int zcmp(const void *a, const void *b)
@@ -604,6 +685,8 @@ static void paint_box(struct canvas *c, struct box *b, int stacking)
 	struct box *k;
 	float x, y, w, h, save_alpha = c->alpha;
 	int cx0 = c->cx0, cy0 = c->cy0, cx1 = c->cx1, cy1 = c->cy1;
+	struct canvas msave;
+	int mk;
 
 	if (!stacking && positioned(b) && b->parent) {
 		zadd(b);
@@ -611,6 +694,7 @@ static void paint_box(struct canvas *c, struct box *b, int stacking)
 	}
 	if (b->type == B_TEXT || b->type == B_BREAK)
 		return;
+	mk = mask_push(c, b, &msave);
 	if (b->style && kw(b->style, P_VISIBILITY, "hidden") &&
 	    b->type != B_INLINE) {
 		/* descendants may be visible again: walk on */
@@ -631,6 +715,8 @@ static void paint_box(struct canvas *c, struct box *b, int stacking)
 		paint_replaced(c, b);
 		paint_outline(c, b, x, y, w, h);
 		c->alpha = save_alpha;
+		if (mk)
+			mask_pop(c, &msave);
 		return;
 	}
 	if (b->style && b->parent && (!kw(b->style, P_OVERFLOW_X, "visible") ||
@@ -655,6 +741,8 @@ static void paint_box(struct canvas *c, struct box *b, int stacking)
 	c->cy1 = cy1;
 	paint_outline(c, b, x, y, w, h);
 	c->alpha = save_alpha;
+	if (mk)
+		mask_pop(c, &msave);
 }
 
 static void paint_layer(struct canvas *c, struct box *b);
@@ -738,7 +826,15 @@ static void paint_context(struct canvas *c, struct box *b)
 	}
 	paint_box(c, b, 1);
 	c->alpha *= op;
-	paint_layers(c);
+	{
+		/* its positioned descendants under its mask too */
+		struct canvas msave;
+		int mk = mask_push(c, b, &msave);
+
+		paint_layers(c);
+		if (mk)
+			mask_pop(c, &msave);
+	}
 	c->alpha = alpha;
 	free(zlist);
 	zlist = outer;

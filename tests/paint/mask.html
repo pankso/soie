@@ -1,0 +1,17 @@
+<!DOCTYPE html>
+<!-- mask-image: icons painted in currentColor through an SVG
+     (Wikipedia's, MDN's), the -webkit- names and the mask shorthand,
+     gradient fades, a mask in a mask -->
+<style>
+body { margin: 8px; color: #36c }
+.i { display: inline-block; width: 40px; height: 40px; margin: 4px; background-color: currentColor }
+.a { mask-image: url(img/star.svg); mask-size: 100%; mask-repeat: no-repeat }
+.b { -webkit-mask-image: url(img/star.svg); -webkit-mask-size: contain; -webkit-mask-position: center; -webkit-mask-repeat: no-repeat; width: 80px; color: #c33 }
+.c { -webkit-mask: url(img/star.svg) no-repeat center / 50% 50%; color: #393 }
+.fade { width: 200px; height: 30px; background: linear-gradient(90deg, #f80, #80f); mask-image: linear-gradient(to right, black, transparent) }
+.outer { mask-image: linear-gradient(90deg, black, transparent); width: 240px }
+.none { mask: none }
+</style>
+<div><span class="i a"></span><span class="i b"></span><span class="i c"></span><span class="i none"></span></div>
+<div class="fade"></div>
+<div class="outer"><span class="i a"></span><span class="i a"></span><span class="i a"></span><span class="i a"></span><span class="i a"></span></div>
