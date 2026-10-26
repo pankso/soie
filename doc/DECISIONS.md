@@ -582,6 +582,42 @@ reversed, edit the entry and say why; do not leave stale rules here.
   browsers. A fragment link updates the address too. YouTube's address
   followed none of its videos before.
 
+## The shell on its own, many page views
+
+- The shell left browser/ for shell/ (shell.c, net.c, fetch.c,
+  debug.c): it has no toolkit and the fronts are not its only users,
+  a GTK 3 widget for Toile (toile-soie, the build for old hardware)
+  comes on it next. browser/ keeps the fronts: front.c, xsoie,
+  wsoie. Moved with `hg mv`, the history follows.
+- A shell is an object now (`shell *shell_new(ui, data, scripts)`,
+  shell_free(), every shell_*() call takes it): one page view with
+  its history, focus, find and painting state, as many as a toolkit
+  has tabs, in one process and one thread. xsoie and wsoie make one
+  and behave as before (renders byte for byte the same, offscreen and
+  on screen). The three front calls became a struct shell_ui of
+  callbacks with the front's data, NULL for the unwanted ones; the
+  title, which the toolkit part sets, is tk_title() in front.h.
+- What the shells share: the extensions, the fetch threads and their
+  descriptor (shell_init(), once), the HTTP pool, the cookies, the
+  debug trail. A job is tagged with its load's gen as before, but gens
+  now count across shells: the finished jobs go to the inbox of the
+  shell whose page has that gen, any other is dropped (a page gone,
+  a shell freed). So when the descriptor is readable a front ticks
+  every shell; a shell's tick reads its own inbox only.
+- The script host is per shell (its data is the shell); requests of
+  the script threads only reach net_request(), never the shell, so
+  one still out after shell_free() is harmless (the script engine
+  copied the function and data when it queued them).
+- The engine needed nothing: its other static state (the damage's old
+  table, the layout's old and new trees, the font document) lives
+  only during one soie_layout_document() call, and all shells lay out
+  in the same thread; the glyph and font caches are meant to be
+  shared.
+- Checked with a scratch program: four shells loading at once (two
+  pages with scripts, so two QuickJS runtimes, one network page, one
+  freed while loading, under MALLOC_CHECK_=3) paint exactly what each
+  paints alone.
+
 ## YouTube, the first round
 
 YouTube showed its static skeleton only: its application never

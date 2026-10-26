@@ -252,9 +252,9 @@ static void frame_done(void *data, struct wl_callback *cb, uint32_t t)
 	present();
 }
 
-/* Front calls of the shell */
+/* Toolkit calls of the front */
 
-void ui_title(const char *title)
+void tk_title(const char *title)
 {
 	char full[600];
 
@@ -263,8 +263,6 @@ void ui_title(const char *title)
 	snprintf(full, sizeof(full), "%s - Soie", title);
 	xdg_toplevel_set_title(toplevel, full);
 }
-
-/* Toolkit calls of the front */
 
 void tk_show(const int (*r)[4], int n)
 {

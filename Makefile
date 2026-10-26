@@ -141,18 +141,20 @@ tests/html5lib: tests/html5lib.o lib/libsoie.a
 tests/unit: tests/unit.o lib/libsoie.a
 	$(CC) $(LDFLAGS) -o $@ tests/unit.o lib/libsoie.a $(LIBS)
 
-# The browser: the shell (pages, network: GnuTLS, zlib), the fronts'
-# common part (front.c) and their toolkits: xsoie on Xlib (MIT-SHM).
+# The shell (shell/: pages, network: GnuTLS, zlib), no toolkit; the
+# browser's fronts (browser/): their common part (front.c) and their
+# toolkits: xsoie on Xlib (MIT-SHM).
 SHELL_PKGS = gnutls zlib libpng
-SHELL_OBJS = browser/shell.o browser/net.o browser/fetch.o browser/debug.o
+SHELL_OBJS = shell/shell.o shell/net.o shell/fetch.o shell/debug.o
+SHELL_HEADERS = shell/shell.h shell/net.h shell/fetch.h shell/debug.h
 FRONT_OBJS = browser/front.o $(SHELL_OBJS)
 browser/xsoie: browser/xsoie.o $(FRONT_OBJS) lib/libsoie.so.$(SOVERSION)
 	$(CC) $(LDFLAGS) $(RPATH) -o $@ browser/xsoie.o $(FRONT_OBJS) \
 		lib/libsoie.so.$(SOVERSION) $(LIBS) \
 		$(shell pkg-config --libs $(SHELL_PKGS) x11 xext) -lpthread
 
-browser/xsoie.o $(FRONT_OBJS): browser/net.h browser/fetch.h \
-	browser/shell.h browser/front.h browser/debug.h $(HEADERS)
+browser/xsoie.o $(FRONT_OBJS): $(SHELL_HEADERS) browser/front.h $(HEADERS)
+browser/xsoie.o browser/wsoie.o browser/front.o: CPPFLAGS += -Ishell
 $(SHELL_OBJS): CPPFLAGS += $(shell pkg-config --cflags $(SHELL_PKGS)) \
 	-DSOIE_EXT_DIR='"$(EXTDIR)"'
 browser/xsoie.o: CPPFLAGS += $(shell pkg-config --cflags x11 xext)
@@ -178,7 +180,7 @@ browser/xdg-decoration.c: \
 	$(WL_PROTO)/unstable/xdg-decoration/xdg-decoration-unstable-v1.xml
 	wayland-scanner private-code $< $@
 browser/wsoie.o: browser/xdg-shell.h browser/xdg-decoration.h \
-	browser/shell.h browser/front.h $(HEADERS)
+	shell/shell.h browser/front.h $(HEADERS)
 browser/wsoie.o $(WL_OBJS): CPPFLAGS += \
 	$(shell pkg-config --cflags $(WL_PKGS))
 tools/soie-render.o: CPPFLAGS += -DSOIE_EXT_DIR='"$(EXTDIR)"'
@@ -258,7 +260,7 @@ install: all
 
 clean:
 	rm -f lib/*.o lib/libsoie.a lib/libsoie.so.* tools/*.o \
-		tools/soie-render browser/*.o browser/xsoie browser/wsoie \
+		tools/soie-render shell/*.o browser/*.o browser/xsoie browser/wsoie \
 		browser/xdg-shell.[ch] browser/xdg-decoration.[ch] \
 		tests/*.o tests/html5lib tests/unit \
 		tests/csstest tests/cssvalue tests/painttest tests/exttest lib/ua-css.c \

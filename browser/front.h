@@ -4,8 +4,8 @@
  * shell's page view; the keys, clicks and pastes they take; and the
  * window's pixels, painted again only where they changed. A front's
  * toolkit part owns the window and its pixels, turns its events into
- * front_*() calls and defines the tk_*() ones (and the shell's
- * ui_title()). Coordinates are the window's, its top left corner at 0,0.
+ * front_*() calls and defines the tk_*() ones. Coordinates are the
+ * window's, its top left corner at 0,0.
  *
  * Copyright (C) 2026 Christophe Lincoln <pankso@slitaz.org>
  * Written with the assistance of Claude (Anthropic) and Opencode.
@@ -51,6 +51,8 @@ void front_pasted(int to, const char *text);
 void front_icon(unsigned char *rgba, int size);
 
 /* Toolkit calls */
+/* The page's title, for the window's */
+void tk_title(const char *title);
 /* Put the rects (x, y, w, h) of the pixels on screen, n of them. */
 void tk_show(const int (*rects)[4], int n);
 /* The pointer: SHELL_ARROW, SHELL_HAND or SHELL_TEXT */

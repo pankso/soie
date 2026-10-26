@@ -46,9 +46,9 @@ static int win_w = 1024, win_h = 768;
 static char *sel_text[2];
 static int paste_to;
 
-/* Front calls of the shell */
+/* Toolkit calls of the front */
 
-void ui_title(const char *title)
+void tk_title(const char *title)
 {
 	char full[600];
 
@@ -60,8 +60,6 @@ void ui_title(const char *title)
 		a_utf8, 8, PropModeReplace, (unsigned char *)full,
 		(int)strlen(full));
 }
-
-/* Toolkit calls of the front */
 
 void tk_show(const int (*r)[4], int n)
 {

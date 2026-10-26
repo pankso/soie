@@ -57,6 +57,7 @@ static const char find_html[] =
 
 static const char *prog = "soie", *start = SHELL_HOME;
 static int fd = -1;
+static shell *sh;		/* the window's page view */
 
 /* The window's pixels */
 static unsigned char *px;
@@ -170,7 +171,8 @@ static void find_update(void)
 	}
 	if (v && *v) {
 		if (find_n)
-			snprintf(buf, sizeof(buf), "%d of %d", find_cur, find_n);
+			snprintf(buf, sizeof(buf), "%d of %d", find_cur,
+				find_n);
 		else
 			snprintf(buf, sizeof(buf), "not found");
 	}
@@ -187,14 +189,14 @@ static void find_close(void)
 	find_on = 0;
 	if (field == F_FIND)
 		field = F_NONE;
-	shell_find(NULL, 0, &find_cur);
+	shell_find(sh, NULL, 0, &find_cur);
 	dirty |= D_PAGE;
 }
 
-/* Search again for what the find bar holds: dir as shell_find(). */
+/* Search again for what the find bar holds: dir as shell_find(sh). */
 static void find_go(int dir)
 {
-	find_n = shell_find(soie_element_get_attr(find_id(findbar, "find"),
+	find_n = shell_find(sh, soie_element_get_attr(find_id(findbar, "find"),
 		"value"), dir, &find_cur);
 	find_update();
 	dirty |= D_PAGE;
@@ -202,8 +204,15 @@ static void find_go(int dir)
 
 /* Front calls of the shell */
 
-void ui_address(const char *url)
+static void ui_title(void *data, const char *title)
 {
+	(void)data;
+	tk_title(title);
+}
+
+static void ui_address(void *data, const char *url)
+{
+	(void)data;
 	soie_element_set_attr(find_id(chrome, "url"), "value", url);
 	if (field == F_URL)
 		field = F_NONE;
@@ -211,10 +220,13 @@ void ui_address(const char *url)
 		chrome_update();
 }
 
-void ui_alert(const char *text)
+static void ui_alert(void *data, const char *text)
 {
+	(void)data;
 	snprintf(status, sizeof(status), "%s", text);
 }
+
+static const struct shell_ui ui = { ui_title, ui_address, ui_alert };
 
 /* Drawing */
 
@@ -299,7 +311,7 @@ static void page_rect(int x, int y, int w, int h)
 		h = win_h - y;
 	if (w <= 0 || h <= 0)
 		return;
-	shell_paint_rect(at(0, BAR), stride, x, y - BAR, w, h);
+	shell_paint_rect(sh, at(0, BAR), stride, x, y - BAR, w, h);
 	add(fresh, &nfresh, x, y, w, h);
 	add(shown, &nshown, x, y, w, h);
 }
@@ -320,7 +332,7 @@ static int thumb(int *y, int *h)
 {
 	int scroll, height, view;
 
-	shell_view(&scroll, &height, &view);
+	shell_view(sh, &scroll, &height, &view);
 	if (height <= view || view <= 0)
 		return 0;
 	*h = (int)((double)view * view / height);
@@ -352,7 +364,7 @@ static void overlays_now(struct over *t, struct over *l)
 		l->at[1] = win_h - FINDH;
 		l->at[2] = find_w();
 		l->at[3] = FINDH;
-	} else if (*status || shell_loading(&loading)) {
+	} else if (*status || shell_loading(sh, &loading)) {
 		/* the hovered link, or the loading, bottom left */
 		l->on = 2;
 		l->at[0] = 0;
@@ -440,7 +452,7 @@ static void paint_frame(void)
 		add(shown, &nshown, 0, 0, win_w, BAR);
 	}
 	if (!(dirty & D_PAGE) && (dirty & D_CHANGED) &&
-	    (n = shell_paint_changed(at(0, BAR), stride, r, NRECT)) >= 0) {
+	    (n = shell_paint_changed(sh, at(0, BAR), stride, r, NRECT)) >= 0) {
 		/* what changed only, the bars over it after */
 		for (i = 0; i < n; i++) {
 			add(fresh, &nfresh, r[i][0], r[i][1] + BAR, r[i][2],
@@ -450,8 +462,8 @@ static void paint_frame(void)
 		}
 		all = 0;
 	} else if ((dirty & (D_PAGE | D_CHANGED)) ||
-	    !shell_paint_scroll(at(0, BAR), stride, &dy)) {
-		shell_paint(at(0, BAR), stride);
+	    !shell_paint_scroll(sh, at(0, BAR), stride, &dy)) {
+		shell_paint(sh, at(0, BAR), stride);
 	} else if (dy) {
 		/* the bars moved with the page: the page under them */
 		if (thumb_o.on)
@@ -502,7 +514,7 @@ static void paint_check(void)
 	thumb_o = t;
 	low_o = l;
 	px = keep;
-	if (shell_dirty(&v[0], &v[1], &v[2], &v[3]))
+	if (shell_dirty(sh, &v[0], &v[1], &v[2], &v[3]))
 		v[1] += BAR;
 	for (y = 0; y < win_h; y++) {
 		const unsigned char *w = whole + (size_t)y * (size_t)stride;
@@ -568,7 +580,7 @@ static void redraw_rect(void)
 {
 	int x, y, w, h;
 
-	if (!px || !shell_dirty(&x, &y, &w, &h))
+	if (!px || !shell_dirty(sh, &x, &y, &w, &h))
 		return;
 	nfresh = 0;
 	page_rect(x, y + BAR, w, h);
@@ -608,7 +620,7 @@ void front_pasted(int to, const char *text)
 		field_insert(find_id(findbar, "find"), &find_caret, text);
 		find_go(0);
 	} else if (to == F_NONE) {
-		shell_paste(text);
+		shell_paste(sh, text);
 		dirty |= D_PAGE;
 	}
 }
@@ -616,7 +628,7 @@ void front_pasted(int to, const char *text)
 /* The page's focused control loses the focus: its caret goes. */
 static void blur(void)
 {
-	shell_blur();
+	shell_blur(sh);
 	dirty |= D_PAGE;
 }
 
@@ -682,11 +694,11 @@ static void click_chrome(int x, int y, int select)
 	    "id"))) {
 		field = F_NONE;
 		if (!strcmp(id, "back"))
-			shell_history(-1);
+			shell_history(sh, -1);
 		else if (!strcmp(id, "fwd"))
-			shell_history(1);
+			shell_history(sh, 1);
 		else if (!strcmp(id, "reload"))
-			shell_reload();
+			shell_reload(sh);
 		dirty |= D_PAGE;
 	} else if (ancestor(n, "input")) {
 		if (field != F_URL || !select)
@@ -715,12 +727,12 @@ static void key_url(const char *k, const char *txt)
 		char *v = strdup(soie_element_get_attr(u, "value"));
 
 		field = F_NONE;
-		shell_go(v);
+		shell_go(sh, v);
 		free(v);
 		dirty |= D_PAGE;
 	} else if (!strcmp(k, "Escape")) {
 		field = F_NONE;
-		soie_element_set_attr(u, "value", shell_url());
+		soie_element_set_attr(u, "value", shell_url(sh));
 	} else {
 		/* the first key after focusing replaces the address, as a
 		 * selected one would be */
@@ -802,28 +814,28 @@ void front_key(const char *k, const char *text, int mods)
 		return;
 	}
 	if (ctrl && shift && is(k, 'j')) {
-		if (shell_debug_js())
-			ui_alert("no $SOIE_DEBUG_JS to run");
+		if (shell_debug_js(sh))
+			ui_alert(NULL, "no $SOIE_DEBUG_JS to run");
 		dirty |= D_PAGE;
 		return;
 	}
 	if (!strcmp(k, "F12")) {
 		char path[700], *e;
 
-		if (shell_dump(path, sizeof(path)))
+		if (shell_dump(sh, path, sizeof(path)))
 			snprintf(path, sizeof(path), "cannot save the page");
 		e = escape_html(path);
-		ui_alert(e);
+		ui_alert(NULL, e);
 		free(e);
 		return;
 	}
 	if (!strcmp(k, "F5") || (ctrl && is(k, 'r'))) {
-		shell_reload();
+		shell_reload(sh);
 		dirty |= D_PAGE;
 		return;
 	}
 	if (alt && (!strcmp(k, "ArrowLeft") || !strcmp(k, "ArrowRight"))) {
-		shell_history(!strcmp(k, "ArrowLeft") ? -1 : 1);
+		shell_history(sh, !strcmp(k, "ArrowLeft") ? -1 : 1);
 		dirty |= D_PAGE;
 		return;
 	}
@@ -834,7 +846,7 @@ void front_key(const char *k, const char *text, int mods)
 	if (ctrl && is(k, 'c')) {
 		const char *v = field == F_URL ? soie_element_get_attr(
 			find_id(chrome, "url"), "value") : field == F_FIND ?
-			NULL : shell_field();
+			NULL : shell_field(sh);
 
 		if (v && *v)
 			tk_copy(1, v);
@@ -850,12 +862,12 @@ void front_key(const char *k, const char *text, int mods)
 		key_find(k, txt, shift);
 		return;
 	}
-	if (!strcmp(k, "Escape") && find_on && !shell_field()) {
+	if (!strcmp(k, "Escape") && find_on && !shell_field(sh)) {
 		find_close();
 		return;
 	}
 	/* a key that only scrolled the page leaves its pixels to move */
-	if (shell_key(k, txt, mods) != 2)
+	if (shell_key(sh, k, txt, mods) != 2)
 		dirty |= D_PAGE;
 }
 
@@ -870,8 +882,8 @@ void front_motion(int x, int y)
 
 		if (!thumb(&ty, &th))
 			return;
-		shell_view(&scroll, &height, &view);
-		shell_scroll_to((int)((double)(y - drag - BAR) *
+		shell_view(sh, &scroll, &height, &view);
+		shell_scroll_to(sh, (int)((double)(y - drag - BAR) *
 			(height - view) / (view - th)));
 		return;
 	}
@@ -883,11 +895,12 @@ void front_motion(int x, int y)
 		else if (ancestor(n, "button"))
 			c = SHELL_HAND;
 	} else if (find_on && y >= win_h - FINDH && x < find_w()) {
-		n = soie_hit_test(findbar, (float)x, (float)(y - win_h + FINDH));
+		n = soie_hit_test(findbar, (float)x, (float)(y - win_h +
+			FINDH));
 		if (ancestor(n, "input"))
 			c = SHELL_TEXT;
 	} else if (!(x >= win_w - SB && thumb(&ty, &th))) {
-		c = shell_hover(x, y - BAR, link, sizeof(link));
+		c = shell_hover(sh, x, y - BAR, link, sizeof(link));
 		if (*link) {
 			char *e = escape_html(link);
 
@@ -905,17 +918,17 @@ static int click_scrollbar(int x, int y)
 
 	if (x < win_w - SB || !thumb(&ty, &th))
 		return 0;
-	shell_view(&scroll, &height, &view);
+	shell_view(sh, &scroll, &height, &view);
 	if (y >= ty && y < ty + th)
 		drag = y - ty;
 	else
-		shell_scroll(y < ty ? -(view - 40) : view - 40);
+		shell_scroll(sh, y < ty ? -(view - 40) : view - 40);
 	return 1;
 }
 
 void front_wheel(int dy)
 {
-	shell_scroll(dy);
+	shell_scroll(sh, dy);
 }
 
 void front_button(int button, int x, int y, int mods)
@@ -925,8 +938,8 @@ void front_button(int button, int x, int y, int mods)
 	switch (button) {
 	case 4: front_wheel(-60); return;
 	case 5: front_wheel(60); return;
-	case 8: shell_history(-1); dirty |= D_PAGE; return;
-	case 9: shell_history(1); dirty |= D_PAGE; return;
+	case 8: shell_history(sh, -1); dirty |= D_PAGE; return;
+	case 9: shell_history(sh, 1); dirty |= D_PAGE; return;
 	case 1: case 2: break;
 	default: return;
 	}
@@ -955,17 +968,17 @@ void front_button(int button, int x, int y, int mods)
 	if (button == 2) {
 		/* a link opens in a new window, a field takes the
 		 * selection */
-		if (shell_hover(x, y - BAR, link, sizeof(link)) ==
+		if (shell_hover(sh, x, y - BAR, link, sizeof(link)) ==
 		    SHELL_HAND && *link) {
 			spawn(link);
 			return;
 		}
-		shell_click(x, y - BAR, mods);
-		if (shell_field())
+		shell_click(sh, x, y - BAR, mods);
+		if (shell_field(sh))
 			tk_paste(0, F_NONE);
 		return;
 	}
-	shell_click(x, y - BAR, mods);
+	shell_click(sh, x, y - BAR, mods);
 }
 
 void front_release(void)
@@ -984,14 +997,14 @@ void front_buffer(unsigned char *p, int w, int h, int s, int order)
 	win_h = h;
 	stride = s;
 	bgra = order;
-	shell_bgra(bgra);
+	shell_bgra(sh, bgra);
 	memset(&thumb_o, 0, sizeof(thumb_o));
 	memset(&low_o, 0, sizeof(low_o));
 	dirty = D_ALL;
 	if (resized) {
 		chrome_update();
 		find_update();
-		shell_resize(win_w, win_h - BAR);
+		shell_resize(sh, win_w, win_h - BAR);
 	}
 }
 
@@ -1014,7 +1027,7 @@ void front_icon(unsigned char *rgba, int s)
 int front_tick(void)
 {
 	const char *text;
-	int repaint, t = shell_tick(&repaint);
+	int repaint, t = shell_tick(sh, &repaint);
 
 	if (repaint == 2 && !(dirty & D_PAGE)) {
 		/* a scroll first, the frame painted at the new place */
@@ -1026,7 +1039,7 @@ int front_tick(void)
 		dirty |= D_CHANGED;
 	}
 	/* the loading line is kept current */
-	if (shell_loading(&text) && (t < 0 || t > 500))
+	if (shell_loading(sh, &text) && (t < 0 || t > 500))
 		t = 500;
 	front_redraw();
 	return t;
@@ -1039,7 +1052,7 @@ int front_fd(void)
 
 void front_load(void)
 {
-	shell_load(start);
+	shell_load(sh, start);
 	dirty |= D_PAGE;
 }
 
@@ -1069,16 +1082,17 @@ int front_start(const char *name, int argc, char **argv, int *w, int *h)
 		*w = 100;
 	if (*h < BAR + 50)
 		*h = BAR + 50;
-	fd = shell_init(js);
+	fd = shell_init();
 	if (fd < 0) {
 		fprintf(stderr, "%s: cannot start the fetch threads\n", prog);
 		return 1;
 	}
+	sh = shell_new(&ui, NULL, js);
 	chrome = soie_html_parse(chrome_html, strlen(chrome_html), NULL);
 	findbar = soie_html_parse(find_html, strlen(find_html), NULL);
 	if (out) {
-		shell_resize(*w, *h - BAR);
-		return shell_render_png(start, out);
+		shell_resize(sh, *w, *h - BAR);
+		return shell_render_png(sh, start, out);
 	}
 	return -1;
 }
