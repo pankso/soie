@@ -388,7 +388,8 @@ static void test_media(void)
 	char url[4200], cwd[4096], html[8400];
 	void *p;
 	int w = 0, h = 0, i, repaint;
-	soie_node *doc, *v;
+	soie_node *doc, *v, **q;
+	size_t n;
 	soie_style_options so;
 	float x, y, vw, vh;
 	unsigned char *canvas;
@@ -446,7 +447,9 @@ static void test_media(void)
 	so.request = file_request;
 	soie_style_document(doc, &so);
 	soie_layout_document(doc, 400, 300);
-	v = soie_query(doc, "video", 1, (size_t *)&i)[0];
+	q = soie_query(doc, "video", 1, &n);
+	v = q[0];
+	free(q);
 	CHECK(!soie_element_rect(v, &x, &y, &vw, &vh) && vw == 300);
 	CHECK(soie_media_get_state(v, &st) == -1);	/* not opened yet */
 	CHECK(soie_media_control(v, SOIE_MEDIA_PLAY, 0) == 0);

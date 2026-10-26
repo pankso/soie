@@ -134,11 +134,18 @@ ext/script/script.o: CPPFLAGS += -isystem $(QJS_INC)
 ext/script/script.o: $(wildcard $(QJS_INC)/quickjs.h)
 ext/script/dom-js.o: CFLAGS += -Wno-overlength-strings
 ext/script/script.o ext/script/dom-js.o: $(HEADERS)
+# Without QuickJS it would link with the engine missing: refused
+ifneq ($(QJS_OBJS),)
 ext/script.so: ext/script/script.o ext/script/dom-js.o $(QJS_OBJS) \
 	lib/libsoie.so.$(SOVERSION)
 	$(CC) -shared $(LDFLAGS) -o $@ ext/script/script.o \
 		ext/script/dom-js.o $(QJS_OBJS) lib/libsoie.so.$(SOVERSION) \
 		-lm -lpthread $(QJS_ATOMIC)
+else
+ext/script.so:
+	@echo "ext/script.so needs QuickJS: make QUICKJS_SRC=<unpacked" \
+		"quickjs-2026-06-04> or its library in $(QUICKJS)"; false
+endif
 
 tests/html5lib: tests/html5lib.o lib/libsoie.a
 	$(CC) $(LDFLAGS) -o $@ tests/html5lib.o lib/libsoie.a $(LIBS)
