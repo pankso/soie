@@ -1151,3 +1151,297 @@ void svg_size(const soie_node *el, float *w, float *h)
 	    strchr(soie_element_get_attr(el, "height"), '%'))
 		*h = v[3];
 }
+
+/* CSS clip-path on an HTML box */
+
+/* A position after "at": keywords, offsets from them, lengths */
+static void shape_at(struct cur *k, float w, float h, float em, float *x,
+	float *y)
+{
+	const struct cv *v;
+	int axis = 0;
+
+	*x = w / 2;
+	*y = h / 2;
+	while ((v = cur_next(k))) {
+		const struct cv *o = cur_peek(k);
+		int far = cv_ident(v, "right") || cv_ident(v, "bottom");
+		float off = 0;
+
+		if (v->type == CT_IDENT && o && o->type != CT_IDENT)
+			off = css_len_px(cur_next(k), 0, em);
+		if (cv_ident(v, "left") || cv_ident(v, "right")) {
+			*x = far ? w - off : off;
+			axis = 1;
+		} else if (cv_ident(v, "top") || cv_ident(v, "bottom")) {
+			*y = far ? h - off : off;
+			axis = 0;
+		} else if (cv_ident(v, "center")) {
+			axis = !axis;
+		} else if (axis == 0) {
+			*x = css_len_px(v, w, em);
+			axis = 1;
+		} else {
+			*y = css_len_px(v, h, em);
+			axis = 0;
+		}
+	}
+}
+
+/* An ellipse's radius: a length, closest-side (default), farthest-side */
+static float shape_radius(const struct cv *v, float c, float side, float ref,
+	float em)
+{
+	float a = c, b = side - c;
+
+	if (cv_ident(v, "farthest-side"))
+		return a > b ? a : b;
+	if (!v || v->type == CT_IDENT)
+		return a < b ? a : b;
+	return css_len_px(v, ref, em);
+}
+
+/* inset()'s rounded rectangle, its radii scaled down to fit */
+static void shape_inset(struct pb *b, struct cur *k, float w, float h,
+	float em)
+{
+	const struct cv *v;
+	float d[4], r[4] = { 0, 0, 0, 0 }, f = 1, x0, y0, x1, y1;
+	int n = 0, nr = 0, i;
+
+	while ((v = cur_next(k)) && !cv_ident(v, "round") && n < 4) {
+		d[n] = css_len_px(v, n % 2 ? w : h, em);
+		n++;
+	}
+	if (!n)
+		return;
+	for (i = n; i < 4; i++)	/* as margin: t, r = t, b = t, l = r */
+		d[i] = d[i == 3 ? 1 : i - 2 < 0 ? 0 : i - 2];
+	while (v && (v = cur_next(k)) && nr < 4 && v->type != CT_DELIM)
+		r[nr++] = css_len_px(v, w, em);
+	for (i = nr; nr && i < 4; i++)
+		r[i] = r[i == 3 ? 1 : i - 2 < 0 ? 0 : i - 2];
+	x0 = d[3];
+	y0 = d[0];
+	x1 = w - d[1];
+	y1 = h - d[2];
+	if (x1 <= x0 || y1 <= y0)
+		return;
+	for (i = 0; i < 4; i++) {
+		float s = r[i] + r[(i + 1) % 4],
+			side = i % 2 ? y1 - y0 : x1 - x0;
+
+		if (s > side && side / s < f)
+			f = side / s;
+	}
+	for (i = 0; i < 4; i++)
+		r[i] *= f;
+	pb_move(b, x0 + r[0], y0);
+	pb_line(b, x1 - r[1], y0);
+	pb_arc(b, r[1], r[1], 0, 0, 1, x1, y0 + r[1]);
+	pb_line(b, x1, y1 - r[2]);
+	pb_arc(b, r[2], r[2], 0, 0, 1, x1 - r[2], y1);
+	pb_line(b, x0 + r[3], y1);
+	pb_arc(b, r[3], r[3], 0, 0, 1, x0, y1 - r[3]);
+	pb_line(b, x0, y0 + r[0]);
+	pb_arc(b, r[0], r[0], 0, 0, 1, x0 + r[0], y0);
+	pb_close(b);
+}
+
+static void shape_ellipse(struct pb *b, struct cur *k, int circle, float w,
+	float h, float em)
+{
+	const struct cv *v, *r[2] = { NULL, NULL };
+	float cx, cy, rx, ry;
+	int n = 0;
+
+	while ((v = cur_next(k)) && !cv_ident(v, "at"))
+		if (n < 2)
+			r[n++] = v;
+	if (v)
+		shape_at(k, w, h, em, &cx, &cy);
+	else
+		cx = w / 2, cy = h / 2;
+	if (circle) {
+		float ref = sqrtf((w * w + h * h) / 2);
+
+		if (cv_ident(r[0], "farthest-side")) {
+			float a = shape_radius(r[0], cx, w, w, em),
+				c = shape_radius(r[0], cy, h, h, em);
+
+			rx = a > c ? a : c;
+		} else if (!r[0] || r[0]->type == CT_IDENT) {
+			float a = shape_radius(NULL, cx, w, w, em),
+				c = shape_radius(NULL, cy, h, h, em);
+
+			rx = a < c ? a : c;
+		} else {
+			rx = css_len_px(r[0], ref, em);
+		}
+		ry = rx;
+	} else {
+		rx = shape_radius(r[0], cx, w, w, em);
+		ry = shape_radius(r[1], cy, h, h, em);
+	}
+	if (rx <= 0 || ry <= 0)
+		return;
+	pb_move(b, cx + rx, cy);
+	pb_arc(b, rx, ry, 0, 0, 1, cx - rx, cy);
+	pb_arc(b, rx, ry, 0, 0, 1, cx + rx, cy);
+	pb_close(b);
+}
+
+static void shape_polygon(struct pb *b, struct cur *k, float w, float h,
+	float em, int *evenodd)
+{
+	const struct cv *v;
+	float xy[2];
+	int n = 0, first = 1;
+
+	while ((v = cur_next(k))) {
+		if (v->type == CT_COMMA)
+			continue;
+		if (cv_ident(v, "evenodd") || cv_ident(v, "nonzero")) {
+			*evenodd = cv_ident(v, "evenodd");
+			continue;
+		}
+		xy[n] = css_len_px(v, n ? h : w, em);
+		if (++n < 2)
+			continue;
+		n = 0;
+		if (first)
+			pb_move(b, xy[0], xy[1]);
+		else
+			pb_line(b, xy[0], xy[1]);
+		first = 0;
+	}
+	pb_close(b);
+}
+
+/* path([fill-rule,] "d"), in CSS px from the box's corner */
+static void shape_path(struct pb *b, struct cur *k, int *evenodd)
+{
+	const struct cv *v;
+
+	while ((v = cur_next(k)))
+		if (cv_ident(v, "evenodd") || cv_ident(v, "nonzero"))
+			*evenodd = cv_ident(v, "evenodd");
+		else if (v->type == CT_STRING)
+			parse_path(b, v->str);
+}
+
+/*
+ * b's clip-path filled opaque into c: inset(), circle(), ellipse(),
+ * polygon(), path() or url(#<clipPath>), in its reference box (border
+ * box unless named); 0 for none or what is not one of them, which
+ * clips nothing.
+ */
+int clip_path_paint(struct canvas *c, const struct box *b)
+{
+	const char *s = b->style->v[P_CLIP_PATH].u.str;
+	float em = b->style->v[P_FONT_SIZE].u.len.px, z = doc_zoom();
+	float bx = b->x - b->p[3] - b->b[3], by = b->y - b->p[0] - b->b[0];
+	float bw = b->w + b->p[1] + b->p[3] + b->b[1] + b->b[3];
+	float bh = b->h + b->p[0] + b->p[2] + b->b[0] + b->b[2];
+	float e[4] = { 0, 0, 0, 0 };	/* the reference box, from bx.. */
+	const struct cv *v, *fn = NULL;
+	unsigned char black[4] = { 0, 0, 0, 255 };
+	struct mat m = { 1, 0, 0, 1, 0, 0 };
+	struct poly p, segs;
+	struct pb pb;
+	struct cvlist l;
+	struct cur k;
+	int i, evenodd = 0, ok = 0;
+
+	if (!s || !strcmp(s, "none"))
+		return 0;
+	css_component_values(s, strlen(s), &l);
+	cur_init(&k, &l);
+	while ((v = cur_next(&k))) {
+		if (v->type == CT_FUNCTION || v->type == CT_URL)
+			fn = v;
+		else if (cv_ident(v, "margin-box"))
+			for (i = 0; i < 4; i++)
+				e[i] = -b->m[i];
+		else if (cv_ident(v, "padding-box"))
+			for (i = 0; i < 4; i++)
+				e[i] = b->b[i];
+		else if (cv_ident(v, "content-box") ||
+			 cv_ident(v, "fill-box"))
+			for (i = 0; i < 4; i++)
+				e[i] = b->b[i] + b->p[i];
+	}
+	bx += e[3];
+	by += e[0];
+	bw -= e[1] + e[3];
+	bh -= e[0] + e[2];
+	memset(&p, 0, sizeof(p));
+	memset(&segs, 0, sizeof(segs));
+	memset(&pb, 0, sizeof(pb));
+	pb.p = &p;
+	pb.s = &segs;
+	pb.m = &m;
+	m.e = bx - c->ox;
+	m.f = by - c->oy;
+	if (!fn) {
+		/* a box alone: its rectangle */
+		pb_move(&pb, 0, 0);
+		pb_line(&pb, bw, 0);
+		pb_line(&pb, bw, bh);
+		pb_line(&pb, 0, bh);
+		pb_close(&pb);
+		ok = 1;
+	} else if (fn->type == CT_URL || cv_func(fn, "url")) {
+		const char *u = fn->type == CT_URL ? fn->str :
+			fn->kids.n ? fn->kids.v[0].str : NULL;
+		const soie_node *cp = u && *u == '#' && paint_doc ?
+			by_id(paint_doc, u + 1) : NULL;
+
+		if (cp && !strcmp(cp->name, "clipPath")) {
+			const char *un = soie_element_get_attr(cp,
+				"clipPathUnits");
+			struct paintstate ps;
+
+			memset(&ps, 0, sizeof(ps));
+			memcpy(ps.fill, black, 4);
+			ps.has_fill = 1;
+			ps.opacity = 1;
+			ps.join = 'm';
+			ps.cap = 'b';
+			ps.miter = 4;
+			ps.vw = bw / z;
+			ps.vh = bh / z;
+			if (un && !strcmp(un, "objectBoundingBox")) {
+				m.a = bw;
+				m.d = bh;
+			} else {
+				m.a = m.d = z;
+			}
+			walk(c, cp, m, ps, 0);
+			ok = 1;
+		}
+	} else {
+		struct cur a;
+
+		cur_init(&a, &fn->kids);
+		ok = 1;
+		if (cv_func(fn, "inset"))
+			shape_inset(&pb, &a, bw, bh, em);
+		else if (cv_func(fn, "circle") || cv_func(fn, "ellipse"))
+			shape_ellipse(&pb, &a, cv_func(fn, "circle"), bw, bh,
+				em);
+		else if (cv_func(fn, "polygon"))
+			shape_polygon(&pb, &a, bw, bh, em, &evenodd);
+		else if (cv_func(fn, "path")) {
+			m.a = m.d = z;
+			shape_path(&pb, &a, &evenodd);
+		} else
+			ok = 0;
+	}
+	if (ok)
+		poly_fill(c, &p, evenodd, black);
+	free(p.e);
+	free(segs.e);
+	cvlist_free(&l);
+	return ok;
+}

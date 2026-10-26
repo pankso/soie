@@ -160,6 +160,9 @@ PROP(MASK_IMAGE, "mask-image", 0, K_RAW, 0, "", "none")
 PROP(MASK_REPEAT, "mask-repeat", 0, K_RAW, 0, "", "repeat")
 PROP(MASK_POSITION, "mask-position", 0, K_RAW, 0, "", "0% 0%")
 PROP(MASK_SIZE, "mask-size", 0, K_RAW, 0, "", "auto")
+/* clipping: rect() of an absolute box, a shape (clip-path) */
+PROP(CLIP, "clip", 0, K_RAW, 0, "", "auto")
+PROP(CLIP_PATH, "clip-path", 0, K_RAW, 0, "", "none")
 PROP(VERTICAL_ALIGN, "vertical-align", 0, K_LEN, 0,
 	"baseline|sub|super|text-top|text-bottom|middle|top|bottom",
 	"baseline")

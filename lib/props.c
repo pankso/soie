@@ -458,6 +458,7 @@ static const char *const aliases[][2] = {
 	{ "-webkit-mask-repeat", "mask-repeat" },
 	{ "-webkit-mask-position", "mask-position" },
 	{ "-webkit-mask-size", "mask-size" },
+	{ "-webkit-clip-path", "clip-path" },
 	{ "-webkit-text-decoration-line", "text-decoration-line" },
 	{ NULL, NULL }
 };

@@ -432,7 +432,23 @@ reversed, edit the entry and say why; do not leave stale rules here.
 - Borders: solid, dashed, dotted, double, inset/outset/groove/ridge
   (shaded); corners are not mitred. Rounded borders draw one color.
 - overflow other than visible clips to the padding box (rectangles
-  only; rounded clipping later).
+  only; rounded clipping later). A positioned box is painted out of
+  its ancestors' walk, so it takes their clipping back when its layer
+  is painted: that of its containing block chain (an absolute box
+  skips the static ancestors up to its containing block, a fixed one
+  all of them). python.org hid its skip link, a relative <a>, in a
+  1px overflow: hidden box: drawn on the page without it.
+- clip: rect() of an absolute or fixed box (the skip links of go.dev
+  and many others: clip: rect(0 0 0 0)), from its border box's
+  corner, auto its edge; an empty rect is empty, not a pixel wide.
+- clip-path: inset() (with round), circle(), ellipse(), polygon(),
+  path() and url(#<clipPath>) of an SVG in the page, in their
+  reference box (border box, margin-box, padding-box, content-box).
+  The shape goes through the mask code: filled into the buffer of the
+  border box, its coverage multiplies the mask's. Content beyond the
+  border box is cut even where the shape would reach. A clipped box is
+  a stacking context when positioned, as a masked one. Unknown shapes
+  or references clip nothing. Test: `tests/paint/clip.html`.
 - mask-image (and -webkit-mask-*, the mask shorthands): the way icons
   are drawn now, a box of background-color currentColor through an
   SVG (Wikipedia, the Arch wiki, MDN: black squares without it). Like

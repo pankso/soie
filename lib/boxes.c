@@ -1113,12 +1113,15 @@ static soie_node *hit(struct box *b, float x, float y)
 	return NULL;
 }
 
-/* As paint.c: a positioned box with a z-index, fixed, or translucent */
+/* As paint.c: a positioned box with a z-index, fixed, translucent,
+ * masked or clipped by a shape */
 static int stacking_context(const struct box *b)
 {
 	return positioned(b) && (!b->style->v[P_Z_INDEX].kw ||
 		kw(b->style, P_POSITION, "fixed") ||
-		b->style->v[P_OPACITY].u.num < 1);
+		b->style->v[P_OPACITY].u.num < 1 ||
+		strcmp(b->style->v[P_MASK_IMAGE].u.str, "none") ||
+		strcmp(b->style->v[P_CLIP_PATH].u.str, "none"));
 }
 
 struct layer {

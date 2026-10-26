@@ -44,6 +44,8 @@ void paint_bg_image(struct canvas *c, const struct box *b, float x,
 	float y, float w, float h);
 void paint_layers_of(struct canvas *c, const struct box *b, int img_p,
 	float x, float y, float w, float h);
+float css_len_px(const struct cv *v, float ref, float em);
+int clip_path_paint(struct canvas *c, const struct box *b);
 void glyph_cache_clear(void);
 void paint_text(struct canvas *c, const struct style *st, const char *s,
 	size_t len, float x, float base);

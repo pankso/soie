@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<!-- Clipping: skip links hidden by clip: rect() (go.dev) or in a 1px
+     overflow: hidden box around a relative link (python.org), absolute
+     and relative boxes clipped by overflow up to their containing
+     block, clip-path shapes and reference boxes -->
+<style>
+body { margin: 8px; font: 14px sans-serif }
+.skip { position: absolute; top: 4px; left: 8%; background: red; clip: rect(0 0 0 0); overflow: hidden }
+.sr { position: absolute; width: 1px; height: 1px; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0) }
+.sr a { position: relative; display: block; background: red; padding: 10px }
+.half { position: absolute; top: 8px; left: 300px; width: 80px; height: 40px; background: #393; clip: rect(0 auto 20px 40px) }
+.box { position: relative; width: 120px; height: 40px; background: #ddd; overflow: hidden; margin-bottom: 6px }
+.box span { position: absolute; left: 90px; top: 10px; width: 60px; height: 20px; background: #c33 }
+.box b { position: relative; left: 100px; display: block; width: 40px; height: 10px; background: #36c }
+.stat { width: 120px; height: 30px; background: #eee; overflow: hidden; margin-bottom: 6px }
+.stat i { position: absolute; left: 100px; width: 60px; height: 20px; background: #f80 }
+.s { display: inline-block; width: 60px; height: 60px; margin: 4px; background: linear-gradient(#36c, #c33); border: 5px solid #393 }
+.c1 { clip-path: circle(50%) }
+.c2 { clip-path: ellipse(30px 15px at 20px 30px) }
+.c3 { clip-path: polygon(50% 0, 100% 100%, 0 100%) }
+.c4 { clip-path: inset(10px 5px round 10px) }
+.c5 { -webkit-clip-path: inset(0) content-box }
+.c6 { clip-path: inset(50%) }
+.c7 { clip-path: path("M0 0 L70 35 L0 70 Z") }
+</style>
+<a class="skip" href="#main">Skip to Main Content</a>
+<div class="sr"><a href="#content">Skip to content</a></div>
+<div class="half"></div>
+<div class="box"><span></span><b></b></div>
+<div class="stat"><i></i></div>
+<div><span class="s c1"></span><span class="s c2"></span><span class="s c3"></span><span class="s c4"></span><span class="s c5"></span><span class="s c6"></span><span class="s c7"></span></div>

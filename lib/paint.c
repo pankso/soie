@@ -23,6 +23,11 @@ static void clip_to(struct canvas *c, float x0, float y0, float x1,
 	int a = (int)floorf(x0 - c->ox), b = (int)floorf(y0 - c->oy);
 	int d = (int)ceilf(x1 - c->ox), e = (int)ceilf(y1 - c->oy);
 
+	if (x1 <= x0 || y1 <= y0) {
+		c->cx1 = c->cx0;	/* empty, not a pixel wide */
+		c->cy1 = c->cy0;
+		return;
+	}
 	if (a > c->cx0)
 		c->cx0 = a;
 	if (b > c->cy0)
@@ -31,6 +36,71 @@ static void clip_to(struct canvas *c, float x0, float y0, float x1,
 		c->cx1 = d;
 	if (e < c->cy1)
 		c->cy1 = e;
+}
+
+/* A length of a raw value (clip, clip-path): a percentage of ref, em
+ * of the box's font (em: its size, already zoomed), CSS px zoomed */
+float css_len_px(const struct cv *v, float ref, float em)
+{
+	if (!v)
+		return 0;
+	if (v->type == CT_PERCENT)
+		return (float)v->num * ref / 100;
+	if (v->type == CT_DIMENSION && ascii_ieq(v->str, "em"))
+		return (float)v->num * em;
+	if (v->type == CT_DIMENSION && ascii_ieq(v->str, "rem"))
+		return (float)v->num * 16 * doc_zoom();
+	if (v->type == CT_DIMENSION || v->type == CT_NUMBER)
+		return (float)v->num * doc_zoom();
+	return 0;
+}
+
+/* clip: rect(top, right, bottom, left) of an absolute box, from the
+ * corner of its border box, auto its edge (commas optional) */
+static void clip_rect(struct canvas *c, const struct box *b)
+{
+	const char *s = b->style ? b->style->v[P_CLIP].u.str : NULL;
+	float x, y, v[4], em;
+	const struct cv *f, *a;
+	struct cvlist l;
+	struct cur k;
+	int n = 0;
+
+	if (!s || !strcmp(s, "auto") || (!kw(b->style, P_POSITION,
+	    "absolute") && !kw(b->style, P_POSITION, "fixed")))
+		return;
+	css_component_values(s, strlen(s), &l);
+	cur_init(&k, &l);
+	if (cv_func(f = cur_next(&k), "rect")) {
+		x = b->x - b->p[3] - b->b[3];
+		y = b->y - b->p[0] - b->b[0];
+		v[0] = v[3] = 0;
+		v[1] = b->w + b->p[1] + b->p[3] + b->b[1] + b->b[3];
+		v[2] = b->h + b->p[0] + b->p[2] + b->b[0] + b->b[2];
+		em = b->style->v[P_FONT_SIZE].u.len.px;
+		cur_init(&k, &f->kids);
+		while ((a = cur_next(&k)) && n < 4)
+			if (a->type != CT_COMMA) {
+				if (!cv_ident(a, "auto"))
+					v[n] = css_len_px(a, 0, em);
+				n++;
+			}
+		if (n == 4)
+			clip_to(c, x + v[3], y + v[0], x + v[1], y + v[2]);
+	}
+	cvlist_free(&l);
+}
+
+/* What clips b's content: overflow (to its padding box) and clip */
+static void content_clip(struct canvas *c, const struct box *b)
+{
+	if (!b->style || !b->parent)
+		return;
+	clip_rect(c, b);
+	if (b->type != B_INLINE && (!kw(b->style, P_OVERFLOW_X, "visible") ||
+	    !kw(b->style, P_OVERFLOW_Y, "visible")))
+		clip_to(c, b->x - b->p[3], b->y - b->p[0],
+			b->x + b->w + b->p[1], b->y + b->h + b->p[2]);
 }
 
 /* Source-over of an 8-bit color with coverage cov (0..255). */
@@ -571,8 +641,9 @@ static void zadd(struct box *b)
 static int masked(const struct box *b)
 {
 	const char *m = b->style ? b->style->v[P_MASK_IMAGE].u.str : NULL;
+	const char *k = b->style ? b->style->v[P_CLIP_PATH].u.str : NULL;
 
-	return m && strcmp(m, "none");
+	return (m && strcmp(m, "none")) || (k && strcmp(k, "none"));
 }
 
 static int stacking_context(const struct box *b)
@@ -583,9 +654,9 @@ static int stacking_context(const struct box *b)
 }
 
 /*
- * mask-image: b's mask layers painted into a buffer of its border box
- * (clipped), whose alpha then weighs every pixel painted (blend());
- * inside another mask, both. *save keeps the mask before, for
+ * mask-image and clip-path: b's mask layers and its shape painted into
+ * a buffer of its border box (clipped), whose alpha then weighs every
+ * pixel painted (blend()); inside another mask, both. *save keeps the mask before, for
  * mask_pop(). 0 when b has no mask.
  */
 static int mask_push(struct canvas *c, const struct box *b,
@@ -628,13 +699,28 @@ static int mask_push(struct canvas *c, const struct box *b,
 	t.cx1 = t.w;
 	t.cy1 = t.h;
 	t.alpha = 1;
-	paint_layers_of(&t, b, P_MASK_IMAGE, x, y, w, h);
+	if (strcmp(b->style->v[P_MASK_IMAGE].u.str, "none"))
+		paint_layers_of(&t, b, P_MASK_IMAGE, x, y, w, h);
+	else
+		memset(t.px, 255, (size_t)t.w * (size_t)t.h * 4);
 	for (j = 0; j < t.h; j++)
 		for (i = 0; i < t.w; i++)
 			m[(size_t)j * (size_t)t.w + (size_t)i] = (unsigned char)
 				(t.px[(size_t)j * (size_t)t.stride +
 				(size_t)i * 4 + 3] * mask_at(c, x0 + i,
 				y0 + j) / 255);
+	/* clip-path: its shape's coverage too */
+	memset(t.px, 0, (size_t)t.w * (size_t)t.h * 4);
+	if (clip_path_paint(&t, b))
+		for (j = 0; j < t.h; j++)
+			for (i = 0; i < t.w; i++) {
+				unsigned char *q = m + (size_t)j *
+					(size_t)t.w + (size_t)i;
+
+				*q = (unsigned char)(*q * t.px[(size_t)j *
+					(size_t)t.stride + (size_t)i * 4 +
+					3] / 255);
+			}
 	free(t.px);
 	c->mask = m;
 	c->mx0 = x0;
@@ -695,6 +781,7 @@ static void paint_box(struct canvas *c, struct box *b, int stacking)
 	if (b->type == B_TEXT || b->type == B_BREAK)
 		return;
 	mk = mask_push(c, b, &msave);
+	clip_rect(c, b);
 	if (b->style && kw(b->style, P_VISIBILITY, "hidden") &&
 	    b->type != B_INLINE) {
 		/* descendants may be visible again: walk on */
@@ -714,15 +801,16 @@ static void paint_box(struct canvas *c, struct box *b, int stacking)
 	if (b->type == B_REPLACED) {
 		paint_replaced(c, b);
 		paint_outline(c, b, x, y, w, h);
+		c->cx0 = cx0;
+		c->cy0 = cy0;
+		c->cx1 = cx1;
+		c->cy1 = cy1;
 		c->alpha = save_alpha;
 		if (mk)
 			mask_pop(c, &msave);
 		return;
 	}
-	if (b->style && b->parent && (!kw(b->style, P_OVERFLOW_X, "visible") ||
-	    !kw(b->style, P_OVERFLOW_Y, "visible")))
-		clip_to(c, b->x - b->p[3], b->y - b->p[0],
-			b->x + b->w + b->p[1], b->y + b->h + b->p[2]);
+	content_clip(c, b);
 	if (b->flags & BF_INLINE_KIDS) {
 		paint_lines(c, b);
 		paint_out_of_flow(c, b);
@@ -842,14 +930,40 @@ static void paint_context(struct canvas *c, struct box *b)
 	capz = ocap;
 }
 
+/* The clipping of b's ancestors on its containing block chain
+ * (overflow, clip), which their walk did not give it: it is painted
+ * out of it. An absolute box escapes the static ones up to its
+ * containing block, a fixed one all of them. */
+static void ancestor_clip(struct canvas *c, const struct box *b)
+{
+	const struct box *e = b, *a;
+
+	for (a = b->parent; a; a = a->parent) {
+		if (e->style && kw(e->style, P_POSITION, "fixed"))
+			break;
+		if (e->style && kw(e->style, P_POSITION, "absolute") &&
+		    !positioned(a))
+			continue;
+		content_clip(c, a);
+		e = a;
+	}
+}
+
 /* A layer: a stacking context paints its own layers, under its
  * opacity; another one leaves them to the context it is in */
 static void paint_layer(struct canvas *c, struct box *b)
 {
+	int cx0 = c->cx0, cy0 = c->cy0, cx1 = c->cx1, cy1 = c->cy1;
+
+	ancestor_clip(c, b);
 	if (!stacking_context(b))
 		paint_box(c, b, 1);
 	else
 		paint_context(c, b);
+	c->cx0 = cx0;
+	c->cy0 = cy0;
+	c->cx1 = cx1;
+	c->cy1 = cy1;
 }
 
 /* The canvas background: the root's, or the body's (CSS 2 14.2). */
