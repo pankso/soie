@@ -452,9 +452,16 @@ reversed, edit the entry and say why; do not leave stale rules here.
   there is no XML parser. Inline <svg> and SVG files share one
   renderer: rect, circle, ellipse, line, polyline, polygon, path (all
   commands, arcs), g/a with transforms, fill, stroke, opacities,
-  fill-rule, currentColor, viewBox and preserveAspectRatio. Not yet:
-  text, gradients and patterns (drawn gray), clipping, masks, <use>,
-  CSS in <style>, stroke joins and caps (butt only).
+  fill-rule, currentColor, viewBox and preserveAspectRatio, stroke
+  joins (miter with stroke-miterlimit, round, bevel) and caps (butt,
+  round, square). Not yet: text, gradients and patterns (drawn gray),
+  clipping, masks, <use>, CSS in <style>, dashes.
+- Strokes have their own list of segments: they were drawn from the
+  fill's edges, which leave out horizontal ones (a rect's top and
+  bottom were missing, Toile's tab icon was two brackets), and without
+  joints (curves had teeth). Each segment, joint and cap is a convex
+  piece, all turned the same way and filled at once: nonzero merges
+  them, a translucent stroke is not blended twice where they meet.
 - The polygon filler is analytic in x with 4 sub-scanlines per pixel:
   good anti-aliasing for the cost.
 - Images load through the host's fetch callback when layout needs

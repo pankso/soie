@@ -57,6 +57,24 @@ static void poly_edge(struct poly *p, float x0, float y0, float x1, float y1)
 	}
 }
 
+/* A segment of a stroke's outline, as drawn (horizontal ones too) */
+static void seg_add(struct poly *p, float x0, float y0, float x1, float y1)
+{
+	struct edge *e;
+
+	if ((x0 == x1 && y0 == y1) || !isfinite(x0) || !isfinite(y0) ||
+	    !isfinite(x1) || !isfinite(y1) || fabsf(x0) > 1e7f ||
+	    fabsf(y0) > 1e7f || fabsf(x1) > 1e7f || fabsf(y1) > 1e7f)
+		return;
+	if (p->n == p->cap) {
+		p->cap = p->cap ? p->cap * 2 : 64;
+		p->e = xrealloc(p->e, (size_t)p->cap * sizeof(*p->e));
+	}
+	e = &p->e[p->n++];
+	e->x0 = x0, e->y0 = y0, e->x1 = x1, e->y1 = y1;
+	e->dir = 0;
+}
+
 struct xing {
 	float x;
 	int dir;
@@ -299,6 +317,7 @@ static void tx(const struct mat *m, float x, float y, float *ox, float *oy)
 /* Path building in user units, transformed as edges are added. */
 struct pb {
 	struct poly *p;
+	struct poly *s;		/* the segments, for the stroke */
 	const struct mat *m;
 	float x, y, sx, sy;	/* user space */
 	int open;
@@ -311,6 +330,7 @@ static void pb_line(struct pb *b, float x, float y)
 	tx(b->m, b->x, b->y, &ax, &ay);
 	tx(b->m, x, y, &bx, &by);
 	poly_edge(b->p, ax, ay, bx, by);
+	seg_add(b->s, ax, ay, bx, by);
 	b->x = x;
 	b->y = y;
 	b->open = 1;
@@ -544,6 +564,9 @@ struct paintstate {
 	unsigned char fill[4], stroke[4];
 	int has_fill, has_stroke, evenodd;
 	float sw, opacity;
+	char join, cap;		/* 'm'iter, 'r'ound, 'b'evel; 'b'utt, 'r'ound,
+				 * 's'quare */
+	float miter;		/* stroke-miterlimit */
 	const unsigned char *current;	/* currentColor */
 };
 
@@ -587,6 +610,15 @@ static void inherit_paint(const soie_node *n, struct paintstate *ps)
 		ps->has_stroke = svg_color(v, ps->current, ps->stroke);
 	if ((v = prop(n, "stroke-width", buf, sizeof(buf))))
 		ps->sw = fnum(v);
+	if ((v = prop(n, "stroke-linejoin", buf, sizeof(buf))))
+		ps->join = !strcmp(v, "round") ? 'r' : !strcmp(v, "bevel") ?
+			'b' : 'm';
+	if ((v = prop(n, "stroke-linecap", buf, sizeof(buf))))
+		ps->cap = !strcmp(v, "round") ? 'r' : !strcmp(v, "square") ?
+			's' : 'b';
+	if ((v = prop(n, "stroke-miterlimit", buf, sizeof(buf))) &&
+	    fnum(v) >= 1)
+		ps->miter = fnum(v);
 	if ((v = prop(n, "fill-rule", buf, sizeof(buf))))
 		ps->evenodd = !strcmp(v, "evenodd");
 	if ((v = prop(n, "opacity", buf, sizeof(buf))))
@@ -604,28 +636,157 @@ static float attrf(const soie_node *n, const char *name, float dflt)
 	return a ? fnum(a) : dflt;
 }
 
-/* Stroke: every segment of the outline as a quad, joints as squares. */
-static void stroke_poly(struct canvas *c, struct poly *outline, float w,
-	const unsigned char *rgba)
+/*
+ * Stroke: each segment of the outline a quad, its joints and the ends
+ * of open subpaths their own convex pieces, all filled at once
+ * (nonzero: the pieces turned the same way merge, no double blending).
+ */
+
+/* Convex polygon v (n points) into p, turned as the quads are */
+static void piece(struct poly *p, const float *v, int n)
 {
-	struct poly p;
+	float a = 0;
+	int i, j;
+
+	for (i = 0; i < n; i++) {
+		j = (i + 1) % n;
+		a += v[2 * i] * v[2 * j + 1] - v[2 * j] * v[2 * i + 1];
+	}
+	for (i = 0; i < n; i++) {
+		j = (i + 1) % n;
+		if (a <= 0)
+			poly_edge(p, v[2 * i], v[2 * i + 1], v[2 * j],
+				v[2 * j + 1]);
+		else
+			poly_edge(p, v[2 * j], v[2 * j + 1], v[2 * i],
+				v[2 * i + 1]);
+	}
+}
+
+static void disc(struct poly *p, float x, float y, float r)
+{
+	float v[32];
 	int i;
 
-	memset(&p, 0, sizeof(p));
-	for (i = 0; i < outline->n; i++) {
-		struct edge *e = &outline->e[i];
-		float dx = e->x1 - e->x0, dy = e->y1 - e->y0;
-		float l = sqrtf(dx * dx + dy * dy), nx, ny;
+	for (i = 0; i < 16; i++) {
+		v[2 * i] = x + r * cosf((float)i * (float)M_PI / 8);
+		v[2 * i + 1] = y + r * sinf((float)i * (float)M_PI / 8);
+	}
+	piece(p, v, 16);
+}
 
-		if (l == 0)
+/* e's direction, unit */
+static void unit(const struct edge *e, float *ux, float *uy)
+{
+	float dx = e->x1 - e->x0, dy = e->y1 - e->y0;
+	float l = sqrtf(dx * dx + dy * dy);
+
+	*ux = dx / l;
+	*uy = dy / l;
+}
+
+/* The joint of a and b at a's end; h is half the width */
+static void join(struct poly *p, const struct edge *a, const struct edge *b,
+	float h, const struct paintstate *ps)
+{
+	float x = a->x1, y = a->y1, ux, uy, vx, vy, cross, s, v[8];
+
+	unit(a, &ux, &uy);
+	unit(b, &vx, &vy);
+	cross = ux * vy - uy * vx;
+	if (fabsf(cross) < 1e-6f && ux * vx + uy * vy > 0)
+		return;		/* straight on */
+	if (ps->join == 'r') {
+		disc(p, x, y, h);
+		return;
+	}
+	/* the outer side: offset points A (a's) and B (b's) */
+	s = cross > 0 ? -h : h;
+	v[0] = x;
+	v[1] = y;
+	v[2] = x - uy * s;
+	v[3] = y + ux * s;
+	v[6] = x - vy * s;
+	v[7] = y + vx * s;
+	if (ps->join == 'm' && fabsf(cross) > 1e-6f) {
+		/* the miter point: A + t a, on B's line too */
+		float t = ((v[6] - v[2]) * vy - (v[7] - v[3]) * vx) / cross;
+
+		v[4] = v[2] + t * ux;
+		v[5] = v[3] + t * uy;
+		if (hypotf(v[4] - x, v[5] - y) <= ps->miter * h) {
+			piece(p, v, 4);
+			return;
+		}
+	}
+	v[4] = v[6];
+	v[5] = v[7];
+	piece(p, v, 3);
+}
+
+/* The cap of e at its start (end 0) or its end */
+static void cap(struct poly *p, const struct edge *e, int end, float h,
+	const struct paintstate *ps)
+{
+	float x = end ? e->x1 : e->x0, y = end ? e->y1 : e->y0, ux, uy, v[8];
+
+	if (ps->cap == 'r') {
+		disc(p, x, y, h);
+		return;
+	}
+	if (ps->cap != 's')
+		return;
+	unit(e, &ux, &uy);
+	if (!end) {
+		ux = -ux;
+		uy = -uy;
+	}
+	v[0] = x - uy * h;
+	v[1] = y + ux * h;
+	v[2] = v[0] + ux * h;
+	v[3] = v[1] + uy * h;
+	v[6] = x + uy * h;
+	v[7] = y - ux * h;
+	v[4] = v[6] + ux * h;
+	v[5] = v[7] + uy * h;
+	piece(p, v, 4);
+}
+
+static void stroke_poly(struct canvas *c, const struct poly *segs, float w,
+	const struct paintstate *ps, const unsigned char *rgba)
+{
+	struct poly p;
+	float h = w / 2;
+	int i, first = 0;
+
+	memset(&p, 0, sizeof(p));
+	for (i = 0; i < segs->n; i++) {
+		const struct edge *e = &segs->e[i], *f = &segs->e[first];
+		const struct edge *next = i + 1 < segs->n ? e + 1 : NULL;
+		float ux, uy, v[8];
+
+		unit(e, &ux, &uy);
+		v[0] = e->x0 - uy * h;
+		v[1] = e->y0 + ux * h;
+		v[2] = e->x1 - uy * h;
+		v[3] = e->y1 + ux * h;
+		v[4] = e->x1 + uy * h;
+		v[5] = e->y1 - ux * h;
+		v[6] = e->x0 + uy * h;
+		v[7] = e->y0 - ux * h;
+		piece(&p, v, 4);
+		/* the subpath goes on, comes back to its start, or ends */
+		if (next && next->x0 == e->x1 && next->y0 == e->y1) {
+			join(&p, e, next, h, ps);
 			continue;
-		nx = -dy / l * w / 2;
-		ny = dx / l * w / 2;
-		poly_edge(&p, e->x0 + nx, e->y0 + ny, e->x1 + nx, e->y1 + ny);
-		poly_edge(&p, e->x1 + nx, e->y1 + ny, e->x1 - nx, e->y1 - ny);
-		poly_edge(&p, e->x1 - nx, e->y1 - ny, e->x0 - nx, e->y0 - ny);
-		poly_edge(&p, e->x0 - nx, e->y0 - ny, e->x0 + nx, e->y0 + ny);
-		/* each quad its own winding: nonzero merges them */
+		}
+		if (i > first && f->x0 == e->x1 && f->y0 == e->y1) {
+			join(&p, e, f, h, ps);
+		} else {
+			cap(&p, f, 0, h, ps);
+			cap(&p, e, 1, h, ps);
+		}
+		first = i + 1;
 	}
 	poly_fill(c, &p, 0, rgba);
 	free(p.e);
@@ -634,15 +795,17 @@ static void stroke_poly(struct canvas *c, struct poly *outline, float w,
 static void shape(struct canvas *c, const soie_node *n, const struct mat *m,
 	struct paintstate ps)
 {
-	struct poly p;
+	struct poly p, segs;
 	struct pb b;
 	const char *t = n->name, *a;
 	float x, y, w, h, r, rx, ry;
 	unsigned char col[4];
 
 	memset(&p, 0, sizeof(p));
+	memset(&segs, 0, sizeof(segs));
 	memset(&b, 0, sizeof(b));
 	b.p = &p;
+	b.s = &segs;
 	b.m = m;
 	if (!strcmp(t, "rect")) {
 		x = attrf(n, "x", 0);
@@ -728,9 +891,10 @@ static void shape(struct canvas *c, const soie_node *n, const struct mat *m,
 
 		memcpy(col, ps.stroke, 4);
 		col[3] = (unsigned char)(col[3] * ps.opacity);
-		stroke_poly(c, &p, ps.sw * scale, col);
+		stroke_poly(c, &segs, ps.sw * scale, &ps, col);
 	}
 	free(p.e);
+	free(segs.e);
 }
 
 static void walk(struct canvas *c, const soie_node *n, struct mat m,
@@ -781,6 +945,9 @@ void svg_render(struct canvas *c, const soie_node *el, float x, float y,
 	ps.fill[3] = 255;	/* black */
 	ps.has_fill = 1;
 	ps.sw = 1;
+	ps.join = 'm';
+	ps.cap = 'b';
+	ps.miter = 4;
 	ps.opacity = c->alpha;
 	ps.current = current;
 	m.e = x - c->ox;
