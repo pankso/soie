@@ -546,7 +546,8 @@ static void blend_px(struct canvas *c, int x, int y, const unsigned char *s,
 
 /* Image into the page rect (x, y, w, h), bilinear, clipped. */
 void draw_image(struct canvas *c, const struct image *im, float x, float y,
-	float w, float h, const unsigned char *current)
+	float w, float h, const unsigned char *current,
+	const struct style *st)
 {
 	const unsigned char *px;
 	int i0, j0, i1, j1, i, j;
@@ -554,7 +555,7 @@ void draw_image(struct canvas *c, const struct image *im, float x, float y,
 	if (w <= 0 || h <= 0)
 		return;
 	if (im->svg) {
-		svg_render(c, im->svg, x, y, w, h, current);
+		svg_render(c, im->svg, x, y, w, h, current, st, 1);
 		return;
 	}
 	if (!im->w || !im->h)
@@ -644,7 +645,8 @@ void draw_fitted(struct canvas *c, const struct box *b,
 		c->cx1 = (int)ceilf(x + w - c->ox);
 	if ((int)ceilf(y + h - c->oy) < c->cy1)
 		c->cy1 = (int)ceilf(y + h - c->oy);
-	draw_image(c, im, x + (w - iw) / 2, y + (h - ih) / 2, iw, ih, cur);
+	draw_image(c, im, x + (w - iw) / 2, y + (h - ih) / 2, iw, ih, cur,
+		st);
 	c->cx0 = cx0;
 	c->cy0 = cy0;
 	c->cx1 = cx1;
@@ -675,7 +677,7 @@ void paint_replaced(struct canvas *c, const struct box *b)
 	}
 	color_to_rgba(st->v[P_COLOR].u.color, cur);
 	if (b->node->ns == SOIE_NS_SVG) {
-		svg_render(c, b->node, b->x, b->y, b->w, b->h, cur);
+		svg_render(c, b->node, b->x, b->y, b->w, b->h, cur, st, 0);
 		return;
 	}
 	im = image_for(b->node);
@@ -1045,7 +1047,8 @@ void paint_layers_of(struct canvas *c, const struct box *b, int img_p,
 				py -= ih;
 		for (sy = py; sy < y + h && (ry || sy == py); sy += ih)
 			for (sx = px; sx < x + w && (rx || sx == px); sx += iw)
-				draw_image(c, im, sx, sy, iw, ih, cur);
+				draw_image(c, im, sx, sy, iw, ih, cur,
+					b->style);
 	}
 	c->cx0 = cx0;
 	c->cy0 = cy0;

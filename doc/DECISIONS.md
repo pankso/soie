@@ -494,9 +494,37 @@ reversed, edit the entry and say why; do not leave stale rules here.
   clipping, percentages of the one around: Wikipedia's sprite is 23 of
   them) and <use> of a <symbol>, an <svg> or any element of the
   document (href or xlink:href, x, y, width, height; 8 deep at most,
-  so a loop draws nothing). Not yet: text, gradients and patterns
-  (drawn gray), clipPath, masks, <use> of another file, CSS in
-  <style>, dashes.
+  so a loop draws nothing). Not yet: patterns (drawn gray), clipPath
+  on SVG shapes (clip-path on HTML boxes is done), masks, <use> of
+  another file, CSS in <style>, dashes.
+- SVG gradients: linearGradient and radialGradient as fill or stroke,
+  stops with offsets, stop-color and stop-opacity (attributes or
+  style), interpolated premultiplied as CSS gradients are; both units
+  (objectBoundingBox from the shape's box in its user space, or
+  userSpaceOnUse with percentages of the viewport), gradientTransform,
+  spreadMethod, href (or xlink:href) to another gradient for its
+  attributes and stops, 8 deep at most; a focal point and fr. A focal
+  point out of the circle is brought back onto it (SVG 1.1; SVG 2's
+  cones are not drawn). Each pixel of the filler maps back into the
+  gradient's space and looks its color up in a 256 entry table.
+  url(#id) with a fallback color uses it when the id names nothing;
+  without one, nothing is painted, as the spec says (it used to be
+  gray). debian.org's banner is five radial gradients.
+- SVG text: <text>, <tspan> and <a> in it, x, y, dx, dy (the first
+  value of a list), font-size (user units, em and %), font-family,
+  font-weight, fill, text-anchor by chunk (a run with its own x starts
+  one), white space collapsed. Drawn by the text code of HTML with the
+  box's style changed (font, color), so the fonts and glyph caches are
+  shared: these styles live in a ring of 32, the same values giving
+  the same one (widths are cached by style). Text is not rotated nor
+  skewed (the transform's scale only), has no stroke, and a gradient
+  fill is drawn black. An SVG drawn as an image
+  starts from the initial font (serif, 16px), an inline one from its
+  box's.
+- An SVG image (img, CSS background) with width and height but no
+  viewBox scales to its box as if it had viewBox="0 0 width height",
+  as browsers do: rust-lang.org's logo, 144 px drawn in 40, was cut to
+  its top left corner.
 - Strokes have their own list of segments: they were drawn from the
   fill's edges, which leave out horizontal ones (a rect's top and
   bottom were missing, Toile's tab icon was two brackets), and without

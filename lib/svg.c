@@ -14,6 +14,7 @@
 #include <string.h>
 #include "paint.h"
 #include "image.h"
+#include "font.h"
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
@@ -87,9 +88,75 @@ static int xcmp(const void *a, const void *b)
 	return d < 0 ? -1 : d > 0;
 }
 
-/* Fill p (pixel coordinates of the canvas) with rgba. */
+/* Transforms: a b c d e f, x' = a x + c y + e */
+struct mat {
+	float a, b, c, d, e, f;
+};
+
+/*
+ * A gradient, ready to paint: pixel centres through inv into its
+ * space, there a position t along it, its color in lut (straight
+ * RGBA, t 0..1 in 256 steps).
+ */
+struct grad {
+	int radial;
+	char spread;		/* 'p'ad, 'r'eflect, re'p'eat: 'p', 'r', 't' */
+	struct mat inv;
+	float x1, y1, x2, y2;	/* linear */
+	float cx, cy, r, fx, fy, fr;	/* radial */
+	unsigned char lut[256][4];
+};
+
+/* The color of g at pixel x, y */
+static const unsigned char *grad_at(const struct grad *g, int x, int y)
+{
+	float px = (float)x + 0.5f, py = (float)y + 0.5f;
+	float u = g->inv.a * px + g->inv.c * py + g->inv.e;
+	float v = g->inv.b * px + g->inv.d * py + g->inv.f;
+	float t;
+
+	if (!g->radial) {
+		float dx = g->x2 - g->x1, dy = g->y2 - g->y1;
+		float l = dx * dx + dy * dy;
+
+		t = l > 0 ? ((u - g->x1) * dx + (v - g->y1) * dy) / l : 1;
+	} else {
+		/* the largest t whose circle, from the focal one to the
+		 * end one, goes through (u, v) */
+		float cdx = g->cx - g->fx, cdy = g->cy - g->fy;
+		float pdx = u - g->fx, pdy = v - g->fy, dr = g->r - g->fr;
+		float a = cdx * cdx + cdy * cdy - dr * dr;
+		float b = pdx * cdx + pdy * cdy + g->fr * dr;
+		float cc = pdx * pdx + pdy * pdy - g->fr * g->fr;
+
+		if (fabsf(a) < 1e-6f) {
+			t = b != 0 ? cc / (2 * b) : 0;
+		} else {
+			float d = b * b - a * cc;
+
+			t = d < 0 ? 0 : (b + sqrtf(d)) / a;
+			if (a < 0 && d >= 0 && g->fr + t * dr < 0)
+				t = (b - sqrtf(d)) / a;
+		}
+	}
+	if (g->spread == 't')
+		t -= floorf(t);
+	else if (g->spread == 'r') {
+		t = fmodf(fabsf(t), 2);
+		if (t > 1)
+			t = 2 - t;
+	}
+	if (!(t > 0))
+		t = 0;
+	if (t > 1)
+		t = 1;
+	return g->lut[(int)(t * 255 + 0.5f)];
+}
+
+/* Fill p (pixel coordinates of the canvas) with rgba, or with g (when
+ * not NULL) and rgba's alpha on top. */
 static void poly_fill(struct canvas *c, struct poly *p, int evenodd,
-	const unsigned char *rgba)
+	const unsigned char *rgba, const struct grad *g)
 {
 	float ymin = 1e30f, ymax = -1e30f, *acc;
 	struct xing *xs;
@@ -176,17 +243,22 @@ static void poly_fill(struct canvas *c, struct poly *p, int evenodd,
 				if (cov > 255)
 					cov = 255;
 				if (y >= c->cy0 && y < c->cy1) {
+					const unsigned char *col = g ?
+						grad_at(g, i, y) : rgba;
+
 					a = rgba[3] * cov / 255;
+					if (g)
+						a = a * col[3] / 255;
 					a = (int)((float)a * c->alpha + 0.5f);
 					if (c->mask)
 						a = a * mask_at(c, i, y) / 255;
 					px = c->px + (size_t)y * (size_t)c->stride +
 						(size_t)i * 4;
-					px[0] = (unsigned char)((rgba[r] * a +
+					px[0] = (unsigned char)((col[r] * a +
 						px[0] * (255 - a)) / 255);
-					px[1] = (unsigned char)((rgba[1] * a +
+					px[1] = (unsigned char)((col[1] * a +
 						px[1] * (255 - a)) / 255);
-					px[2] = (unsigned char)((rgba[2 - r] *
+					px[2] = (unsigned char)((col[2 - r] *
 						a + px[2] * (255 - a)) / 255);
 					px[3] = (unsigned char)(a + px[3] *
 						(255 - a) / 255);
@@ -198,11 +270,6 @@ static void poly_fill(struct canvas *c, struct poly *p, int evenodd,
 	free(acc);
 	free(xs);
 }
-
-/* Transforms: a b c d e f, x' = a x + c y + e */
-struct mat {
-	float a, b, c, d, e, f;
-};
 
 static void mul(struct mat *m, const struct mat *n)
 {
@@ -323,7 +390,20 @@ struct pb {
 	const struct mat *m;
 	float x, y, sx, sy;	/* user space */
 	int open;
+	float bb[4];		/* bounding box, user space: x0 y0 x1 y1 */
 };
+
+static void pb_box(struct pb *b, float x, float y)
+{
+	if (x < b->bb[0])
+		b->bb[0] = x;
+	if (y < b->bb[1])
+		b->bb[1] = y;
+	if (x > b->bb[2])
+		b->bb[2] = x;
+	if (y > b->bb[3])
+		b->bb[3] = y;
+}
 
 static void pb_line(struct pb *b, float x, float y)
 {
@@ -333,6 +413,7 @@ static void pb_line(struct pb *b, float x, float y)
 	tx(b->m, x, y, &bx, &by);
 	poly_edge(b->p, ax, ay, bx, by);
 	seg_add(b->s, ax, ay, bx, by);
+	pb_box(b, x, y);
 	b->x = x;
 	b->y = y;
 	b->open = 1;
@@ -350,6 +431,7 @@ static void pb_move(struct pb *b, float x, float y)
 	pb_close(b);
 	b->x = b->sx = x;
 	b->y = b->sy = y;
+	pb_box(b, x, y);
 }
 
 static void pb_cubic(struct pb *b, float x1, float y1, float x2, float y2,
@@ -571,7 +653,59 @@ struct paintstate {
 	float miter;		/* stroke-miterlimit */
 	float vw, vh;		/* the viewport, for percentages */
 	const unsigned char *current;	/* currentColor */
+	const soie_node *fill_g, *stroke_g;	/* gradients, else NULL */
+	/* text */
+	const struct style *base;	/* what the font props change */
+	float fsize;		/* font-size, user units */
+	const char *family;	/* interned; NULL: base's */
+	int weight;
+	char anchor;		/* text-anchor: 's'tart, 'm'iddle, 'e'nd */
 };
+
+static const soie_node *by_id(const soie_node *n, const char *id);
+static const char *use_href(const soie_node *n);
+
+static const soie_node *root_of(const soie_node *n)
+{
+	while (n->parent)
+		n = n->parent;
+	return n;
+}
+
+static int is_grad(const soie_node *n)
+{
+	return n && n->type == SOIE_ELEMENT && n->ns == SOIE_NS_SVG &&
+		(!strcmp(n->name, "linearGradient") ||
+		 !strcmp(n->name, "radialGradient"));
+}
+
+/*
+ * A font-family value kept for as long as the library is loaded, the
+ * same pointer for the same value (fonts cache their chains by it),
+ * single quotes made double ones as computed values have them.
+ */
+static const char *intern_family(const char *v)
+{
+	static char *names[64];
+	static int n;
+	char buf[128], *q;
+	int i;
+
+	if (strlen(v) >= sizeof(buf))
+		return NULL;
+	strcpy(buf, v);
+	for (q = buf; *q; q++)
+		if (*q == '\'')
+			*q = '"';
+	for (i = 0; i < n; i++)
+		if (!strcmp(names[i], buf))
+			return names[i];
+	if (n == 64)
+		return NULL;
+	names[n] = xmalloc(strlen(buf) + 1);
+	strcpy(names[n], buf);
+	return names[n++];
+}
 
 static int svg_color(const char *v, const unsigned char *current,
 	unsigned char *out)
@@ -583,12 +717,6 @@ static int svg_color(const char *v, const unsigned char *current,
 
 	if (!v || !strcmp(v, "none"))
 		return 0;
-	if (!strncmp(v, "url(", 4)) {
-		/* gradients and patterns: a neutral gray stand-in */
-		out[0] = out[1] = out[2] = 128;
-		out[3] = 255;
-		return 1;
-	}
 	css_component_values(v, strlen(v), &l);
 	cur_init(&c, &l);
 	if (parse_color(&c, &col)) {
@@ -602,15 +730,64 @@ static int svg_color(const char *v, const unsigned char *current,
 	return ok;
 }
 
+/*
+ * A fill or stroke of n: a color, or url(#id) with an optional fallback
+ * color, *g the gradient it names. Patterns are a neutral gray stand-in;
+ * a reference to nothing is its fallback, else none.
+ */
+static int svg_paint(const soie_node *n, const char *v,
+	const unsigned char *current, unsigned char *out,
+	const soie_node **g)
+{
+	*g = NULL;
+	if (v && !strncmp(v, "url(", 4)) {
+		const char *e = strchr(v, ')'), *id = v + 4;
+		const soie_node *t = NULL;
+		char buf[128];
+		size_t len;
+
+		if (!e)
+			return 0;
+		while (*id == ' ' || *id == '"' || *id == '\'')
+			id++;
+		len = (size_t)(e - id);
+		while (len && (id[len - 1] == ' ' || id[len - 1] == '"' ||
+		       id[len - 1] == '\''))
+			len--;
+		if (*id == '#' && len > 1 && len < sizeof(buf)) {
+			memcpy(buf, id + 1, len - 1);
+			buf[len - 1] = '\0';
+			t = by_id(root_of(n), buf);
+		}
+		if (is_grad(t)) {
+			*g = t;
+			out[0] = out[1] = out[2] = 0;
+			out[3] = 255;
+			return 1;
+		}
+		if (t && !strcmp(t->name, "pattern")) {
+			out[0] = out[1] = out[2] = 128;
+			out[3] = 255;
+			return 1;
+		}
+		for (v = e + 1; *v == ' '; v++)
+			;
+		return *v ? svg_color(v, current, out) : 0;
+	}
+	return svg_color(v, current, out);
+}
+
 static void inherit_paint(const soie_node *n, struct paintstate *ps)
 {
 	char buf[128];
 	const char *v;
 
 	if ((v = prop(n, "fill", buf, sizeof(buf))))
-		ps->has_fill = svg_color(v, ps->current, ps->fill);
+		ps->has_fill = svg_paint(n, v, ps->current, ps->fill,
+			&ps->fill_g);
 	if ((v = prop(n, "stroke", buf, sizeof(buf))))
-		ps->has_stroke = svg_color(v, ps->current, ps->stroke);
+		ps->has_stroke = svg_paint(n, v, ps->current, ps->stroke,
+			&ps->stroke_g);
 	if ((v = prop(n, "stroke-width", buf, sizeof(buf))))
 		ps->sw = fnum(v);
 	if ((v = prop(n, "stroke-linejoin", buf, sizeof(buf))))
@@ -630,6 +807,18 @@ static void inherit_paint(const soie_node *n, struct paintstate *ps)
 		ps->fill[3] = (unsigned char)(ps->fill[3] * fnum(v));
 	if ((v = prop(n, "stroke-opacity", buf, sizeof(buf))))
 		ps->stroke[3] = (unsigned char)(ps->stroke[3] * fnum(v));
+	if ((v = prop(n, "font-size", buf, sizeof(buf))) && fnum(v) > 0)
+		ps->fsize = strstr(v, "em") ? fnum(v) * ps->fsize :
+			strchr(v, '%') ? fnum(v) * ps->fsize / 100 : fnum(v);
+	if ((v = prop(n, "font-family", buf, sizeof(buf))))
+		ps->family = intern_family(v);
+	if ((v = prop(n, "font-weight", buf, sizeof(buf))))
+		ps->weight = !strcmp(v, "bold") || !strcmp(v, "bolder") ? 700 :
+			!strcmp(v, "normal") || !strcmp(v, "lighter") ? 400 :
+			fnum(v) >= 1 ? (int)fnum(v) : ps->weight;
+	if ((v = prop(n, "text-anchor", buf, sizeof(buf))))
+		ps->anchor = !strcmp(v, "middle") ? 'm' : !strcmp(v, "end") ?
+			'e' : 's';
 }
 
 static float attrf(const soie_node *n, const char *name, float dflt)
@@ -637,6 +826,187 @@ static float attrf(const soie_node *n, const char *name, float dflt)
 	const char *a = soie_element_get_attr(n, name);
 
 	return a ? fnum(a) : dflt;
+}
+
+/* Gradients */
+
+#define GRAD_DEPTH 8	/* href chain: no further (and no loop) */
+
+/* The gradient n's href names, NULL if none */
+static const soie_node *grad_href(const soie_node *n)
+{
+	const char *a = use_href(n);
+	const soie_node *t;
+
+	if (!a || *a != '#')
+		return NULL;
+	t = by_id(root_of(n), a + 1);
+	return is_grad(t) && t != n ? t : NULL;
+}
+
+/* An attribute of gradient n or else of those it refers to */
+static const char *grad_attr(const soie_node *n, const char *name)
+{
+	const char *a = NULL;
+	int d;
+
+	for (d = 0; n && d < GRAD_DEPTH; d++, n = grad_href(n))
+		if ((a = soie_element_get_attr(n, name)))
+			break;
+	return a;
+}
+
+/* A length of gradient n: dflt when not given, percentages of ref
+ * (in bounding box units, ref is 1 and plain numbers are fractions) */
+static float grad_len(const soie_node *n, const char *name, float dflt,
+	float ref)
+{
+	const char *a = grad_attr(n, name);
+
+	if (!a)
+		return dflt * ref;
+	return strchr(a, '%') ? fnum(a) * ref / 100 : fnum(a);
+}
+
+static void lut_put(unsigned char *o, const float *pm)
+{
+	int i;
+
+	o[3] = (unsigned char)(pm[3] + 0.5f);
+	for (i = 0; i < 3; i++)
+		o[i] = (unsigned char)(pm[3] > 0 ? pm[i] * 255 / pm[3] +
+			0.5f : 0);
+}
+
+/* g's color table from the stops of n (or of the first gradient it
+ * refers to that has some); 0 for none (the paint is then none) */
+static int grad_stops(struct grad *g, const soie_node *n,
+	const struct paintstate *ps)
+{
+	float off[64], col[64][4];
+	const soie_node *k;
+	int ns = 0, d, i, j;
+	char buf[128];
+
+	for (d = 0; n && d < GRAD_DEPTH && !ns; d++, n = grad_href(n)) {
+		for (k = n->first; k && ns < 64; k = k->next) {
+			unsigned char rgba[4] = { 0, 0, 0, 255 };
+			const char *v;
+			float o, a = 1;
+
+			if (k->type != SOIE_ELEMENT || strcmp(k->name, "stop"))
+				continue;
+			v = soie_element_get_attr(k, "offset");
+			o = v ? fnum(v) / (strchr(v, '%') ? 100 : 1) : 0;
+			if (o < 0)
+				o = 0;
+			if (o > 1)
+				o = 1;
+			if (ns && o < off[ns - 1])
+				o = off[ns - 1];
+			if ((v = prop(k, "stop-color", buf, sizeof(buf))))
+				svg_color(v, ps->current, rgba);
+			if ((v = prop(k, "stop-opacity", buf, sizeof(buf))))
+				a = fnum(v);
+			if (a < 0)
+				a = 0;
+			if (a > 1)
+				a = 1;
+			off[ns] = o;
+			/* premultiplied, interpolated so */
+			col[ns][3] = rgba[3] * a;
+			for (i = 0; i < 3; i++)
+				col[ns][i] = rgba[i] * col[ns][3] / 255;
+			ns++;
+		}
+	}
+	if (!ns)
+		return 0;
+	for (i = 0, j = 0; i < 256; i++) {
+		float t = (float)i / 255, pm[4], f;
+		int q;
+
+		while (j < ns && off[j] <= t)
+			j++;
+		if (j == 0 || j == ns) {
+			lut_put(g->lut[i], col[j ? ns - 1 : 0]);
+			continue;
+		}
+		f = off[j] > off[j - 1] ? (t - off[j - 1]) /
+			(off[j] - off[j - 1]) : 1;
+		for (q = 0; q < 4; q++)
+			pm[q] = col[j - 1][q] + (col[j][q] - col[j - 1][q]) * f;
+		lut_put(g->lut[i], pm);
+	}
+	return 1;
+}
+
+/*
+ * Gradient n ready to paint a shape of bounding box bb (user space,
+ * m from it to pixels); 0 when it paints nothing (no stops, empty box
+ * in bounding box units, a transform that cannot be inverted).
+ */
+static int grad_make(struct grad *g, const soie_node *n, const struct mat *m,
+	const float *bb, const struct paintstate *ps)
+{
+	const char *u = grad_attr(n, "gradientUnits"), *a;
+	int obb = !u || strcmp(u, "userSpaceOnUse");
+	float rw = obb ? 1 : ps->vw, rh = obb ? 1 : ps->vh;
+	float rd = obb ? 1 : sqrtf((ps->vw * ps->vw + ps->vh * ps->vh) / 2);
+	struct mat t = *m;
+	float det;
+
+	if (!grad_stops(g, n, ps))
+		return 0;
+	if (obb) {
+		struct mat b = { bb[2] - bb[0], 0, 0, bb[3] - bb[1], bb[0],
+			bb[1] };
+
+		if (b.a <= 0 || b.d <= 0)
+			return 0;
+		mul(&t, &b);
+	}
+	if ((a = grad_attr(n, "gradientTransform")))
+		parse_transform(a, &t);
+	det = t.a * t.d - t.b * t.c;
+	if (!isfinite(det) || fabsf(det) < 1e-12f)
+		return 0;
+	g->inv.a = t.d / det;
+	g->inv.b = -t.b / det;
+	g->inv.c = -t.c / det;
+	g->inv.d = t.a / det;
+	g->inv.e = (t.c * t.f - t.d * t.e) / det;
+	g->inv.f = (t.b * t.e - t.a * t.f) / det;
+	a = grad_attr(n, "spreadMethod");
+	g->spread = a && !strcmp(a, "reflect") ? 'r' :
+		a && !strcmp(a, "repeat") ? 't' : 'p';
+	g->radial = !strcmp(n->name, "radialGradient");
+	if (!g->radial) {
+		g->x1 = grad_len(n, "x1", 0, rw);
+		g->y1 = grad_len(n, "y1", 0, rh);
+		g->x2 = grad_len(n, "x2", 1, rw);
+		g->y2 = grad_len(n, "y2", 0, rh);
+	} else {
+		float dx, dy, l;
+
+		g->cx = grad_len(n, "cx", 0.5f, rw);
+		g->cy = grad_len(n, "cy", 0.5f, rh);
+		g->r = grad_len(n, "r", 0.5f, rd);
+		g->fr = grad_len(n, "fr", 0, rd);
+		g->fx = grad_attr(n, "fx") ? grad_len(n, "fx", 0, rw) : g->cx;
+		g->fy = grad_attr(n, "fy") ? grad_len(n, "fy", 0, rh) : g->cy;
+		if (g->r <= 0)
+			return 0;
+		/* a focal point out of the circle comes back onto it */
+		dx = g->fx - g->cx;
+		dy = g->fy - g->cy;
+		l = sqrtf(dx * dx + dy * dy);
+		if (l > g->r * 0.999f) {
+			g->fx = g->cx + dx * g->r * 0.999f / l;
+			g->fy = g->cy + dy * g->r * 0.999f / l;
+		}
+	}
+	return 1;
 }
 
 /*
@@ -756,7 +1126,8 @@ static void cap(struct poly *p, const struct edge *e, int end, float h,
 }
 
 static void stroke_poly(struct canvas *c, const struct poly *segs, float w,
-	const struct paintstate *ps, const unsigned char *rgba)
+	const struct paintstate *ps, const unsigned char *rgba,
+	const struct grad *g)
 {
 	struct poly p;
 	float h = w / 2;
@@ -791,8 +1162,21 @@ static void stroke_poly(struct canvas *c, const struct poly *segs, float w,
 		}
 		first = i + 1;
 	}
-	poly_fill(c, &p, 0, rgba);
+	poly_fill(c, &p, 0, rgba, g);
 	free(p.e);
+}
+
+/* Gradient n for a shape, or NULL when it paints nothing; to free */
+static struct grad *grad(const soie_node *n, const struct mat *m,
+	const float *bb, const struct paintstate *ps)
+{
+	struct grad *g = xmalloc(sizeof(*g));
+
+	if (bb[0] > bb[2] || !grad_make(g, n, m, bb, ps)) {
+		free(g);
+		return NULL;
+	}
+	return g;
 }
 
 static void shape(struct canvas *c, const soie_node *n, const struct mat *m,
@@ -803,6 +1187,7 @@ static void shape(struct canvas *c, const soie_node *n, const struct mat *m,
 	const char *t = n->name, *a;
 	float x, y, w, h, r, rx, ry;
 	unsigned char col[4];
+	struct grad *g = NULL;
 
 	memset(&p, 0, sizeof(p));
 	memset(&segs, 0, sizeof(segs));
@@ -810,6 +1195,8 @@ static void shape(struct canvas *c, const soie_node *n, const struct mat *m,
 	b.p = &p;
 	b.s = &segs;
 	b.m = m;
+	b.bb[0] = b.bb[1] = 1e30f;
+	b.bb[2] = b.bb[3] = -1e30f;
 	if (!strcmp(t, "rect")) {
 		x = attrf(n, "x", 0);
 		y = attrf(n, "y", 0);
@@ -887,14 +1274,23 @@ static void shape(struct canvas *c, const soie_node *n, const struct mat *m,
 		}
 		memcpy(col, ps.fill, 4);
 		col[3] = (unsigned char)(col[3] * ps.opacity);
-		poly_fill(c, &f, ps.evenodd, col);
+		if (!ps.fill_g)
+			poly_fill(c, &f, ps.evenodd, col, NULL);
+		else if ((g = grad(ps.fill_g, m, b.bb, &ps)))
+			poly_fill(c, &f, ps.evenodd, col, g);
+		free(g);
+		g = NULL;
 	}
 	if (ps.has_stroke && ps.sw > 0) {
 		float scale = sqrtf(fabsf(m->a * m->d - m->b * m->c));
 
 		memcpy(col, ps.stroke, 4);
 		col[3] = (unsigned char)(col[3] * ps.opacity);
-		stroke_poly(c, &segs, ps.sw * scale, &ps, col);
+		if (!ps.stroke_g)
+			stroke_poly(c, &segs, ps.sw * scale, &ps, col, NULL);
+		else if ((g = grad(ps.stroke_g, m, b.bb, &ps)))
+			stroke_poly(c, &segs, ps.sw * scale, &ps, col, g);
+		free(g);
 	}
 	free(p.e);
 	free(segs.e);
@@ -1029,6 +1425,216 @@ static void nested(struct canvas *c, const soie_node *el, struct mat m,
 	c->cy1 = cy1;
 }
 
+/* Text */
+
+/*
+ * A style for text of ps at font size px (page pixels), color rgba:
+ * ps's base with its font and color changed. Kept in a small ring, the
+ * same style for the same values: text widths are cached by style.
+ */
+static const struct style *text_style(const struct paintstate *ps, float px,
+	const unsigned char *rgba)
+{
+	static struct {
+		struct style st;
+		struct color col;
+		const struct style *base;
+		const char *family;
+		float px;
+		int weight;
+		unsigned char rgba[4];
+	} *ring;
+	static int next, used;
+	const char *fam = ps->family ? ps->family :
+		ps->base->v[P_FONT_FAMILY].u.str;
+	int i;
+
+	if (!ring)
+		ring = xmalloc(32 * sizeof(*ring));
+	for (i = 0; i < used; i++)
+		if (ring[i].base == ps->base && ring[i].family == fam &&
+		    ring[i].px == px && ring[i].weight == ps->weight &&
+		    !memcmp(ring[i].rgba, rgba, 4))
+			return &ring[i].st;
+	i = next;
+	next = (next + 1) % 32;
+	if (used < 32)
+		used++;
+	else
+		font_cache_clear();	/* widths cached for the old one */
+	ring[i].st = *ps->base;
+	ring[i].base = ps->base;
+	ring[i].family = fam;
+	ring[i].px = px;
+	ring[i].weight = ps->weight;
+	memcpy(ring[i].rgba, rgba, 4);
+	memset(&ring[i].col, 0, sizeof(ring[i].col));
+	ring[i].col.space = CS_RGB_LEGACY;
+	ring[i].col.c[0] = rgba[0];
+	ring[i].col.c[1] = rgba[1];
+	ring[i].col.c[2] = rgba[2];
+	ring[i].col.alpha = rgba[3] / 255.0;
+	ring[i].st.v[P_FONT_SIZE].u.len.px = px;
+	ring[i].st.v[P_FONT_FAMILY].u.str = fam;
+	ring[i].st.v[P_FONT_WEIGHT].u.num = ps->weight;
+	ring[i].st.v[P_COLOR].kw = 0;
+	ring[i].st.v[P_COLOR].u.color = &ring[i].col;
+	return &ring[i].st;
+}
+
+/* A run of text at (x, y), user units; x set: a new chunk starts */
+struct trun {
+	char *s;
+	size_t len;
+	float x, y, w;		/* w: advance, user units */
+	int chunk;
+	struct paintstate ps;
+};
+
+struct tstate {
+	struct trun *r;
+	int n, cap;
+	float x, y;		/* the current text position */
+	int space;		/* the last character was a space */
+	float scale;
+};
+
+static float coord(const soie_node *n, const char *name, float ref,
+	int *set)
+{
+	const char *a = soie_element_get_attr(n, name), *s = a;
+	float v;
+
+	*set = 0;
+	if (!a)
+		return 0;
+	v = num(&s);
+	if (isnan(v))
+		return 0;
+	*set = 1;
+	return *s == '%' ? v * ref / 100 : v;
+}
+
+static void text_runs(struct tstate *t, const soie_node *n,
+	struct paintstate ps, int depth)
+{
+	const soie_node *k;
+	char buf[16];
+	const char *a;
+	int sx, sy, chunk = 0;
+	float v;
+
+	if (depth > 0)
+		inherit_paint(n, &ps);
+	if ((a = prop(n, "display", buf, sizeof(buf))) && !strcmp(a, "none"))
+		return;
+	v = coord(n, "x", ps.vw, &sx);
+	if (sx)
+		t->x = v, chunk = 1;
+	v = coord(n, "y", ps.vh, &sy);
+	if (sy)
+		t->y = v, chunk = 1;
+	t->x += coord(n, "dx", ps.vw, &sx);
+	t->y += coord(n, "dy", ps.vh, &sy);
+	for (k = n->first; k; k = k->next) {
+		if (k->type == SOIE_ELEMENT && k->ns == SOIE_NS_SVG &&
+		    (!strcmp(k->name, "tspan") || !strcmp(k->name, "a"))) {
+			text_runs(t, k, ps, depth + 1);
+			continue;
+		}
+		if (k->type != SOIE_TEXT || !k->u.text.len || depth > 8)
+			continue;
+		{
+			struct trun *r;
+			const char *d = k->u.text.data;
+			size_t i, o = 0;
+
+			if (t->n == t->cap) {
+				t->cap = t->cap ? t->cap * 2 : 8;
+				t->r = xrealloc(t->r, (size_t)t->cap *
+					sizeof(*t->r));
+			}
+			r = &t->r[t->n];
+			r->s = xmalloc(k->u.text.len + 1);
+			/* white space collapsed, none at the start */
+			for (i = 0; i < k->u.text.len; i++) {
+				char ch = d[i];
+
+				if (ch == '\n' || ch == '\r' || ch == '\t')
+					ch = ' ';
+				if (ch == ' ' && t->space)
+					continue;
+				t->space = ch == ' ';
+				r->s[o++] = ch;
+			}
+			if (!o) {
+				free(r->s);
+				continue;
+			}
+			r->len = o;
+			r->x = t->x;
+			r->y = t->y;
+			r->chunk = chunk || !t->n;
+			chunk = 0;
+			r->ps = ps;
+			{
+				unsigned char rgba[4] = { 0, 0, 0, 255 };
+				const struct style *st = text_style(&ps,
+					ps.fsize * t->scale, rgba);
+
+				r->w = text_width(st, r->s, r->len) / t->scale;
+			}
+			t->x += r->w;
+			t->n++;
+		}
+	}
+}
+
+/* A <text> element: its runs placed, chunks anchored, drawn */
+static void text_el(struct canvas *c, const soie_node *n, const struct mat *m,
+	struct paintstate ps)
+{
+	struct tstate t;
+	float scale = sqrtf(fabsf(m->a * m->d - m->b * m->c));
+	int i, j;
+
+	if (!ps.base || scale <= 0 || !(ps.fsize > 0))
+		return;
+	memset(&t, 0, sizeof(t));
+	t.space = 1;
+	t.scale = scale;
+	text_runs(&t, n, ps, 0);
+	/* no space at the end */
+	if (t.n && t.r[t.n - 1].s[t.r[t.n - 1].len - 1] == ' ' &&
+	    t.r[t.n - 1].len > 1) {
+		t.r[t.n - 1].len--;
+	}
+	for (i = 0; i < t.n; i = j) {
+		float w = 0, shift;
+
+		for (j = i; j < t.n && (j == i || !t.r[j].chunk); j++)
+			w += t.r[j].w;
+		shift = t.r[i].ps.anchor == 'm' ? -w / 2 :
+			t.r[i].ps.anchor == 'e' ? -w : 0;
+		for (; i < j; i++) {
+			struct trun *r = &t.r[i];
+			unsigned char rgba[4];
+			float px, py;
+
+			if (!r->ps.has_fill)
+				continue;
+			memcpy(rgba, r->ps.fill, 4);
+			rgba[3] = (unsigned char)(rgba[3] * r->ps.opacity);
+			tx(m, r->x + shift, r->y, &px, &py);
+			paint_text(c, text_style(&r->ps, r->ps.fsize * scale,
+				rgba), r->s, r->len, px + c->ox, py + c->oy);
+		}
+	}
+	for (i = 0; i < t.n; i++)
+		free(t.r[i].s);
+	free(t.r);
+}
+
 /* One element of the tree, with its paint state and transform */
 static void element(struct canvas *c, const soie_node *k, struct mat m,
 	struct paintstate ps, int depth)
@@ -1043,7 +1649,7 @@ static void element(struct canvas *c, const soie_node *k, struct mat m,
 	    !strcmp(k->name, "mask") || !strcmp(k->name, "symbol") ||
 	    !strcmp(k->name, "linearGradient") ||
 	    !strcmp(k->name, "radialGradient") ||
-	    !strcmp(k->name, "style") || !strcmp(k->name, "text"))
+	    !strcmp(k->name, "style"))
 		return;
 	if ((a = prop(k, "display", buf, sizeof(buf))) && !strcmp(a, "none"))
 		return;
@@ -1089,6 +1695,8 @@ static void element(struct canvas *c, const soie_node *k, struct mat m,
 			mul(&um, &tr);
 			element(c, t, um, ps, depth + 1);
 		}
+	} else if (!strcmp(k->name, "text")) {
+		text_el(c, k, &m, ps);
 	} else {
 		shape(c, k, &m, ps);
 	}
@@ -1103,9 +1711,14 @@ static void walk(struct canvas *c, const soie_node *n, struct mat m,
 		element(c, k, m, ps, depth);
 }
 
-/* Draw <svg> element el into the box (x, y, w, h), page coordinates. */
+/*
+ * Draw <svg> element el into the box (x, y, w, h), page coordinates;
+ * st, the style of that box, gives the text its font (the initial one
+ * when the SVG is an image).
+ */
 void svg_render(struct canvas *c, const soie_node *el, float x, float y,
-	float w, float h, const unsigned char *current)
+	float w, float h, const unsigned char *current,
+	const struct style *st, int image)
 {
 	struct mat m = { 1, 0, 0, 1, 0, 0 };
 	struct paintstate ps;
@@ -1119,9 +1732,35 @@ void svg_render(struct canvas *c, const soie_node *el, float x, float y,
 	ps.miter = 4;
 	ps.opacity = c->alpha;
 	ps.current = current;
+	ps.base = st;
+	ps.anchor = 's';
+	if (st) {
+		ps.fsize = image ? 16 : st->v[P_FONT_SIZE].u.len.px /
+			doc_zoom();
+		ps.weight = image ? 400 : (int)st->v[P_FONT_WEIGHT].u.num;
+		ps.family = image ? intern_family("serif") : NULL;
+	}
 	m.e = -c->ox;
 	m.f = -c->oy;
-	viewport(&m, el, x, y, w, h, &ps);
+	{
+		const char *aw = soie_element_get_attr(el, "width");
+		const char *ah = soie_element_get_attr(el, "height");
+
+		/* an image without viewBox but sized scales as if it had
+		 * one of that size, as browsers do */
+		if (image && !soie_element_get_attr(el, "viewBox") && aw &&
+		    ah && !strchr(aw, '%') && !strchr(ah, '%') &&
+		    fnum(aw) > 0 && fnum(ah) > 0) {
+			struct mat t = { w / fnum(aw), 0, 0, h / fnum(ah), x,
+				y };
+
+			mul(&m, &t);
+			ps.vw = fnum(aw);
+			ps.vh = fnum(ah);
+		} else {
+			viewport(&m, el, x, y, w, h, &ps);
+		}
+	}
 	inherit_paint(el, &ps);
 	{
 		float a = c->alpha;
@@ -1439,7 +2078,7 @@ int clip_path_paint(struct canvas *c, const struct box *b)
 			ok = 0;
 	}
 	if (ok)
-		poly_fill(c, &p, evenodd, black);
+		poly_fill(c, &p, evenodd, black, NULL);
 	free(p.e);
 	free(segs.e);
 	cvlist_free(&l);

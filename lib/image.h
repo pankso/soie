@@ -44,9 +44,11 @@ void images_free(struct images *im);
 const struct image *image_get(soie_node *doc, const char *url);
 const struct image *image_for(const soie_node *el);
 void draw_image(struct canvas *c, const struct image *im, float x, float y,
-	float w, float h, const unsigned char *current);
+	float w, float h, const unsigned char *current,
+	const struct style *st);
 void svg_render(struct canvas *c, const soie_node *el, float x, float y,
-	float w, float h, const unsigned char *current);
+	float w, float h, const unsigned char *current,
+	const struct style *st, int image);
 void svg_size(const soie_node *el, float *w, float *h);
 int decode_image(const unsigned char *data, size_t len, struct image *im);
 void draw_fitted(struct canvas *c, const struct box *b,
