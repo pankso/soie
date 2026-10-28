@@ -107,9 +107,13 @@ static void base_size(struct item *it, int row, float W, float H)
 		sz = row ? box_spec_w(b, P_WIDTH, W) :
 			box_spec_h(b, P_HEIGHT, H);
 	if (!row) {
+		/* the width it is laid out at below, max-width included:
+		 * measured wider, its text wraps less, the height is short
+		 * (a centred section of 1000 px in a body that is a column) */
 		cw = box_spec_w(b, P_WIDTH, W);
 		if (cw < 0)
 			cw = W - it->cbefore - it->cafter;
+		cw = box_clamp_w(b, cw, W);
 	}
 	if (sz < 0) {
 		/* content: max-content in the main axis */

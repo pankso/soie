@@ -1315,6 +1315,11 @@ on the same frozen DOM.
   Tailwind site) render largely right but not yet like browsers: the
   remaining gaps are in grid placement details and in var()-computed
   track lists.
+- A column item is measured at the width it is laid out at, its
+  max-width included: measured at the line's width, a centred section
+  (max-width 1000px, margin auto) in a body that is a column wrapped
+  its text less and got a short height, and the next section covered
+  its bottom (www.slitaz.org's cards, soie.slitaz.org's).
 
 ## JavaScript (phase 10)
 
