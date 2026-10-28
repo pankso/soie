@@ -434,11 +434,36 @@ static void pb_move(struct pb *b, float x, float y)
 	pb_box(b, x, y);
 }
 
+/*
+ * Curves are cut into lines: at least 16 a cubic and 16 a half turn of
+ * an arc (what small drawings always had), more when the drawing is
+ * large on screen, for 0.2 device px at most between a line and its
+ * curve (a 380 px logo's arcs had flats).
+ */
+#define PB_TOL 0.2f
+#define PB_MAX 1024
+
+/* Device px a user unit, the larger of the two axes */
+static float pb_scale(const struct mat *m)
+{
+	float sx = m->a * m->a + m->b * m->b, sy = m->c * m->c + m->d * m->d;
+
+	return sqrtf(sx > sy ? sx : sy);
+}
+
 static void pb_cubic(struct pb *b, float x1, float y1, float x2, float y2,
 	float x, float y)
 {
 	float x0 = b->x, y0 = b->y;
+	/* Wang's bound: the larger second difference of the points */
+	float ax = x0 - 2 * x1 + x2, ay = y0 - 2 * y1 + y2,
+		bx = x1 - 2 * x2 + x, by = y1 - 2 * y2 + y;
+	float l = sqrtf(ax * ax + ay * ay), l2 = sqrtf(bx * bx + by * by);
+	float m = sqrtf(0.75f * (l > l2 ? l : l2) * pb_scale(b->m) / PB_TOL);
 	int i, n = 16;
+
+	if (m > n)
+		n = m < PB_MAX ? (int)ceilf(m) : PB_MAX;
 
 	for (i = 1; i <= n; i++) {
 		float t = (float)i / (float)n, u = 1 - t;
@@ -493,6 +518,17 @@ static void pb_arc(struct pb *b, float rx, float ry, float rot, int large,
 	else if (!sweep && dt > 0)
 		dt -= 2 * (float)M_PI;
 	n = (int)(fabsf(dt) / (float)M_PI * 16) + 2;
+	{
+		/* the angle of a line 0.2 px from its arc at most */
+		float r = (rx > ry ? rx : ry) * pb_scale(b->m), a;
+
+		if (r > PB_TOL) {
+			a = 2 * acosf(1 - PB_TOL / r);
+			a = fabsf(dt) / a;
+			if (a > n)
+				n = a < PB_MAX ? (int)ceilf(a) : PB_MAX;
+		}
+	}
 	for (i = 1; i <= n; i++) {
 		float t = t1 + dt * (float)i / (float)n;
 		float ex = rx * cosf(t), ey = ry * sinf(t);

@@ -533,6 +533,11 @@ reversed, edit the entry and say why; do not leave stale rules here.
   them, a translucent stroke is not blended twice where they meet.
 - The polygon filler is analytic in x with 4 sub-scanlines per pixel:
   good anti-aliasing for the cost.
+- Curves become lines: 16 a cubic and 16 a half turn of an arc at
+  least, more as the drawing grows on screen, for 0.2 device px at
+  most between line and curve (Wang's bound for cubics, the sagitta
+  for arcs; 1024 at most). Below about 100 px nothing changes; the
+  logo at 380 px had flats.
 - Images load through the host's fetch callback when layout needs
   their intrinsic size, once per URL and document (failures cached
   too). The callback and its data must stay valid as long as the
