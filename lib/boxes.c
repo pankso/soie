@@ -1052,7 +1052,7 @@ static int inside(float x, float y, float bx, float by, float bw, float bh)
  * layer of its own, over the flow, by z-index then tree order; within
  * a layer, floats over blocks, the text and atomics of the lines.
  */
-static int positioned(const struct box *b)
+int positioned(const struct box *b)
 {
 	return b->style && !kw(b->style, P_POSITION, "static");
 }
@@ -1143,15 +1143,20 @@ static soie_node *hit(struct box *b, float x, float y, int depth)
 	return NULL;
 }
 
-/* As paint.c: a positioned box with a z-index, fixed, translucent,
- * masked or clipped by a shape */
-static int stacking_context(const struct box *b)
+/* A positioned box with a z-index, fixed, translucent, masked or
+ * clipped by a shape */
+int stacking_context(const struct box *b)
 {
-	return positioned(b) && (!b->style->v[P_Z_INDEX].kw ||
+	const char *m, *k;
+
+	if (!positioned(b))
+		return 0;
+	m = b->style->v[P_MASK_IMAGE].u.str;
+	k = b->style->v[P_CLIP_PATH].u.str;
+	return !b->style->v[P_Z_INDEX].kw ||
 		kw(b->style, P_POSITION, "fixed") ||
 		b->style->v[P_OPACITY].u.num < 1 ||
-		strcmp(b->style->v[P_MASK_IMAGE].u.str, "none") ||
-		strcmp(b->style->v[P_CLIP_PATH].u.str, "none"));
+		(m && strcmp(m, "none")) || (k && strcmp(k, "none"));
 }
 
 struct layer {

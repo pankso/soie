@@ -468,17 +468,6 @@ static struct evec *bucket_get(struct bucket *b, const char *key, int add)
 	return &e->e;
 }
 
-static char *lowered(const char *s)
-{
-	size_t n = strlen(s), i;
-	char *d = xstrndup(s, n);
-
-	for (i = 0; i < n; i++)
-		if (d[i] >= 'A' && d[i] <= 'Z')
-			d[i] = (char)(d[i] + 32);
-	return d;
-}
-
 /*
  * The bucket of a compound and its key: its id, else a class, else its
  * tag, else an attribute name; else for :root the root's list. NULL
@@ -524,7 +513,7 @@ static void add_entry(struct styledb *db, struct bucket *b, const char *key,
 	const struct entry *e)
 {
 	char *low = db->quirks && b != &db->tags && b != &db->attrs ?
-		lowered(key) : NULL;
+		lowdup(key) : NULL;
 
 	evec_add(bucket_get(b, low ? low : key, 1), e);
 	free(low);
@@ -1151,35 +1140,6 @@ static int media_attr(struct styledb *db, const soie_node *el)
 	return r;
 }
 
-static int word_in_attr(const char *list, const char *w)
-{
-	size_t n = strlen(w);
-
-	while (list && *list) {
-		const char *e;
-
-		while (*list == ' ' || *list == '\t' || *list == '\n')
-			list++;
-		for (e = list; *e && *e != ' ' && *e != '\t' && *e != '\n'; e++)
-			;
-		if ((size_t)(e - list) == n) {
-			size_t i;
-
-			for (i = 0; i < n; i++) {
-				int c = list[i] >= 'A' && list[i] <= 'Z' ?
-					list[i] + 32 : list[i];
-
-				if (c != w[i])
-					break;
-			}
-			if (i == n)
-				return 1;
-		}
-		list = e;
-	}
-	return 0;
-}
-
 static void collect_sheets(struct styledb *db, soie_node *doc,
 	const char *base)
 {
@@ -1207,9 +1167,9 @@ static void collect_sheets(struct styledb *db, soie_node *doc,
 				const char *href = soie_element_get_attr(n,
 					"href");
 
-				if (href && *href && word_in_attr(rel,
-				    "stylesheet") && !word_in_attr(rel,
-				    "alternate") && !soie_element_get_attr(n,
+				if (href && *href && rel && word_in(rel,
+				    "stylesheet", 1) && !word_in(rel,
+				    "alternate", 1) && !soie_element_get_attr(n,
 				    "disabled") && media_attr(db, n)) {
 					char *url = soie_url_resolve(base, href);
 					int r = fetch_sheet(db, url, &pc);
@@ -2121,13 +2081,13 @@ static void collect(struct styledb *db, const soie_node *el,
 			evec_add(out, &(vec)->v[i]); \
 } while (0)
 	if ((a = soie_element_get_attr(el, "id")) && *a) {
-		low = db->quirks ? lowered(a) : NULL;
+		low = db->quirks ? lowdup(a) : NULL;
 		e = bucket_get(&db->ids, low ? low : a, 0);
 		ADD(e);
 		free(low);
 	}
 	if ((a = soie_element_get_attr(el, "class"))) {
-		char *copy = db->quirks ? lowered(a) : xstrndup(a, strlen(a));
+		char *copy = db->quirks ? lowdup(a) : xstrndup(a, strlen(a));
 		char *p = copy, *w;
 
 		while (*p) {
@@ -2149,7 +2109,7 @@ static void collect(struct styledb *db, const soie_node *el,
 		}
 		free(copy);
 	}
-	low = lowered(el->name);
+	low = lowdup(el->name);
 	e = bucket_get(&db->tags, low, 0);
 	free(low);
 	ADD(e);

@@ -585,8 +585,6 @@ static struct {
 static int npool;
 static pthread_mutex_t pool_lock = PTHREAD_MUTEX_INITIALIZER;
 
-static void conn_close(struct conn *c);
-
 /* A pooled connection to key, still open, or -1. */
 static int pool_take(const char *key, struct conn *c)
 {
@@ -888,7 +886,6 @@ static void add_headers(struct response *req, const char *h)
 	}
 }
 
-/* Whether a "Name: value\r\n" list has the header. */
 /*
  * Accept-Language from the locale (LC_ALL, LC_MESSAGES, LANG):
  * fr_CH.UTF-8 asks fr-CH, then fr, then en; C or none, en. Without it
@@ -928,6 +925,7 @@ static const char *accept_language(void)
 	return lang_line;
 }
 
+/* Whether a "Name: value\r\n" list has the header. */
 static int has_header(const char *h, const char *name)
 {
 	size_t n = strlen(name);

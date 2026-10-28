@@ -902,11 +902,6 @@ static void scroll_to_fragment(struct shell *s)
 	clamp_scroll(s);
 }
 
-static void set_page_focus_none(struct shell *s)
-{
-	s->focus = NULL;
-}
-
 static void first_render(struct shell *s);
 static void start_scripts(struct shell *s);
 
@@ -973,7 +968,7 @@ static void doc_arrived(struct shell *s, struct job *j)
 		debug(1, "page failed, %s: %s", r->error, j->url);
 	debug_page(j->ok ? r->url : j->url);
 	drop_resources(s);
-	set_page_focus_none(s);
+	s->focus = NULL;
 	if (s->page.old)
 		soie_node_free(s->page.old);
 	s->page.old = s->page.doc;

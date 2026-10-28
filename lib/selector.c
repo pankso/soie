@@ -81,17 +81,6 @@ static int is_delim(const struct cv *v, int c)
 	return v && v->type == CT_DELIM && v->delim == c;
 }
 
-static char *lowdup(const char *s)
-{
-	size_t n = strlen(s), i;
-	char *d = xstrndup(s, n);
-
-	for (i = 0; i < n; i++)
-		if (d[i] >= 'A' && d[i] <= 'Z')
-			d[i] = (char)(d[i] + 32);
-	return d;
-}
-
 static void simple_free(struct simple *s)
 {
 	free(s->name);
@@ -130,8 +119,8 @@ static void add_simple(struct compound *c, const struct simple *s)
 
 static struct sellist *parse_list(const struct cvlist *l, int from, int to,
 	const struct sellist *parent, int forgiving, int relative, int nest);
-int selector_match_relative(const struct complex *c, const soie_node *el,
-	const struct sellist *parent);
+static int selector_match_relative(const struct complex *c,
+	const soie_node *el, const struct sellist *parent);
 
 static int parse_attr(const struct cv *block, struct simple *s)
 {
@@ -727,7 +716,8 @@ static int is_ws(int c)
 	return c == ' ' || c == '\t' || c == '\n' || c == '\f' || c == '\r';
 }
 
-static int word_in(const char *list, const char *w, int ci)
+/* Whether the whitespace-separated list has the word w */
+int word_in(const char *list, const char *w, int ci)
 {
 	size_t n = strlen(w);
 
@@ -1383,8 +1373,8 @@ static int matches_list(const struct sellist *l, const soie_node *el)
 }
 
 /* :has(): look for a subject among descendants or later siblings. */
-int selector_match_relative(const struct complex *c, const soie_node *el,
-	const struct sellist *parent)
+static int selector_match_relative(const struct complex *c,
+	const soie_node *el, const struct sellist *parent)
 {
 	const soie_node *start, *n, *stop;
 	int sibling = c->c[0].comb == COMB_NEXT ||

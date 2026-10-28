@@ -53,6 +53,18 @@ char *xstrndup(const char *s, size_t len)
 	return d;
 }
 
+/* A copy in ASCII lowercase */
+char *lowdup(const char *s)
+{
+	size_t n = strlen(s), i;
+	char *d = xstrndup(s, n);
+
+	for (i = 0; i < n; i++)
+		if (d[i] >= 'A' && d[i] <= 'Z')
+			d[i] = (char)(d[i] + 32);
+	return d;
+}
+
 /* Buffers */
 
 void buf_grow(struct buf *b, size_t extra)

@@ -184,6 +184,7 @@ struct sellist *selector_parse(const struct cvlist *l, int from, int to,
 	const struct sellist *parent, int forgiving);
 void sellist_free(struct sellist *s);
 int selector_match(const struct sellist *l, int i, const soie_node *el);
+int word_in(const char *list, const char *w, int ci);
 int sellist_match(const struct sellist *l, const soie_node *el);
 unsigned sellist_max_spec(const struct sellist *s, const soie_node *el);
 /*

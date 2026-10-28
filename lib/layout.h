@@ -130,6 +130,9 @@ void box_free(struct box *b);
 void box_drop(struct box *b);
 struct box *build_boxes(soie_node *doc);
 int kw(const struct style *st, int prop, const char *name);
+/* Positioned, and a stacking context: one answer for hit test and paint */
+int positioned(const struct box *b);
+int stacking_context(const struct box *b);
 /* The zoom of the document laid out or painted (font_doc): device px a
  * CSS px, for lengths read past the cascade (intrinsic sizes,
  * transforms, backgrounds) */

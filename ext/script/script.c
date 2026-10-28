@@ -2898,10 +2898,10 @@ static void heap_trees(struct sctx *c)
 			e = soie_node_first_child(e);
 		id = e ? soie_element_get_attr(e, "id") : NULL;
 		cl = e ? soie_element_get_attr(e, "class") : NULL;
-		snprintf(line, sizeof(line), "  %zu wrappers: %s%s <%s> "
+		snprintf(line, sizeof(line), "  %zu wrappers: %s<%s> "
 			"id=%.40s class=%.80s", top[k].n,
 			soie_node_get_type(r) == SOIE_ELEMENT ? "" : "fragment ",
-			e ? soie_element_name(e) : "?", e ? "" : "", id ? id : "",
+			e ? soie_element_name(e) : "?", id ? id : "",
 			cl ? cl : "");
 		message(c, SOIE_MSG_WARN, line);
 	}

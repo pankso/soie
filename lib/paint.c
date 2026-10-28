@@ -676,11 +676,6 @@ static struct zent *zlist;
 static int nz, capz;
 static const struct box *bg_done;	/* its background is painted */
 
-static int positioned(const struct box *b)
-{
-	return b->style && !kw(b->style, P_POSITION, "static");
-}
-
 static void zadd(struct box *b)
 {
 	if (nz == capz) {
@@ -703,13 +698,6 @@ static int masked(const struct box *b)
 	const char *k = b->style ? b->style->v[P_CLIP_PATH].u.str : NULL;
 
 	return (m && strcmp(m, "none")) || (k && strcmp(k, "none"));
-}
-
-static int stacking_context(const struct box *b)
-{
-	return positioned(b) && (!b->style->v[P_Z_INDEX].kw ||
-		kw(b->style, P_POSITION, "fixed") ||
-		b->style->v[P_OPACITY].u.num < 1 || masked(b));
 }
 
 /*

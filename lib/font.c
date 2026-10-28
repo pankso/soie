@@ -53,17 +53,6 @@ static int lib_init(void)
 	return ft_ready;
 }
 
-static char *lowdup(const char *s)
-{
-	size_t n = strlen(s), i;
-	char *d = xstrndup(s, n);
-
-	for (i = 0; i < n; i++)
-		if (d[i] >= 'A' && d[i] <= 'Z')
-			d[i] = (char)(d[i] + 32);
-	return d;
-}
-
 static int os2_weight(FT_Face f)
 {
 	TT_OS2 *os2 = FT_Get_Sfnt_Table(f, FT_SFNT_OS2);

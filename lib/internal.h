@@ -28,6 +28,7 @@ void buf_free(struct buf *b);
 void *xmalloc(size_t n);
 void *xrealloc(void *p, size_t n);
 char *xstrndup(const char *s, size_t len);
+char *lowdup(const char *s);
 
 /* Element name atoms, from tags.h. */
 enum {
