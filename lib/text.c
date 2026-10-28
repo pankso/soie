@@ -204,7 +204,8 @@ int text_shape(const struct style *st, const char *s, size_t len,
 	return n;
 }
 
-/* Width cache: the same words come back all the time. */
+/* Width cache: the same words come back all the time. Two ways: a
+ * word met again takes the first, the one it pushes out the second. */
 #define NWIDTHS 8192
 
 static struct wentry {
@@ -247,10 +248,11 @@ float text_width(const struct style *st, const char *s, size_t len)
 		for (i = 0; i < len; i++)
 			h = (h ^ (unsigned char)s[i]) * 16777619u;
 		h ^= (unsigned)(size_t)st;
-		e = &widths[h % NWIDTHS];
-		if (e->st == st && e->hash == h && e->len == len &&
-		    !memcmp(e->s, s, len))
-			return e->w;
+		e = &widths[h % (NWIDTHS / 2) * 2];
+		for (k = 0; k < 2; k++)
+			if (e[k].st == st && e[k].hash == h && e[k].len == len &&
+			    !memcmp(e[k].s, s, len))
+				return e[k].w;
 	}
 	n = text_shape(st, s, len, &g);
 	for (k = 0; k < n; k++)
@@ -268,6 +270,7 @@ float text_width(const struct style *st, const char *s, size_t len)
 				w += ws;
 		}
 	if (e) {
+		e[1] = e[0];
 		e->st = st;
 		e->hash = h;
 		e->len = (unsigned char)len;

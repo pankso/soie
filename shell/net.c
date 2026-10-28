@@ -29,6 +29,7 @@
 #include "net.h"
 
 #define TIMEOUT_MS 20000
+#define NEXT_MS 3000		/* connecting, with other addresses left */
 #define MAX_BODY (256u << 20)	/* response bodies, files */
 #define MAX_INFLATED (64u << 20)	/* what gzip may grow into */
 
@@ -98,7 +99,9 @@ static int dial(const char *host, const char *port, struct response *r)
 		}
 		p.fd = fd;
 		p.events = POLLOUT;
-		if (poll(&p, 1, TIMEOUT_MS) == 1 &&
+		/* an address that does not answer (an IPv6 route that goes
+		 * nowhere): the next one after a few seconds, not 20 */
+		if (poll(&p, 1, a->ai_next ? NEXT_MS : TIMEOUT_MS) == 1 &&
 		    !getsockopt(fd, SOL_SOCKET, SO_ERROR, &soerr, &len) &&
 		    !soerr) {
 			fcntl(fd, F_SETFL, flags);

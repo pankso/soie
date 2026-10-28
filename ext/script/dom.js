@@ -687,7 +687,7 @@ function connected(nodes) {
 	for (const n of nodes) {
 		if (api.type(n) !== S_EL || !n.isConnected)
 			continue;
-		for (const el of [n, ...query(n, '*', 0)]) {
+		for (const el of [n, ...customsIn(n)]) {
 			const c = customs.get(api.name(el));
 			if (!c)
 				continue;
@@ -1036,7 +1036,7 @@ class DocumentFragment extends Node {
 		return api.createFragment();
 	}
 	getElementById(id) {
-		return query(this, '#' + escapeIdent(id), 1)[0] || null;
+		return api.byId(this, String(id));
 	}
 }
 mixin(DocumentFragment, parentNode);
@@ -2713,6 +2713,17 @@ g.HTMLElement = HTMLElement;
 /* Custom elements: a registry; defined classes upgrade new elements
  * made by createElement() and the parser's ones at define(). */
 const customs = new Map();
+/* The elements below n that may be custom: a selector of the defined
+ * names (and customized built-ins), not a wrapper for every element */
+let customSel = '';
+function customsIn(n) {
+	if (!customs.size)
+		return [];
+	if (!customSel)
+		customSel = [...customs.keys()].map(escapeIdent).join(', ') +
+			', [is]';
+	return query(n, customSel, 0);
+}
 const observed = new Map();	/* name: the attributes it observes */
 const built = new WeakSet();	/* custom elements constructed */
 const NONE = new Set();
@@ -2722,6 +2733,7 @@ const customElements = {
 			throw new DOMException(name + ' already defined',
 				'NotSupportedError');
 		customs.set(name, cls);
+		customSel = '';
 		let o = [];
 		try {
 			o = cls.observedAttributes || [];
@@ -2797,8 +2809,8 @@ function upgradeTree(root) {
 	    (t !== S_DOC && api.ownerDoc(root) !== document) ||
 	    (t === S_DOC && root !== document))
 		return;
-	for (const el of t === S_EL ? [root, ...query(root, '*', 0)] :
-	    query(root, '*', 0)) {
+	for (const el of t === S_EL ? [root, ...customsIn(root)] :
+	    customsIn(root)) {
 		const c = customs.get(api.name(el));
 		if (c && !built.has(el))
 			upgrade(el, c);
@@ -2806,7 +2818,7 @@ function upgradeTree(root) {
 }
 
 function disconnected(n) {
-	for (const el of [n, ...query(n, '*', 0)])
+	for (const el of [n, ...customsIn(n)])
 		if (built.has(el))
 			callback(el, 'disconnectedCallback');
 }
@@ -2946,13 +2958,33 @@ class XMLSerializer {
 let readyState = 'loading';
 let activeElement = null;
 
+/* document.head and .body: a child of the root <html> */
+function htmlChild(doc, a, b) {
+	const h = api.root(doc);
+	if (!h || api.name(h) !== 'html')
+		return null;
+	for (const c of api.children(h, true)) {
+		const n = api.name(c);
+		if (n === a || n === b)
+			return c;
+	}
+	return null;
+}
+
+function baseURL(doc, href) {
+	const b = query(doc, 'base[href]', 1)[0];
+	return b ? api.resolve(href, api.getAttr(b, 'href')) || href : href;
+}
+
+const baseOf = { gen: -1, href: '', url: '' };
+
 class Document extends Node {
 	get documentElement() { return api.root(this); }
 	get head() {
-		return query(this, 'html > head', 1)[0] || null;
+		return htmlChild(this, 'head');
 	}
 	get body() {
-		return query(this, 'html > body, html > frameset', 1)[0] || null;
+		return htmlChild(this, 'body', 'frameset');
 	}
 	set body(b) {
 		const old = this.body, html = this.documentElement;
@@ -2979,9 +3011,17 @@ class Document extends Node {
 	get URL() { return location.href; }
 	get documentURI() { return location.href; }
 	get baseURI() {
-		const b = query(this, 'base[href]', 1)[0];
-		return b ? api.resolve(location.href, api.getAttr(b, 'href')) ||
-			location.href : location.href;
+		/* the page's is asked for each URL a script resolves: kept
+		 * while neither its tree nor the address change */
+		const g = api.gen(), h = location.href;
+		if (this !== document)
+			return baseURL(this, h);
+		if (g !== baseOf.gen || h !== baseOf.href) {
+			baseOf.url = baseURL(this, h);
+			baseOf.gen = g;
+			baseOf.href = h;
+		}
+		return baseOf.url;
 	}
 	get location() { return location; }
 	set location(v) { location.href = v; }
@@ -3037,7 +3077,7 @@ class Document extends Node {
 	}
 	hasFocus() { return true; }
 	getElementById(id) {
-		return query(this, '#' + escapeIdent(id), 1)[0] || null;
+		return api.byId(this, String(id));
 	}
 	getElementsByName(n) {
 		return list(query(this, '[name="' + String(n)

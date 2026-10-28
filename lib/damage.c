@@ -256,18 +256,18 @@ static int canvas_element(const soie_node *n)
 
 void damage_before(soie_node *doc)
 {
-	const struct layout *l = doc->u.doc.layout;
+	const struct layout *l = doc->u.doc->layout;
 	float s[4];
 
 	before_ok = 0;
-	if (!doc->u.doc.damage || !l || !l->root) {
-		if (doc->u.doc.damage)
-			doc->u.doc.damage->all = 1;
+	if (!doc->u.doc->damage || !l || !l->root) {
+		if (doc->u.doc->damage)
+			doc->u.doc->damage->all = 1;
 		return;
 	}
 	none(s);
 	table_make(&before, l->root);
-	walk(&before, l->root, NULL, doc->u.doc.damage->media, s);
+	walk(&before, l->root, NULL, doc->u.doc->damage->media, s);
 	before_w = l->width;
 	before_h = l->height;
 	before_ok = 1;
@@ -275,8 +275,8 @@ void damage_before(soie_node *doc)
 
 void damage_after(soie_node *doc)
 {
-	struct damage *dm = doc->u.doc.damage;
-	const struct layout *l = doc->u.doc.layout;
+	struct damage *dm = doc->u.doc->damage;
+	const struct layout *l = doc->u.doc->layout;
 	struct table now = { NULL, 0, 0 };
 	struct dent *o;
 	size_t i;
@@ -323,8 +323,8 @@ void damage_after(soie_node *doc)
 /* An element's box painted again (the focus moved, its caret) */
 void damage_node(soie_node *doc, const soie_node *el)
 {
-	struct damage *dm = doc->u.doc.damage;
-	const struct layout *l = doc->u.doc.layout;
+	struct damage *dm = doc->u.doc->damage;
+	const struct layout *l = doc->u.doc->layout;
 	struct table t = { NULL, 0, 0 };
 	const struct dent *e;
 	float s[4];
@@ -341,8 +341,8 @@ void damage_node(soie_node *doc, const soie_node *el)
 
 void damage_free(soie_node *doc)
 {
-	free(doc->u.doc.damage);
-	doc->u.doc.damage = NULL;
+	free(doc->u.doc->damage);
+	doc->u.doc->damage = NULL;
 }
 
 int soie_layout_damage(soie_node *doc, float *rects, int max)
@@ -352,12 +352,12 @@ int soie_layout_damage(soie_node *doc, float *rects, int max)
 
 	if (doc->type != SOIE_DOCUMENT)
 		return -1;
-	if (!(dm = doc->u.doc.damage)) {
+	if (!(dm = doc->u.doc->damage)) {
 		/* asked the first time: tracked from now on */
 		dm = calloc(1, sizeof(*dm));
 		if (!dm)
 			return -1;
-		doc->u.doc.damage = dm;
+		doc->u.doc->damage = dm;
 		return -1;
 	}
 	/* more than asked: their union */

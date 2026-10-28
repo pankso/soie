@@ -8,6 +8,7 @@
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -106,6 +107,7 @@ struct entry {
 	struct srule *r;
 	short sel;
 	unsigned char pseudo;
+	unsigned char multi;	/* in several buckets: matched once */
 	unsigned spec;
 };
 
@@ -146,6 +148,8 @@ struct styledb {
 	struct sellist **sels;
 	int nsels, capsels;
 	struct bucket ids, classes, tags;
+	struct bucket attrs;	/* by attribute name, when nothing else */
+	struct evec root;	/* :root and nothing else */
 	struct evec universal;
 	struct layer roots[3];
 	unsigned order;
@@ -192,6 +196,21 @@ static unsigned hash_bytes(const void *p, size_t n, unsigned h)
 	while (n--)
 		h = (h ^ *s++) * 16777619u;
 	return h;
+}
+
+/* The same, 8 bytes at a time: for a whole struct style (3 KB, hashed
+ * for each element) */
+static unsigned hash_words(const void *p, size_t n, unsigned h)
+{
+	const unsigned char *s = p;
+	uint64_t w, x = h;
+
+	for (; n >= 8; n -= 8, s += 8) {
+		memcpy(&w, s, 8);
+		x = (x ^ w) * 0x100000001b3ULL;
+		x ^= x >> 29;
+	}
+	return hash_bytes(s, n, (unsigned)(x ^ x >> 32));
 }
 
 const char *db_string(struct styledb *db, const char *s, size_t len)
@@ -337,6 +356,8 @@ void styledb_free(struct styledb *db)
 	bucket_free(&db->ids);
 	bucket_free(&db->classes);
 	bucket_free(&db->tags);
+	bucket_free(&db->attrs);
+	free(db->root.v);
 	free(db->universal.v);
 	for (i = 0; i < 3; i++)
 		layer_free(&db->roots[i]);
@@ -458,45 +479,122 @@ static char *lowered(const char *s)
 	return d;
 }
 
+/*
+ * The bucket of a compound and its key: its id, else a class, else its
+ * tag, else an attribute name; else for :root the root's list. NULL
+ * when it has none of them.
+ */
+static struct bucket *compound_key(struct styledb *db,
+	const struct compound *c, const char **key, struct evec **root)
+{
+	struct bucket *b = NULL;
+	const char *attr = NULL;
+	int j, is_root = 0;
+
+	for (j = 0; j < c->n; j++) {
+		const struct simple *s = &c->s[j];
+
+		if (s->type == SEL_ID) {
+			*key = s->value;
+			return &db->ids;
+		}
+		if (s->type == SEL_CLASS && b != &db->classes) {
+			b = &db->classes;
+			*key = s->value;
+		} else if (s->type == SEL_TYPE && !b) {
+			b = &db->tags;
+			*key = s->name;
+		} else if (s->type == SEL_ATTR && !attr) {
+			attr = s->name;
+		} else if (s->type == SEL_PSEUDO && s->pseudo == PC_ROOT) {
+			is_root = 1;
+		}
+	}
+	/* [data-x] alone: only for elements with that attribute */
+	if (!b && attr) {
+		b = &db->attrs;
+		*key = attr;
+	}
+	if (!b && is_root)
+		*root = &db->root;
+	return b;
+}
+
+static void add_entry(struct styledb *db, struct bucket *b, const char *key,
+	const struct entry *e)
+{
+	char *low = db->quirks && b != &db->tags && b != &db->attrs ?
+		lowered(key) : NULL;
+
+	evec_add(bucket_get(b, low ? low : key, 1), e);
+	free(low);
+}
+
+/* A compound with an :is() or :where() (GitHub's and YouTube's sheets
+ * are full of them): in the buckets of its arguments, when each has
+ * one */
+static int index_is(struct styledb *db, const struct compound *c,
+	struct entry *e)
+{
+	const struct sellist *a;
+	struct evec *root = NULL;
+	const char *key;
+	int i, j;
+
+	for (j = 0; j < c->n; j++) {
+		if (c->s[j].type != SEL_PSEUDO || (c->s[j].pseudo != PC_IS &&
+		    c->s[j].pseudo != PC_WHERE) || !(a = c->s[j].args) ||
+		    !a->n || a->n > 16)
+			continue;
+		for (i = 0; i < a->n; i++)
+			if (a->c[i].relative || !compound_key(db,
+			    &a->c[i].c[a->c[i].n - 1], &key, &root))
+				break;
+		if (i < a->n)
+			continue;
+		e->multi = a->n > 1;
+		for (i = 0; i < a->n; i++)
+			add_entry(db, compound_key(db, &a->c[i].c[a->c[i].n - 1],
+				&key, &root), key, e);
+		return 1;
+	}
+	return 0;
+}
+
+/* A state the engine does not have (PC_FALSE): never matches */
+static int never(const struct compound *c)
+{
+	int j;
+
+	for (j = 0; j < c->n; j++)
+		if (c->s[j].type == SEL_PSEUDO && c->s[j].pseudo == PC_FALSE)
+			return 1;
+	return 0;
+}
+
 static void index_rule(struct styledb *db, struct srule *r)
 {
-	int i, j;
+	int i;
 
 	for (i = 0; i < r->sel->n; i++) {
 		const struct complex *x = &r->sel->c[i];
 		const struct compound *c = &x->c[x->n - 1];
 		struct entry e;
-		struct bucket *b = NULL;
+		struct bucket *b;
+		struct evec *root = NULL;
 		const char *key = NULL;
-		char *low = NULL;
 
 		e.r = r;
 		e.sel = (short)i;
 		e.pseudo = (unsigned char)x->pseudo_element;
+		e.multi = 0;
 		e.spec = x->spec;
-		for (j = 0; j < c->n; j++) {
-			const struct simple *s = &c->s[j];
-
-			if (s->type == SEL_ID) {
-				b = &db->ids;
-				key = s->value;
-				break;
-			}
-			if (s->type == SEL_CLASS && b != &db->classes) {
-				b = &db->classes;
-				key = s->value;
-			} else if (s->type == SEL_TYPE && !b) {
-				b = &db->tags;
-				key = s->name;
-			}
-		}
-		if (b && db->quirks && b != &db->tags)
-			key = low = lowered(key);
-		if (b)
-			evec_add(bucket_get(b, key, 1), &e);
-		else
-			evec_add(&db->universal, &e);
-		free(low);
+		if (never(c))
+			continue;
+		if ((b = compound_key(db, c, &key, &root)))
+			add_entry(db, b, key, &e);
+		else if (!index_is(db, c, &e))
+			evec_add(root ? root : &db->universal, &e);
 	}
 }
 
@@ -1779,7 +1877,7 @@ static const struct vars *compute_custom(struct styledb *db,
 static const struct style *intern_style(struct styledb *db,
 	struct style *s)
 {
-	unsigned h = hash_bytes(s->v, sizeof(s->v), 2166136261u);
+	unsigned h = hash_words(s->v, sizeof(s->v), 2166136261u);
 	struct style **b, *e;
 
 	h = hash_bytes(&s->vars, sizeof(s->vars), h);
@@ -1997,17 +2095,29 @@ static const struct style *compute_style(struct styledb *db,
 	return intern_style(db, &s);
 }
 
+/* e matched already (an :is() rule found in two buckets) */
+static int in_evec(const struct evec *v, const struct entry *e)
+{
+	int i;
+
+	for (i = 0; i < v->n; i++)
+		if (v->v[i].r == e->r && v->v[i].sel == e->sel)
+			return 1;
+	return 0;
+}
+
 static void collect(struct styledb *db, const soie_node *el,
 	struct evec *out)
 {
 	const char *a;
 	struct evec *e;
 	char *low;
-	int i;
+	int i, k;
 
 #define ADD(vec) do { \
 	for (i = 0; (vec) && i < (vec)->n; i++) \
-		if (selector_match((vec)->v[i].r->sel, (vec)->v[i].sel, el)) \
+		if (selector_match((vec)->v[i].r->sel, (vec)->v[i].sel, el) && \
+		    (!(vec)->v[i].multi || !in_evec(out, &(vec)->v[i]))) \
 			evec_add(out, &(vec)->v[i]); \
 } while (0)
 	if ((a = soie_element_get_attr(el, "id")) && *a) {
@@ -2043,6 +2153,13 @@ static void collect(struct styledb *db, const soie_node *el,
 	e = bucket_get(&db->tags, low, 0);
 	free(low);
 	ADD(e);
+	for (k = 0; k < (int)el->u.el.nattrs; k++)
+		if (el->u.el.attrs[k].ns == SOIE_NS_NONE) {
+			e = bucket_get(&db->attrs, el->u.el.attrs[k].name, 0);
+			ADD(e);
+		}
+	if (el->parent && el->parent->type == SOIE_DOCUMENT)
+		ADD(&db->root);
 	ADD(&db->universal);
 #undef ADD
 }
@@ -2353,21 +2470,21 @@ static void mark(soie_node *n, int how)
 	soie_node *doc = n->doc;
 
 	if (n->type != SOIE_ELEMENT || n->dirty >= how ||
-	    doc->u.doc.restyle_all)
+	    doc->u.doc->restyle_all)
 		return;
 	if (!n->dirty) {
-		if (doc->u.doc.ndirty == MAX_DIRTY) {
-			doc->u.doc.restyle_all = 1;
+		if (doc->u.doc->ndirty == MAX_DIRTY) {
+			doc->u.doc->restyle_all = 1;
 			return;
 		}
-		if (doc->u.doc.ndirty == doc->u.doc.capdirty) {
-			doc->u.doc.capdirty = doc->u.doc.capdirty ?
-				doc->u.doc.capdirty * 2 : 32;
-			doc->u.doc.dirty = xrealloc(doc->u.doc.dirty,
-				(size_t)doc->u.doc.capdirty *
+		if (doc->u.doc->ndirty == doc->u.doc->capdirty) {
+			doc->u.doc->capdirty = doc->u.doc->capdirty ?
+				doc->u.doc->capdirty * 2 : 32;
+			doc->u.doc->dirty = xrealloc(doc->u.doc->dirty,
+				(size_t)doc->u.doc->capdirty *
 				sizeof(soie_node *));
 		}
-		doc->u.doc.dirty[doc->u.doc.ndirty++] = n;
+		doc->u.doc->dirty[doc->u.doc->ndirty++] = n;
 	}
 	n->dirty = (unsigned char)how;
 }
@@ -2390,10 +2507,10 @@ void style_changed_attr(soie_node *n, int kind, const char *name,
 	const char *old)
 {
 	soie_node *doc = n->doc, *a, *k;
-	const struct styledb *db = doc->u.doc.styles;
+	const struct styledb *db = doc->u.doc->styles;
 	int f, i;
 
-	if (!db || doc->u.doc.restyle_all || !n->parent || !connected(n))
+	if (!db || doc->u.doc->restyle_all || !n->parent || !connected(n))
 		return;
 	f = db->sel_flags;
 	if (f & (SF_HAS << SF_DEEP))
@@ -2456,10 +2573,10 @@ void style_forget(soie_node *n)
 	soie_node *doc = n->doc;
 	int i;
 
-	for (i = 0; i < doc->u.doc.ndirty; i++)
-		if (doc->u.doc.dirty[i] == n) {
-			doc->u.doc.dirty[i] =
-				doc->u.doc.dirty[--doc->u.doc.ndirty];
+	for (i = 0; i < doc->u.doc->ndirty; i++)
+		if (doc->u.doc->dirty[i] == n) {
+			doc->u.doc->dirty[i] =
+				doc->u.doc->dirty[--doc->u.doc->ndirty];
 			break;
 		}
 	n->dirty = 0;
@@ -2469,10 +2586,10 @@ static void clear_marks(soie_node *doc)
 {
 	int i;
 
-	for (i = 0; i < doc->u.doc.ndirty; i++)
-		doc->u.doc.dirty[i]->dirty = 0;
-	doc->u.doc.ndirty = 0;
-	doc->u.doc.restyle_all = 0;
+	for (i = 0; i < doc->u.doc->ndirty; i++)
+		doc->u.doc->dirty[i]->dirty = 0;
+	doc->u.doc->ndirty = 0;
+	doc->u.doc->restyle_all = 0;
 }
 
 static void style_one(struct styledb *db, soie_node *n)
@@ -2545,15 +2662,15 @@ static void style_marked(struct styledb *db, soie_node *doc)
 	soie_node *n, *a;
 	int i, depth, maxd = 0, d;
 
-	for (i = 0; i < doc->u.doc.ndirty; i++) {
-		for (d = 0, a = doc->u.doc.dirty[i]; a->parent; a = a->parent)
+	for (i = 0; i < doc->u.doc->ndirty; i++) {
+		for (d = 0, a = doc->u.doc->dirty[i]; a->parent; a = a->parent)
 			d++;
 		if (d > maxd)
 			maxd = d;
 	}
 	for (depth = 0; depth <= maxd; depth++)
-		for (i = 0; i < doc->u.doc.ndirty; i++) {
-			n = doc->u.doc.dirty[i];
+		for (i = 0; i < doc->u.doc->ndirty; i++) {
+			n = doc->u.doc->dirty[i];
 			if (!n->dirty || !connected(n))
 				continue;
 			for (d = 0, a = n; a->parent; a = a->parent)
@@ -2616,7 +2733,7 @@ static unsigned sheet_signature(soie_node *doc, const soie_style_options *o)
 		h = hash_str(o->base_url, h);
 		h = hash_str(o->user_css, h);
 	}
-	h = hash_bytes(&doc->u.doc.quirks, 1, h);
+	h = hash_bytes(&doc->u.doc->quirks, 1, h);
 	while (n) {
 		if (n->type == SOIE_ELEMENT && n->ns == SOIE_NS_HTML &&
 		    (n->tag == TAG_STYLE || n->tag == TAG_LINK ||
@@ -2667,7 +2784,7 @@ static unsigned long serials;
 
 unsigned long style_serial(const soie_node *doc)
 {
-	return doc->u.doc.styles ? doc->u.doc.styles->serial : 0;
+	return doc->u.doc->styles ? doc->u.doc->styles->serial : 0;
 }
 
 int soie_style_document(soie_node *doc, const soie_style_options *opts)
@@ -2683,9 +2800,9 @@ int soie_style_document(soie_node *doc, const soie_style_options *opts)
 
 	if (doc->type != SOIE_DOCUMENT)
 		return -1;
-	doc->u.doc.zoom = zoom;
+	doc->u.doc->zoom = zoom;
 	sig = sheet_signature(doc, opts);
-	db = doc->u.doc.styles;
+	db = doc->u.doc->styles;
 	if (db && db->sig == sig && env_of(db, opts, &env) &&
 	    !(db->incomplete && pending_changed(db, opts))) {
 		/* same rules: only the cascade again, all of it when the
@@ -2694,7 +2811,7 @@ int soie_style_document(soie_node *doc, const soie_style_options *opts)
 			env.height != db->env.height;
 		/* another zoom: every length is another */
 		if (zoom != db->vp.zoom)
-			doc->u.doc.restyle_all = 1;
+			doc->u.doc->restyle_all = 1;
 		db->env = env;
 		db->vp.zoom = zoom;
 		db->vp.vw = env.width * zoom;	/* device px */
@@ -2707,26 +2824,26 @@ int soie_style_document(soie_node *doc, const soie_style_options *opts)
 		reuse = 1;
 		goto cascade;
 	}
-	if (doc->u.doc.layout) {
+	if (doc->u.doc->layout) {
 		/* boxes point to the old styles; with the same rules they
 		 * stay for the next layout to keep */
-		layout_free(doc->u.doc.layout);
-		doc->u.doc.layout = NULL;
+		layout_free(doc->u.doc->layout);
+		doc->u.doc->layout = NULL;
 	}
 	if (db)
 		styledb_free(db);
 	db = xmalloc(sizeof(*db));
 	memset(db, 0, sizeof(*db));
 	db->serial = ++serials;
-	doc->u.doc.styles = db;
+	doc->u.doc->styles = db;
 	db->sig = sig;
 	db->opts = opts;
 	env_of(NULL, opts, &db->env);
 	db->vp.zoom = zoom;
 	db->vp.vw = db->env.width * zoom;
 	db->vp.vh = db->env.height * zoom;
-	db->doc_charset = doc->u.doc.charset;
-	db->quirks = doc->u.doc.quirks == SOIE_QUIRKS;
+	db->doc_charset = doc->u.doc->charset;
+	db->quirks = doc->u.doc->quirks == SOIE_QUIRKS;
 	for (i = 0; i < 3; i++)
 		db->roots[i].name = NULL;
 	parse_initial(db);
@@ -2773,18 +2890,18 @@ cascade:
 	 * are restyled alone, their subtrees when their style changed (a
 	 * window resized lays the page out again, mostly without a
 	 * cascade) */
-	if (resized && !doc->u.doc.restyle_all) {
+	if (resized && !doc->u.doc->restyle_all) {
 		if (db->vp_used)
 			mark_viewport(doc);
 		resized = 0;
 	}
-	if (reuse && !resized && !doc->u.doc.restyle_all && doc->u.doc.ndirty &&
+	if (reuse && !resized && !doc->u.doc->restyle_all && doc->u.doc->ndirty &&
 	    !(soie_document_element(doc) &&
 	      soie_document_element(doc)->dirty == SUBTREE)) {
 		/* only what changed */
 		style_marked(db, doc);
-	} else if (!reuse || resized || doc->u.doc.ndirty ||
-		   doc->u.doc.restyle_all) {
+	} else if (!reuse || resized || doc->u.doc->ndirty ||
+		   doc->u.doc->restyle_all) {
 		/* every element, in tree order, after its parent */
 		db->rem = 16 * zoom;
 		for (n = doc->first; n; n = n->next)
@@ -2792,7 +2909,7 @@ cascade:
 	}
 	clear_marks(doc);
 	save_options(db, opts);
-	doc->u.doc.styled_gen = doc->u.doc.gen;
+	doc->u.doc->styled_gen = doc->u.doc->gen;
 	db->opts = NULL;
 	db->base = NULL;
 	free(base);
@@ -2801,14 +2918,14 @@ cascade:
 
 const soie_style_options *style_saved_options(const soie_node *doc)
 {
-	const struct styledb *db = doc->doc->u.doc.styles;
+	const struct styledb *db = doc->doc->u.doc->styles;
 
 	return db ? &db->saved : NULL;
 }
 
 int soie_media_matches(const soie_node *doc, const char *query)
 {
-	const struct styledb *db = doc->doc->u.doc.styles;
+	const struct styledb *db = doc->doc->u.doc->styles;
 	struct env e;
 	struct cvlist l;
 	int m;
@@ -2828,12 +2945,12 @@ int soie_media_matches(const soie_node *doc, const char *query)
 
 int soie_document_update(soie_node *doc)
 {
-	struct styledb *db = doc->u.doc.styles;
+	struct styledb *db = doc->u.doc->styles;
 	int done = 0;
 
 	if (doc->type != SOIE_DOCUMENT || !db)
 		return 0;
-	if (doc->u.doc.gen != doc->u.doc.styled_gen) {
+	if (doc->u.doc->gen != doc->u.doc->styled_gen) {
 		/* a copy: a new style sheet frees db, and db->saved with it */
 		soie_style_options o = db->saved;
 		char *base = o.base_url ? xstrndup(o.base_url,
@@ -2848,8 +2965,8 @@ int soie_document_update(soie_node *doc)
 		free(css);
 		done = 1;
 	}
-	if (doc->u.doc.lay_w && (done || !doc->u.doc.layout)) {
-		soie_layout_document(doc, doc->u.doc.lay_w, doc->u.doc.lay_h);
+	if (doc->u.doc->lay_w && (done || !doc->u.doc->layout)) {
+		soie_layout_document(doc, doc->u.doc->lay_w, doc->u.doc->lay_h);
 		done = 1;
 	}
 	return done;

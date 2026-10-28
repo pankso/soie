@@ -108,6 +108,7 @@ struct shell {
 	/* Something changed that the engine's damage does not see: a page,
 	 * a stage, a resource (images, fonts), another size */
 	int damage_full;
+	char title[512];	/* the one the front shows */
 	int scripts;		/* 0: no JavaScript */
 	char *pending_nav;	/* a script's navigation, done after it */
 	char *pending_open;	/* a script's new window, after it too */
@@ -796,7 +797,11 @@ static void set_title(struct shell *s)
 		text_of(t, title, sizeof(title));
 	if (!*title)
 		snprintf(title, sizeof(title), "%s", s->page.url);
-	s->ui.title(s->ui_data, title);
+	/* at each layout: the front only hears of a new one */
+	if (strcmp(title, s->title)) {
+		memcpy(s->title, title, sizeof(title));
+		s->ui.title(s->ui_data, title);
+	}
 }
 
 static double now_s(void)
@@ -1095,6 +1100,8 @@ static void load_start(struct shell *s, const char *url, int push)
 		s->hist.scroll[s->hist.cur] = s->page.scroll;
 	s->page.t_load = now_s();
 	s->page.done = 0;
+	if (s->page.gen)
+		fetch_drop(s->page.gen);
 	s->page.gen = ++gens;
 	s->page.push = push;
 	free(s->page.want);
@@ -1633,10 +1640,12 @@ static void urlencode(char **out, size_t *len, const char *s)
 {
 	static const char hex[] = "0123456789ABCDEF";
 
+	/* room for the worst: every byte as %XX */
+	*out = realloc(*out, *len + strlen(s) * 3 + 1);
+	(*out)[*len] = '\0';
 	for (; *s; s++) {
 		unsigned char c = (unsigned char)*s;
 
-		*out = realloc(*out, *len + 4);
 		if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
 		    (c >= '0' && c <= '9') || c == '*' || c == '-' ||
 		    c == '.' || c == '_') {
@@ -2334,8 +2343,11 @@ int shell_tick(struct shell *s, int *repaint)
 	collect_jobs(s, 0);
 	if (d != s->page.doc || l != s->page.loading ||
 	    n != res_pending(s, -1)) {
+		/* a resource alone changes no pixel until apply_late()
+		 * restyles or lays out with it: the loading line only */
 		*repaint = 1;
-		s->damage_full = 1;
+		if (d != s->page.doc || l != s->page.loading)
+			s->damage_full = 1;
 		/* scripts may have started: their timers, asked above,
 		 * are asked again at once */
 		t = 0;

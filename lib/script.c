@@ -175,7 +175,7 @@ int soie_script_start(soie_node *doc, const char *url,
 	soie_node **v = NULL, *n;
 	size_t nv = 0, cap = 0, i;
 
-	if (doc->type != SOIE_DOCUMENT || doc->u.doc.script)
+	if (doc->type != SOIE_DOCUMENT || doc->u.doc->script)
 		return -1;
 	e = (const void *)soie_ext_get(SOIE_EXT_SCRIPT, 0);
 	if (!e || !SOIE_EXT_HOOK(e, struct soie_ext_script, start))
@@ -192,7 +192,7 @@ int soie_script_start(soie_node *doc, const char *url,
 		free(s);
 		return -1;
 	}
-	doc->u.doc.script = s;
+	doc->u.doc->script = s;
 	s->loading = 1;
 	/* the parser's scripts, in tree order, as they are now */
 	for (n = doc->first; n; ) {
@@ -212,19 +212,19 @@ int soie_script_start(soie_node *doc, const char *url,
 		if (n)
 			n = n->next;
 	}
-	for (i = 0; i < nv && doc->u.doc.script == s; i++)
+	for (i = 0; i < nv && doc->u.doc->script == s; i++)
 		prepare(s, v[i], 1);
 	free(v);
 	s->loading = 0;
 	/* parsing is over: "interactive", then deferred scripts */
-	if (doc->u.doc.script == s)
+	if (doc->u.doc->script == s)
 		fire(s, doc, "readystatechange");
-	for (i = 0; i < s->nlater && doc->u.doc.script == s; i++)
+	for (i = 0; i < s->nlater && doc->u.doc->script == s; i++)
 		execute(s, s->later[i], script_kind(s->later[i]) == 2);
 	free(s->later);
 	s->later = NULL;
 	s->nlater = s->caplater = 0;
-	if (doc->u.doc.script == s) {
+	if (doc->u.doc->script == s) {
 		fire(s, doc, "DOMContentLoaded");
 		fire(s, NULL, "load");
 	}
@@ -233,7 +233,7 @@ int soie_script_start(soie_node *doc, const char *url,
 
 int soie_script_element(soie_node *el)
 {
-	struct script *s = el->doc->u.doc.script;
+	struct script *s = el->doc->u.doc->script;
 
 	if (!s || !is_script(el))
 		return 0;
@@ -247,13 +247,13 @@ void soie_script_skip(soie_node *el)
 
 soie_node *soie_script_current(const soie_node *doc)
 {
-	return doc->u.doc.script ? doc->u.doc.script->current : NULL;
+	return doc->u.doc->script ? doc->u.doc->script->current : NULL;
 }
 
 int soie_script_event(soie_node *doc, soie_node *target,
 	const soie_event *ev)
 {
-	struct script *s = doc->u.doc.script;
+	struct script *s = doc->u.doc->script;
 
 	if (!s || !s->ext->event)
 		return 0;
@@ -262,7 +262,7 @@ int soie_script_event(soie_node *doc, soie_node *target,
 
 int soie_script_tick(soie_node *doc)
 {
-	struct script *s = doc->u.doc.script;
+	struct script *s = doc->u.doc->script;
 
 	if (!s || !s->ext->tick)
 		return -1;
@@ -271,11 +271,11 @@ int soie_script_tick(soie_node *doc)
 
 void soie_script_stop(soie_node *doc)
 {
-	struct script *s = doc->u.doc.script;
+	struct script *s = doc->u.doc->script;
 
 	if (!s)
 		return;
-	doc->u.doc.script = NULL;
+	doc->u.doc->script = NULL;
 	if (s->ext->stop)
 		s->ext->stop(s->ctx);
 	free(s->later);

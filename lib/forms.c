@@ -56,7 +56,7 @@ void paint_control(struct canvas *c, const struct box *b)
 	struct fontm m;
 	struct buf text = { 0 };
 	float base, x = b->x, tw;
-	int focused = n->doc->u.doc.focus == n;
+	int focused = n->doc->u.doc->focus == n;
 
 	color_to_rgba(st->v[P_COLOR].u.color, fg);
 	font_metrics(st, &m);
@@ -147,7 +147,7 @@ void paint_control(struct canvas *c, const struct box *b)
 			c->cx1 = clip;
 		paint_text(c, st, v, strlen(v), x, base);
 		if (focused) {
-			int caret = n->doc->u.doc.caret;
+			int caret = n->doc->u.doc->caret;
 			size_t len = strlen(v);
 
 			if (caret < 0 || (size_t)caret > len)

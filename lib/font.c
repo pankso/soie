@@ -25,8 +25,8 @@ float doc_zoom(void)
 {
 	const soie_node *d = font_doc;
 
-	return d && d->type == SOIE_DOCUMENT && d->u.doc.zoom > 0 ?
-		d->u.doc.zoom : 1;
+	return d && d->type == SOIE_DOCUMENT && d->u.doc->zoom > 0 ?
+		d->u.doc->zoom : 1;
 }
 int nfaces;
 static int scanned;
@@ -230,6 +230,7 @@ void face_close(struct face *x)
 	if (x->ft)
 		FT_Done_Face(x->ft);
 	x->ft = NULL;
+	x->mft = NULL;
 }
 
 /* Matching */
@@ -446,18 +447,24 @@ void face_metrics(int fi, float size, struct fontm *m)
 	}
 	f = x->ft;
 	s = size / (float)x->upem;
-	os2 = FT_Get_Sfnt_Table(f, FT_SFNT_OS2);
-	if (os2 && (os2->fsSelection & 128)) {	/* USE_TYPO_METRICS */
-		asc = os2->sTypoAscender;
-		desc = -os2->sTypoDescender;
-		gap = os2->sTypoLineGap;
-	} else {
-		asc = f->ascender;
-		desc = -f->descender;
-		gap = f->height - f->ascender + f->descender;
+	if (x->mft != f) {
+		os2 = FT_Get_Sfnt_Table(f, FT_SFNT_OS2);
+		if (os2 && (os2->fsSelection & 128)) {	/* USE_TYPO_METRICS */
+			x->masc = os2->sTypoAscender;
+			x->mdesc = -os2->sTypoDescender;
+			x->mgap = os2->sTypoLineGap;
+		} else {
+			x->masc = f->ascender;
+			x->mdesc = -f->descender;
+			x->mgap = f->height - f->ascender + f->descender;
+		}
+		if (x->mgap < 0)
+			x->mgap = 0;
+		x->mft = f;
 	}
-	if (gap < 0)
-		gap = 0;
+	asc = x->masc;
+	desc = x->mdesc;
+	gap = x->mgap;
 	m->ascent = asc * s;
 	m->descent = desc * s;
 	m->normal_lh = (asc + desc + gap) * s;

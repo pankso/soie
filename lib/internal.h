@@ -54,6 +54,31 @@ struct images;
 struct script;
 struct media;
 
+/* What a document has besides its nodes */
+struct docinfo {
+	unsigned char quirks;
+	const char *charset;
+	struct styledb *styles;
+	struct layout *layout;
+	struct images *images;
+	struct soie_node *focus;	/* form control */
+	int caret;
+	struct soie_node *all;	/* anext list */
+	unsigned long gen;	/* bumped by every change */
+	/* what soie_document_update() redoes */
+	unsigned long styled_gen;
+	/* subtrees to restyle, or all of them */
+	struct soie_node **dirty;
+	int ndirty, capdirty, restyle_all;
+	struct script *script;	/* soie_script_start() */
+	struct media *media;	/* audio and video players */
+	int lay_w, lay_h;
+	/* layout_touch() stamps, and the last layout's */
+	unsigned long lstamp, lbuilt;
+	struct damage *damage;	/* soie_layout_damage() */
+	float zoom;		/* the style options', 1 */
+};
+
 struct soie_node {
 	unsigned char type;
 	unsigned char ns;
@@ -93,29 +118,9 @@ struct soie_node {
 		struct {
 			char *public_id, *system_id;
 		} doctype;
-		struct {
-			unsigned char quirks;
-			const char *charset;
-			struct styledb *styles;
-			struct layout *layout;
-			struct images *images;
-			struct soie_node *focus;	/* form control */
-			int caret;
-			struct soie_node *all;	/* anext list */
-			unsigned long gen;	/* bumped by every change */
-			/* what soie_document_update() redoes */
-			unsigned long styled_gen;
-			/* subtrees to restyle, or all of them */
-			struct soie_node **dirty;
-			int ndirty, capdirty, restyle_all;
-			struct script *script;	/* soie_script_start() */
-			struct media *media;	/* audio and video players */
-			int lay_w, lay_h;
-			/* layout_touch() stamps, and the last layout's */
-			unsigned long lstamp, lbuilt;
-			struct damage *damage;	/* soie_layout_damage() */
-			float zoom;		/* the style options', 1 */
-		} doc;
+		/* a document's own (soie_document_new()), out of every
+		 * node's union */
+		struct docinfo *doc;
 	} u;
 };
 

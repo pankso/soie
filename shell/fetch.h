@@ -34,7 +34,7 @@ struct job *fetch_add(const char *url, const char *post,
 /* A finished job, or NULL when there is none yet. */
 struct job *fetch_done(void);
 void job_free(struct job *j);
-/* Jobs queued or running. */
-int fetch_busy(void);
+/* Drop the jobs of page generation gen that no thread started. */
+void fetch_drop(unsigned gen);
 
 #endif

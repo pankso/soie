@@ -29,6 +29,9 @@ struct face {
 	FT_Face ft;
 	int upem;
 	int failed;
+	/* face_metrics() of ft, in font units: read once */
+	FT_Face mft;
+	float masc, mdesc, mgap;
 #ifdef SOIE_HARFBUZZ
 	hb_font_t *hb;
 #endif

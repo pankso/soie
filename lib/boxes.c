@@ -8,6 +8,7 @@
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -15,21 +16,22 @@
 #include "font.h"
 #include "image.h"
 
-/* Keyword test with a small cache: callers pass string literals. */
+/* Keyword test with a small cache: callers pass string literals, the
+ * slot is a hash of the literal's address and prop. */
 int kw(const struct style *st, int prop, const char *name)
 {
 	static struct {
 		int prop;
 		const char *name;
 		int kw;
-	} cache[128];
-	static int n;
+	} cache[256];
+	unsigned i = ((unsigned)((uintptr_t)name >> 3) ^ (unsigned)prop *
+		31u) & 255;
 	const char *list;
-	int i, k;
+	int k;
 
-	for (i = 0; i < n; i++)
-		if (cache[i].name == name && cache[i].prop == prop)
-			return st->v[prop].kw == cache[i].kw;
+	if (cache[i].name == name && cache[i].prop == prop)
+		return st->v[prop].kw == cache[i].kw;
 	list = props[prop].keywords;
 	for (k = 1; *list; k++) {
 		const char *e = strchr(list, '|');
@@ -43,12 +45,9 @@ int kw(const struct style *st, int prop, const char *name)
 		}
 		list = e + 1;
 	}
-	if (n < 128) {
-		cache[n].prop = prop;
-		cache[n].name = name;
-		cache[n].kw = k;
-		n++;
-	}
+	cache[i].prop = prop;
+	cache[i].name = name;
+	cache[i].kw = k;
 	return st->v[prop].kw == k;
 }
 
@@ -420,7 +419,7 @@ static struct layout *old_tree, *new_tree;
 void layout_touch(soie_node *n)
 {
 	soie_node *doc = n->doc;
-	unsigned long built = doc->u.doc.lbuilt, s = ++doc->u.doc.lstamp;
+	unsigned long built = doc->u.doc->lbuilt, s = ++doc->u.doc->lstamp;
 
 	/* an ancestor changed since the last layout: so did its own */
 	for (; n && n->lchg <= built; n = n->parent)
@@ -459,6 +458,16 @@ static void retag(struct box *b)
 		retag(c);
 }
 
+/* A list item numbered by its place among its siblings */
+static int numbered(const struct style *st)
+{
+	const char *t = st->v[P_LIST_STYLE_TYPE].u.str;
+
+	return t && strcmp(t, "none") && t[0] != '"' && strcmp(t, "disc") &&
+		strcmp(t, "circle") && strcmp(t, "square") &&
+		strncmp(t, "disclosure-", 11);
+}
+
 static struct box *kept_box(soie_node *n)
 {
 	struct box *b = n->u.el.box, *p, *c, *prev = NULL;
@@ -468,7 +477,8 @@ static struct box *kept_box(soie_node *n)
 	    n->lchg > old_tree->built)
 		return NULL;
 	if ((b->type != B_BLOCK && b->type != B_ATOMIC) || b->role ||
-	    (b->flags & BF_PSEUDO) || kw(b->style, P_DISPLAY, "list-item") ||
+	    (b->flags & BF_PSEUDO) || (kw(b->style, P_DISPLAY, "list-item") &&
+	    numbered(b->style)) ||
 	    !replaced_same(b))
 		return NULL;
 	/* out of the old tree */
@@ -564,7 +574,9 @@ static void gen_node(struct box *parent, soie_node *n)
 		return;
 	}
 	if (is_html(n, TAG_BR)) {
-		box_append(parent, box_new(B_BREAK, st, n));
+		box_append(parent, b = box_new(B_BREAK, st, n));
+		n->u.el.box = b;
+		n->u.el.box_tree = new_tree->serial;
 		return;
 	}
 	if ((b = kept_box(n))) {
@@ -817,14 +829,16 @@ struct box *build_boxes(soie_node *doc)
 	soie_node *root = soie_document_element(doc);
 	struct box *b;
 
-	if (!root || root->type != SOIE_ELEMENT || !root->u.el.style || !doc->u.doc.styles ||
+	if (!root || root->type != SOIE_ELEMENT || !root->u.el.style || !doc->u.doc->styles ||
 	    kw(root->u.el.style, P_DISPLAY, "none"))
 		return NULL;
 	b = box_new(B_BLOCK, root->u.el.style, root);
 	b->flags = BF_BFC;
+	root->u.el.box = b;
+	root->u.el.box_tree = new_tree->serial;
 	depth = 1;
 	gen_children(b, root);
-	fixup(doc->u.doc.styles, b);
+	fixup(doc->u.doc->styles, b);
 	return b;
 }
 
@@ -974,16 +988,16 @@ void layout_free(struct layout *l)
 int soie_layout_document(soie_node *doc, int width, int height)
 {
 	static unsigned long serials;
-	struct layout *l, *old = doc->u.doc.layout;
+	struct layout *l, *old = doc->u.doc->layout;
 
-	if (doc->type != SOIE_DOCUMENT || !doc->u.doc.styles)
+	if (doc->type != SOIE_DOCUMENT || !doc->u.doc->styles)
 		return -1;
 	l = xmalloc(sizeof(*l));
 	memset(l, 0, sizeof(*l));
 	l->width = width > 0 ? (float)width : 1024;
 	l->height = height > 0 ? (float)height : 768;
 	l->serial = ++serials;
-	l->built = doc->u.doc.lstamp;
+	l->built = doc->u.doc->lstamp;
 	l->rules = style_serial(doc);
 	/* the text widths stay: their styles live as long as the rules
 	 * (styledb_free() clears them), the fonts too (fonts_drop_*) */
@@ -995,27 +1009,27 @@ int soie_layout_document(soie_node *doc, int width, int height)
 	old_tree = new_tree = NULL;
 	if (old)
 		layout_free(old);	/* what was not kept */
-	doc->u.doc.layout = NULL;
-	doc->u.doc.lbuilt = l->built;
+	doc->u.doc->layout = NULL;
+	doc->u.doc->lbuilt = l->built;
 	if (l->root)
 		layout_root(l);
-	doc->u.doc.layout = l;
-	doc->u.doc.lay_w = (int)l->width;
-	doc->u.doc.lay_h = (int)l->height;
+	doc->u.doc->layout = l;
+	doc->u.doc->lay_w = (int)l->width;
+	doc->u.doc->lay_h = (int)l->height;
 	damage_after(doc);
 	return 0;
 }
 
 float soie_layout_height(const soie_node *doc)
 {
-	return doc->type == SOIE_DOCUMENT && doc->u.doc.layout ?
-		doc->u.doc.layout->doc_height : 0;
+	return doc->type == SOIE_DOCUMENT && doc->u.doc->layout ?
+		doc->u.doc->layout->doc_height : 0;
 }
 
 char *soie_layout_dump(const soie_node *doc, size_t *len)
 {
-	return layout_dump(doc->type == SOIE_DOCUMENT && doc->u.doc.layout ?
-		doc->u.doc.layout->root : NULL, len);
+	return layout_dump(doc->type == SOIE_DOCUMENT && doc->u.doc->layout ?
+		doc->u.doc->layout->root : NULL, len);
 }
 
 /* Hit testing and geometry */
@@ -1205,8 +1219,8 @@ soie_node *soie_hit_test(soie_node *doc, float x, float y)
 {
 	struct box *root;
 
-	if (doc->type != SOIE_DOCUMENT || !doc->u.doc.layout ||
-	    !(root = doc->u.doc.layout->root))
+	if (doc->type != SOIE_DOCUMENT || !doc->u.doc->layout ||
+	    !(root = doc->u.doc->layout->root))
 		return NULL;
 	return hit_context(root, x, y);
 }
@@ -1231,8 +1245,16 @@ int soie_element_rect(const soie_node *el, float *x, float *y, float *w,
 	float x0 = 1e30f, y0 = 1e30f, x1 = -1e30f, y1 = -1e30f;
 	int i;
 
-	if (!doc->u.doc.layout || !doc->u.doc.layout->root ||
-	    !(b = find_box(doc->u.doc.layout->root, el)))
+	if (!doc->u.doc->layout || !doc->u.doc->layout->root)
+		return -1;
+	/* its box, kept by the layout that made it (none: no box) */
+	if (el->type != SOIE_ELEMENT)
+		b = find_box(doc->u.doc->layout->root, el);
+	else if (el->u.el.box_tree != doc->u.doc->layout->serial)
+		return -1;
+	else if (!(b = el->u.el.box) || b->node != el)
+		b = find_box(doc->u.doc->layout->root, el);
+	if (!b)
 		return -1;
 	if (b->type != B_INLINE) {
 		*x = b->x - b->p[3] - b->b[3];
@@ -1354,14 +1376,14 @@ int soie_find(soie_node *doc, const char *text, int n, float *x, float *y,
 {
 	struct find f;
 
-	if (doc->type != SOIE_DOCUMENT || !doc->u.doc.layout ||
-	    !doc->u.doc.layout->root || !text || !*text)
+	if (doc->type != SOIE_DOCUMENT || !doc->u.doc->layout ||
+	    !doc->u.doc->layout->root || !text || !*text)
 		return 0;
 	memset(&f, 0, sizeof(f));
 	f.text = text;
 	f.len = strlen(text);
 	f.want = n;
-	find_in(doc->u.doc.layout->root, &f);
+	find_in(doc->u.doc->layout->root, &f);
 	if (n >= 0 && n < f.n) {
 		*x = f.r[0];
 		*y = f.r[1];
@@ -1602,8 +1624,8 @@ static int sel_range(soie_node *doc, const float *pt, int unit,
 	int p;
 
 	memset(s, 0, sizeof(*s));
-	if (doc->type != SOIE_DOCUMENT || !doc->u.doc.layout ||
-	    !(root = doc->u.doc.layout->root))
+	if (doc->type != SOIE_DOCUMENT || !doc->u.doc->layout ||
+	    !(root = doc->u.doc->layout->root))
 		return 0;
 	s->pt = pt;
 	s->best[0] = s->best[1] = 1e30f;
@@ -1660,7 +1682,7 @@ int soie_select(soie_node *doc, const float *points, int unit, float *rects,
 	s.k = 0;
 	s.rects = rects;
 	s.max = max;
-	sel_in(doc->u.doc.layout->root, &s);
+	sel_in(doc->u.doc->layout->root, &s);
 	return s.n;
 }
 
@@ -1675,7 +1697,7 @@ char *soie_select_text(soie_node *doc, const float *points, int unit)
 	s.k = 0;
 	s.text = &t;
 	s.pline = -1;
-	sel_in(doc->u.doc.layout->root, &s);
+	sel_in(doc->u.doc->layout->root, &s);
 	return t.s;
 }
 
@@ -1683,13 +1705,13 @@ void soie_set_focus(soie_node *doc, soie_node *el, int caret)
 {
 	if (doc->type != SOIE_DOCUMENT)
 		return;
-	if (doc->u.doc.damage && (el != doc->u.doc.focus ||
-	    caret != doc->u.doc.caret)) {
-		damage_node(doc, doc->u.doc.focus);
+	if (doc->u.doc->damage && (el != doc->u.doc->focus ||
+	    caret != doc->u.doc->caret)) {
+		damage_node(doc, doc->u.doc->focus);
 		damage_node(doc, el);
 	}
-	doc->u.doc.focus = el;
-	doc->u.doc.caret = caret;
+	doc->u.doc->focus = el;
+	doc->u.doc->caret = caret;
 }
 
 soie_node *soie_get_focus(const soie_node *doc, int *caret)
@@ -1697,6 +1719,6 @@ soie_node *soie_get_focus(const soie_node *doc, int *caret)
 	if (doc->type != SOIE_DOCUMENT)
 		return NULL;
 	if (caret)
-		*caret = doc->u.doc.caret;
-	return doc->u.doc.focus;
+		*caret = doc->u.doc->caret;
+	return doc->u.doc->focus;
 }

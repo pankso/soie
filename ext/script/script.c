@@ -995,6 +995,33 @@ static JSValue n_query(JSContext *js, JSValueConst this, int argc,
 	return a;
 }
 
+/* getElementById(): the first element below root in tree order with
+ * this id, without a selector to parse */
+static JSValue n_by_id(JSContext *js, JSValueConst this, int argc,
+	JSValueConst *argv)
+{
+	soie_node *k;
+	const char *a;
+	NODE(0, root);
+	STR(1, id);
+
+	(void)this;
+	for (k = *id ? soie_node_first_child(root) : NULL; k; ) {
+		if (soie_node_get_type(k) == SOIE_ELEMENT &&
+		    (a = soie_element_get_attr(k, "id")) && !strcmp(a, id))
+			break;
+		if (soie_node_first_child(k)) {
+			k = soie_node_first_child(k);
+			continue;
+		}
+		while (k != root && !soie_node_next_sibling(k))
+			k = soie_node_parent(k);
+		k = k == root ? NULL : soie_node_next_sibling(k);
+	}
+	JS_FreeCString(js, id);
+	return k ? wrap(ctx_of(js), k) : JS_NULL;
+}
+
 /* Natives: layout */
 
 static JSValue n_rect(JSContext *js, JSValueConst this, int argc,
@@ -2431,6 +2458,7 @@ static const JSCFunctionListEntry natives[] = {
 	JS_CFUNC_DEF("write", 1, n_write),
 	JS_CFUNC_DEF("matches", 2, n_matches),
 	JS_CFUNC_DEF("query", 3, n_query),
+	JS_CFUNC_DEF("byId", 2, n_by_id),
 	JS_CFUNC_DEF("rect", 1, n_rect),
 	JS_CFUNC_DEF("linkSheet", 2, n_link_sheet),
 	JS_CFUNC_DEF("style", 3, n_style),
@@ -2545,6 +2573,43 @@ static JSModuleDef *mod_load(JSContext *js, const char *name, void *opaque)
 
 /* The hooks */
 
+/*
+ * dom.js, compiled once for the process: each page and worker context
+ * reads its bytecode, several times cheaper than parsing 160 KB again.
+ */
+static uint8_t *dom_bc;
+static size_t dom_bc_len;
+static pthread_mutex_t dom_bc_lock = PTHREAD_MUTEX_INITIALIZER;
+
+static JSValue eval_dom_js(JSContext *js)
+{
+	JSValue f;
+
+	pthread_mutex_lock(&dom_bc_lock);
+	if (!dom_bc) {
+		uint8_t *b;
+
+		f = JS_Eval(js, dom_js, strlen(dom_js), "soie:dom.js",
+			JS_EVAL_TYPE_GLOBAL | JS_EVAL_FLAG_COMPILE_ONLY);
+		if (JS_IsException(f)) {
+			pthread_mutex_unlock(&dom_bc_lock);
+			return f;
+		}
+		/* out of this context's allocator: it outlives it */
+		if ((b = JS_WriteObject(js, &dom_bc_len, f,
+		    JS_WRITE_OBJ_BYTECODE)) && (dom_bc = malloc(dom_bc_len)))
+			memcpy(dom_bc, b, dom_bc_len);
+		js_free(js, b);
+		pthread_mutex_unlock(&dom_bc_lock);
+		return JS_EvalFunction(js, f);
+	}
+	pthread_mutex_unlock(&dom_bc_lock);
+	f = JS_ReadObject(js, dom_bc, dom_bc_len, JS_READ_OBJ_BYTECODE);
+	if (JS_IsException(f))
+		return f;
+	return JS_EvalFunction(js, f);
+}
+
 /* A page's context, or with self a worker's (no document) */
 static struct sctx *ctx_new(soie_node *doc, const char *url,
 	const soie_script_host *host, struct wk *self)
@@ -2603,8 +2668,7 @@ static struct sctx *ctx_new(soie_node *doc, const char *url,
 		c->api));
 	JS_FreeValue(c->js, global);
 	c->deadline = now_ms() + RUN_MS;
-	v = JS_Eval(c->js, dom_js, strlen(dom_js), "soie:dom.js",
-		JS_EVAL_TYPE_GLOBAL);
+	v = eval_dom_js(c->js);
 	if (JS_IsException(v)) {
 		report(c);
 		JS_FreeValue(c->js, v);

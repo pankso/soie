@@ -63,7 +63,7 @@ static int is_media(const soie_node *el)
 
 static struct player *find(const soie_node *el)
 {
-	struct media *m = el->doc->u.doc.media;
+	struct media *m = el->doc->u.doc->media;
 	int i;
 
 	for (i = 0; m && i < m->n; i++)
@@ -111,11 +111,11 @@ static struct player *add_player(soie_node *el,
 	struct media *m;
 	struct player *p;
 
-	m = doc->u.doc.media;
+	m = doc->u.doc->media;
 	if (!m) {
 		m = xmalloc(sizeof(*m));
 		memset(m, 0, sizeof(*m));
-		doc->u.doc.media = m;
+		doc->u.doc->media = m;
 	}
 	if (m->n == m->cap) {
 		m->cap = m->cap ? m->cap * 2 : 4;
@@ -179,7 +179,7 @@ static void close_player(struct player *p)
 
 void media_free(soie_node *doc)
 {
-	struct media *m = doc->u.doc.media;
+	struct media *m = doc->u.doc->media;
 	int i;
 
 	if (!m)
@@ -188,13 +188,13 @@ void media_free(soie_node *doc)
 		close_player(&m->v[i]);
 	free(m->v);
 	free(m);
-	doc->u.doc.media = NULL;
+	doc->u.doc->media = NULL;
 }
 
 /* el leaves its document: its player, if any, stops. */
 void media_forget(soie_node *el)
 {
-	struct media *m = el->doc->u.doc.media;
+	struct media *m = el->doc->u.doc->media;
 	int i;
 
 	for (i = 0; m && i < m->n; i++)
@@ -419,7 +419,7 @@ static int add_rect(const struct player *p, float *u, int any)
 
 int soie_media_tick_rect(soie_node *doc, int *repaint, float *rect)
 {
-	struct media *m = doc->u.doc.media;
+	struct media *m = doc->u.doc->media;
 	struct events q = { NULL, 0, 0 };
 	soie_media_state st;
 	soie_event ev;
@@ -436,7 +436,7 @@ int soie_media_tick_rect(soie_node *doc, int *repaint, float *rect)
 			any = add_rect(p, u, any);
 		if ((st.width != p->last.width || st.height != p->last.height) &&
 		    !strcmp(p->el->name, "video")) {
-			doc->u.doc.gen++;	/* a new intrinsic size */
+			doc->u.doc->gen++;	/* a new intrinsic size */
 			layout_touch(p->el);
 			full = 1;
 		}

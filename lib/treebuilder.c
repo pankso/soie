@@ -1091,11 +1091,11 @@ static void m_initial(struct parser *p, struct token *t)
 		d->u.doctype.system_id = xstrndup(t->system_id.s ?
 			t->system_id.s : "", t->system_id.len);
 		node_insert(p->doc, d, NULL);
-		p->doc->u.doc.quirks = (unsigned char)doctype_quirks(t);
+		p->doc->u.doc->quirks = (unsigned char)doctype_quirks(t);
 		p->mode = M_BEFORE_HTML;
 		return;
 	}
-	p->doc->u.doc.quirks = SOIE_QUIRKS;
+	p->doc->u.doc->quirks = SOIE_QUIRKS;
 	p->mode = M_BEFORE_HTML;
 	process(p, t);
 }
@@ -1476,7 +1476,7 @@ static void in_body_start(struct parser *p, struct token *t)
 		p->frameset_ok = 0;
 		return;
 	case TAG_TABLE:
-		if (p->doc->u.doc.quirks != SOIE_QUIRKS &&
+		if (p->doc->u.doc->quirks != SOIE_QUIRKS &&
 		    in_scope(p, TAG_P, NULL, SCOPE_BUTTON))
 			close_p(p);
 		insert_html(p, t);
@@ -2411,7 +2411,7 @@ static void parser_run(struct parser *p, const char *buf, size_t len,
 		opts ? opts->charset : NULL, &bom);
 	charset_decode(cs, (const unsigned char *)buf + bom, len - bom, &in);
 	if (!p->context)
-		p->doc->u.doc.charset = cs;
+		p->doc->u.doc->charset = cs;
 	p->in = in.s;
 	p->len = in.len;
 	p->scripting = opts ? opts->scripting : 0;

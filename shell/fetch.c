@@ -20,7 +20,6 @@ static pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t cond = PTHREAD_COND_INITIALIZER;
 static struct job *urgent, *normal, *done;	/* FIFO, FIFO, any order */
 static int pipefd[2] = { -1, -1 };
-static int busy;
 
 static void append(struct job **list, struct job *j)
 {
@@ -109,7 +108,6 @@ struct job *fetch_add(const char *url, const char *post,
 	j->r.dl = dl;
 	pthread_mutex_lock(&lock);
 	append(is_urgent ? &urgent : &normal, j);
-	busy++;
 	pthread_cond_signal(&cond);
 	pthread_mutex_unlock(&lock);
 	return j;
@@ -124,22 +122,35 @@ struct job *fetch_done(void)
 		;
 	pthread_mutex_lock(&lock);
 	j = done;
-	if (j) {
+	if (j)
 		done = j->next;
-		busy--;
-	}
 	pthread_mutex_unlock(&lock);
 	return j;
 }
 
-int fetch_busy(void)
+/* A page left: its jobs not started yet go (downloads stay), the next
+ * page's come first */
+void fetch_drop(unsigned gen)
 {
-	int n;
+	struct job **lists[2] = { &urgent, &normal }, **p, *j, *gone = NULL;
+	int i;
 
 	pthread_mutex_lock(&lock);
-	n = busy;
+	for (i = 0; i < 2; i++)
+		for (p = lists[i]; (j = *p); ) {
+			if (j->gen == gen && !j->r.dl) {
+				*p = j->next;
+				j->next = gone;
+				gone = j;
+			} else {
+				p = &j->next;
+			}
+		}
 	pthread_mutex_unlock(&lock);
-	return n;
+	while ((j = gone)) {
+		gone = j->next;
+		job_free(j);
+	}
 }
 
 void job_free(struct job *j)

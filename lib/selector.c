@@ -11,19 +11,6 @@
 #include <string.h>
 #include "css.h"
 
-enum {
-	PC_NONE,
-	PC_ROOT, PC_EMPTY, PC_FIRST_CHILD, PC_LAST_CHILD, PC_ONLY_CHILD,
-	PC_FIRST_OF_TYPE, PC_LAST_OF_TYPE, PC_ONLY_OF_TYPE,
-	PC_NTH_CHILD, PC_NTH_LAST_CHILD, PC_NTH_OF_TYPE, PC_NTH_LAST_OF_TYPE,
-	PC_NOT, PC_IS, PC_WHERE, PC_HAS, PC_LANG, PC_DIR,
-	PC_LINK, PC_VISITED, PC_CHECKED, PC_DISABLED, PC_ENABLED,
-	PC_REQUIRED, PC_OPTIONAL, PC_READ_ONLY, PC_READ_WRITE,
-	PC_PLACEHOLDER_SHOWN, PC_OPEN, PC_DEFINED, PC_VALID,
-	PC_TRUE,	/* always matches: :scope... handled as root */
-	PC_FALSE	/* states the engine does not have yet */
-};
-
 static const struct {
 	const char *name;
 	int id;
@@ -994,7 +981,7 @@ static int match_compound(const struct compound *c, const soie_node *el,
 {
 	int i;
 	const char *v;
-	int quirks = el->doc->u.doc.quirks == SOIE_QUIRKS;
+	int quirks = el->doc->u.doc->quirks == SOIE_QUIRKS;
 
 	for (i = 0; i < c->n; i++) {
 		const struct simple *s = &c->s[i];
@@ -1052,7 +1039,7 @@ static int subtree_has_key(const struct compound *c, const soie_node *n)
 	const struct simple *k = NULL;
 	const soie_node *e = n;
 	const char *v;
-	int i, quirks = n->doc->u.doc.quirks == SOIE_QUIRKS;
+	int i, quirks = n->doc->u.doc->quirks == SOIE_QUIRKS;
 
 	for (i = 0; i < c->n && !k; i++)
 		if (c->s[i].type == SEL_TYPE || c->s[i].type == SEL_ID ||

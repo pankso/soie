@@ -1661,6 +1661,60 @@ true for a page's resources:
 - Checked sound: image decoders (fuzzed, no crash), HTTP framing,
   cookies, CORS, TLS verification, download names.
 
+## Speed
+
+An audit of where the time goes (October 2026, 12 sites copied
+locally, per phase timings, every change measured before and after,
+renders compared byte for byte and the incremental differential tests
+run again):
+
+- Images: PNG and JPEG sizes come from their headers, the pixels when
+  painted (small ones then stay decoded, large ones are in the budget
+  as before). Le Monde's first layout went from 223 to 17 ms, debian's
+  from 87 to 3: it decoded every photo of the page to know its size,
+  then again to paint it.
+- Rules indexed further: by attribute name when a compound has no id,
+  class or tag (GitHub's [data-*]), :root apart, and an :is() or
+  :where() compound in the buckets of its arguments (an entry found
+  twice is kept once). Rules with a state the engine does not have
+  (:hover...) are not indexed: they never match. GitHub's style went
+  from 515 to 430 ms.
+- intern_style() hashes the 3 KB struct style 8 bytes at a time:
+  -16 ms of cascade on Wikipedia.
+- Setting an attribute to the value it has changes nothing (no
+  restyle, no relayout): frameworks rewrite class at every render.
+- Paint: opaque rectangles and rounded backgrounds fill their inner
+  rows with stores, the edges stay anti-aliased: paint halved
+  (Guardian 34 to 17 ms), pixels identical.
+- soie_element_rect() takes the element's box from the layout that
+  made it instead of searching the tree; kw() finds its cache slot by
+  a hash; list items with a marker that is not a number are kept
+  between layouts; face metrics are read once per face; the text width
+  cache has two ways.
+- A soie_node is 168 bytes, not 264: the document's fields moved out
+  of the union into struct docinfo.
+- dom.js is compiled once per process and its bytecode read by each
+  page and worker: 8 workers start in 10 ms instead of 20 to 40.
+  getElementById() is a native walk (no selector to parse), head and
+  body look at the root's children, the page's baseURI is kept while
+  neither its tree nor its address change: 18 times faster together.
+  Custom element reactions look for the defined names only, not a
+  wrapper for every element below.
+- Shell: an arriving resource repaints the loading line only (its
+  relayout repaints the page, at most 200 ms later); the title goes to
+  the front when it changed; a page left drops its jobs no thread
+  started; connecting waits 3 s for an address before the next one
+  (an IPv6 route to nowhere cost 20 s), the last one still 20 s.
+- Not done, for later: keeping the parsed rules of unchanged sheets
+  when a script inserts one (GitHub reparses 7 MB, 370 ms; keeping
+  them costs the rules' memory twice, or a styledb split by sheet);
+  loading media.so (6 MB of FFmpeg) at the first audio or video (the
+  extension registry is read from several threads); TLS session
+  resumption (tickets link visits: they would need partitioning by
+  site and private window); an image drawn at its own size copied
+  (no gain measured); normal flow blocks are still laid out again at
+  each layout.
+
 ## Character encoding
 
 - The tokenizer only ever sees valid UTF-8 with normalized newlines.

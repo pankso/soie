@@ -132,12 +132,36 @@ static void blend(struct canvas *c, int x, int y, const unsigned char *rgba,
 	p[3] = (unsigned char)(a + p[3] * (255 - a) / 255);
 }
 
+/* An opaque color, no group opacity, no mask: covered pixels just
+ * take it */
+static int solid(const struct canvas *c, const unsigned char *rgba)
+{
+	return rgba[3] == 255 && c->alpha == 1 && !c->mask;
+}
+
+/* Pixels i0 to i1 (excluded) of row j fully covered by a solid color:
+ * what blend() would give them, one store each */
+static void fill_span(struct canvas *c, int j, int i0, int i1,
+	const unsigned char *rgba)
+{
+	unsigned char v[4], *p;
+	int r = c->bgr ? 2 : 0;
+
+	v[0] = rgba[r];
+	v[1] = rgba[1];
+	v[2] = rgba[2 - r];
+	v[3] = 255;
+	p = c->px + (size_t)j * (size_t)c->stride + (size_t)i0 * 4;
+	for (; i0 < i1; i0++, p += 4)
+		memcpy(p, v, 4);
+}
+
 /* Rectangle with anti-aliased edges, page coordinates. */
 void fill_rect(struct canvas *c, float x, float y, float w, float h,
 	const unsigned char *rgba)
 {
 	float x0 = x - c->ox, y0 = y - c->oy, x1 = x0 + w, y1 = y0 + h;
-	int ix0, iy0, ix1, iy1, i, j;
+	int ix0, iy0, ix1, iy1, i, j, fx0, fx1, fy0, fy1;
 
 	if (w <= 0 || h <= 0 || !rgba[3])
 		return;
@@ -153,13 +177,25 @@ void fill_rect(struct canvas *c, float x, float y, float w, float h,
 		ix1 = c->cx1;
 	if (iy1 > c->cy1)
 		iy1 = c->cy1;
+	/* the pixels inside the edges, filled by rows when solid */
+	fx0 = (int)ceilf(x0) > ix0 ? (int)ceilf(x0) : ix0;
+	fx1 = (int)floorf(x1) < ix1 ? (int)floorf(x1) : ix1;
+	fy0 = (int)ceilf(y0);
+	fy1 = solid(c, rgba) && fx0 < fx1 ? (int)floorf(y1) : fy0;
 	for (j = iy0; j < iy1; j++) {
 		float cy = fminf(y1, (float)j + 1) - fmaxf(y0, (float)j);
 
 		for (i = ix0; i < ix1; i++) {
-			float cx = fminf(x1, (float)i + 1) - fmaxf(x0, (float)i);
-			int cov = (int)(cx * cy * 255 + 0.5f);
+			float cx;
+			int cov;
 
+			if (i == fx0 && j >= fy0 && j < fy1) {
+				fill_span(c, j, fx0, fx1, rgba);
+				i = fx1 - 1;
+				continue;
+			}
+			cx = fminf(x1, (float)i + 1) - fmaxf(x0, (float)i);
+			cov = (int)(cx * cy * 255 + 0.5f);
 			if (cov > 0)
 				blend(c, i, j, rgba, cov > 255 ? 255 : cov);
 		}
@@ -215,7 +251,7 @@ static void fill_rrect(struct canvas *c, float x, float y, float w, float h,
 	const float *r, float ix, float iy, float iw, float ih,
 	const float *ir, const unsigned char *rgba)
 {
-	int i, j, i0, j0, i1, j1;
+	int i, j, i0, j0, i1, j1, f0 = 0, f1 = 0, g0 = 0, g1 = 0;
 
 	if (w <= 0 || h <= 0 || !rgba[3])
 		return;
@@ -231,10 +267,33 @@ static void fill_rrect(struct canvas *c, float x, float y, float w, float h,
 		i1 = c->cx1;
 	if (j1 > c->cy1)
 		j1 = c->cy1;
+	/* a solid background: the rows clear of the corners are filled
+	 * between the edges' pixels */
+	if (solid(c, rgba) && (iw <= 0 || ih <= 0)) {
+		float top = fmaxf(r[0], r[1]), bottom = fmaxf(r[2], r[3]);
+
+		f0 = (int)ceilf(x - c->ox) > i0 ? (int)ceilf(x - c->ox) : i0;
+		f1 = (int)floorf(x + w - c->ox) < i1 ?
+			(int)floorf(x + w - c->ox) : i1;
+		g0 = (int)ceilf(y + top - c->oy);
+		g1 = f0 < f1 ? (int)floorf(y + h - bottom - c->oy) : g0;
+	}
 	for (j = j0; j < j1; j++)
 		for (i = i0; i < i1; i++) {
 			float px = (float)i + c->ox, py = (float)j + c->oy;
-			int cov = rrect_cov(px, py, x, y, x + w, y + h, r);
+			int cov;
+
+			/* (both ends inside: all between are, float
+			 * rounding or not) */
+			if (i == f0 && j >= g0 && j < g1 &&
+			    rrect_cov(px, py, x, y, x + w, y + h, r) == 255 &&
+			    rrect_cov((float)(f1 - 1) + c->ox, py, x, y, x + w,
+			    y + h, r) == 255) {
+				fill_span(c, j, f0, f1, rgba);
+				i = f1 - 1;
+				continue;
+			}
+			cov = rrect_cov(px, py, x, y, x + w, y + h, r);
 
 			if (cov && iw > 0 && ih > 0)
 				cov -= rrect_cov(px, py, ix, iy, ix + iw,
@@ -994,9 +1053,9 @@ static int paint(soie_node *doc, unsigned char *rgba, int width, int height,
 	struct canvas c;
 	struct box *root;
 
-	if (doc->type != SOIE_DOCUMENT || !doc->u.doc.layout)
+	if (doc->type != SOIE_DOCUMENT || !doc->u.doc->layout)
 		return -1;
-	root = doc->u.doc.layout->root;
+	root = doc->u.doc->layout->root;
 	memset(&c, 0, sizeof(c));
 	c.px = rgba;
 	c.w = width;

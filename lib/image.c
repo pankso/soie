@@ -55,7 +55,9 @@ static void png_quiet_warning(png_structp png, png_const_charp msg)
 	(void)msg;
 }
 
-static int decode_png(const unsigned char *d, size_t len, struct image *im)
+/* size_only: read the header, im->w and im->h, no pixels */
+static int decode_png(const unsigned char *d, size_t len, struct image *im,
+	int size_only)
 {
 	png_structp png;
 	png_infop info;
@@ -84,6 +86,10 @@ static int decode_png(const unsigned char *d, size_t len, struct image *im)
 	im->h = (int)png_get_image_height(png, info);
 	if (im->w <= 0 || im->h <= 0 || im->w > 16384 || im->h > 16384)
 		png_error(png, "size");
+	if (size_only) {
+		png_destroy_read_struct(&png, &info, NULL);
+		return 1;
+	}
 	png_set_expand(png);
 	png_set_strip_16(png);
 	png_set_gray_to_rgb(png);
@@ -118,7 +124,8 @@ static void jpeg_quiet(j_common_ptr c, int level)
 	(void)level;
 }
 
-static int decode_jpeg(const unsigned char *d, size_t len, struct image *im)
+static int decode_jpeg(const unsigned char *d, size_t len, struct image *im,
+	int size_only)
 {
 	struct jpeg_decompress_struct j;
 	struct jerr e;
@@ -138,6 +145,19 @@ static int decode_jpeg(const unsigned char *d, size_t len, struct image *im)
 	jpeg_mem_src(&j, (unsigned char *)d, (unsigned long)len);
 	jpeg_read_header(&j, TRUE);
 	j.out_color_space = JCS_RGB;
+	if (size_only) {
+		/* what jpeg_start_decompress() would give; CMYK may not
+		 * convert: decoded at once to know */
+		jpeg_calc_output_dimensions(&j);
+		im->w = (int)j.output_width;
+		im->h = (int)j.output_height;
+		size_only = im->w > 0 && im->h > 0 && im->w <= 16384 &&
+			im->h <= 16384 && j.output_components == 3 &&
+			j.jpeg_color_space != JCS_CMYK &&
+			j.jpeg_color_space != JCS_YCCK;
+		jpeg_destroy_decompress(&j);
+		return size_only;
+	}
 	jpeg_start_decompress(&j);
 	im->w = (int)j.output_width;
 	im->h = (int)j.output_height;
@@ -371,9 +391,9 @@ int decode_image(const unsigned char *d, size_t len, struct image *im)
 	size_t i;
 
 	if (len > 8 && !memcmp(d, "\x89PNG", 4))
-		return decode_png(d, len, im);
+		return decode_png(d, len, im, 0);
 	if (len > 3 && d[0] == 0xff && d[1] == 0xd8)
-		return decode_jpeg(d, len, im);
+		return decode_jpeg(d, len, im, 0);
 	if (len > 6 && !memcmp(d, "GIF8", 4))
 		return decode_gif(d, len, im);
 	for (i = 0; i < len && i < 512; i++)
@@ -384,6 +404,16 @@ int decode_image(const unsigned char *d, size_t len, struct image *im)
 	/* WebP, AVIF...: the image extensions' job */
 	im->rgba = ext_decode_image(d, len, &im->w, &im->h);
 	return im->rgba != NULL;
+}
+
+/* The size of a PNG or JPEG from its header, without decoding it */
+static int header_size(const unsigned char *d, size_t len, struct image *im)
+{
+	if (len > 8 && !memcmp(d, "\x89PNG", 4))
+		return decode_png(d, len, im, 1);
+	if (len > 3 && d[0] == 0xff && d[1] == 0xd8)
+		return decode_jpeg(d, len, im, 1);
+	return 0;
 }
 
 /* Cache */
@@ -407,12 +437,12 @@ void images_free(struct images *im)
 void images_setup(soie_node *doc, soie_fetch_fn fetch, void *data,
 	const char *base)
 {
-	struct images *im = doc->u.doc.images;
+	struct images *im = doc->u.doc->images;
 
 	if (!im) {
 		im = xmalloc(sizeof(*im));
 		memset(im, 0, sizeof(*im));
-		doc->u.doc.images = im;
+		doc->u.doc->images = im;
 	}
 	im->fetch = fetch;
 	im->data = data;
@@ -423,7 +453,7 @@ void images_setup(soie_node *doc, soie_fetch_fn fetch, void *data,
 /* An image by URL (resolved against the base): fetched once. */
 const struct image *image_get(soie_node *doc, const char *url)
 {
-	struct images *im = doc->u.doc.images;
+	struct images *im = doc->u.doc->images;
 	struct image *x;
 	char *abs, *buf = NULL;
 	size_t len = 0;
@@ -450,10 +480,18 @@ const struct image *image_get(soie_node *doc, const char *url)
 fetch:
 	x->failed = 0;
 	r = im->fetch ? im->fetch(im->data, x->url, &buf, &len) : -1;
-	if (r == SOIE_FETCH_LATER)
+	if (r == SOIE_FETCH_LATER) {
 		x->failed = LATER;
-	else if (r || !buf || !decode_image((unsigned char *)buf, len, x))
+	} else if (r || !buf) {
 		x->failed = 1;
+	} else if (header_size((unsigned char *)buf, len, x)) {
+		/* the size for the layout now, the pixels when painted */
+		x->data = (unsigned char *)buf;
+		x->len = len;
+		buf = NULL;
+	} else if (!decode_image((unsigned char *)buf, len, x)) {
+		x->failed = 1;
+	}
 	if (x->rgba && (size_t)x->w * (size_t)x->h * 4 > LARGE) {
 		/* keep the bytes, decode again when painted */
 		free(x->rgba);
@@ -468,9 +506,10 @@ fetch:
 }
 
 /*
- * The pixels of an image about to be painted. Large ones are decoded
- * now, and the least recently painted are dropped to stay within the
- * budget: a page of big photos costs what a screenful of them does.
+ * The pixels of an image about to be painted: PNGs and JPEGs are
+ * decoded now. Small ones stay decoded; of the large ones, the least
+ * recently painted are dropped to stay within the budget: a page of big
+ * photos costs what a screenful of them does.
  */
 static const unsigned char *image_pixels(struct image *x)
 {
@@ -485,10 +524,18 @@ static const unsigned char *image_pixels(struct image *x)
 	memset(&tmp, 0, sizeof(tmp));
 	if (!decode_image(x->data, x->len, &tmp) || tmp.w != x->w ||
 	    tmp.h != x->h) {
+		/* broken past its header: not tried again */
 		free(tmp.rgba);
+		free(x->data);
+		x->data = NULL;
 		return NULL;
 	}
 	x->rgba = tmp.rgba;
+	if (size <= LARGE) {
+		free(x->data);
+		x->data = NULL;
+		return x->rgba;
+	}
 	im->pixels += size;
 	while (im->pixels > BUDGET) {
 		old = -1;

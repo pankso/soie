@@ -168,11 +168,15 @@ struct soie_node *node_new(struct soie_node *doc, int type)
 	n->type = (unsigned char)type;
 	n->doc = doc ? doc : n;
 	n->name = "";
+	if (type == SOIE_DOCUMENT) {
+		n->u.doc = xmalloc(sizeof(*n->u.doc));
+		memset(n->u.doc, 0, sizeof(*n->u.doc));
+	}
 	if (doc) {
-		n->anext = doc->u.doc.all;
+		n->anext = doc->u.doc->all;
 		if (n->anext)
 			n->anext->aprev = n;
-		doc->u.doc.all = n;
+		doc->u.doc->all = n;
 	}
 	return n;
 }
@@ -181,7 +185,7 @@ soie_node *soie_document_new(void)
 {
 	soie_node *d = node_new(NULL, SOIE_DOCUMENT);
 
-	d->u.doc.charset = "UTF-8";
+	d->u.doc->charset = "UTF-8";
 	return d;
 }
 
@@ -275,12 +279,12 @@ soie_node *soie_node_prev_sibling(const soie_node *n) { return n->prev; }
 soie_quirks soie_document_quirks(const soie_node *doc)
 {
 	return doc->type == SOIE_DOCUMENT ?
-		(soie_quirks)doc->u.doc.quirks : SOIE_NO_QUIRKS;
+		(soie_quirks)doc->u.doc->quirks : SOIE_NO_QUIRKS;
 }
 
 const char *soie_document_charset(const soie_node *doc)
 {
-	return doc->type == SOIE_DOCUMENT ? doc->u.doc.charset : "";
+	return doc->type == SOIE_DOCUMENT ? doc->u.doc->charset : "";
 }
 
 soie_node *soie_document_element(const soie_node *doc)
@@ -386,18 +390,20 @@ int soie_element_set_attr(soie_node *n, const char *name, const char *value)
 	if (n->type != SOIE_ELEMENT)
 		return -1;
 	a = element_find_attr(n, name);
+	if (a && !strcmp(a->value, value))
+		return 0;	/* the same: nothing to restyle or relay */
 	layout_touch(n);
 	if (a) {
 		char *old = a->value;
 
 		a->value = xstrndup(value, strlen(value));
-		n->doc->u.doc.gen++;
+		n->doc->u.doc->gen++;
 		style_changed_attr(n, CH_ATTR, name, old);
 		free(old);
 		return 0;
 	}
 	element_add_attr(n, SOIE_NS_NONE, name, value, strlen(value));
-	n->doc->u.doc.gen++;
+	n->doc->u.doc->gen++;
 	style_changed_attr(n, CH_ATTR, name, NULL);
 	return 0;
 }
@@ -415,7 +421,7 @@ int soie_element_remove_attr(soie_node *n, const char *name)
 	old = a->value;
 	memmove(a, a + 1, (n->u.el.nattrs - i - 1) * sizeof(*a));
 	n->u.el.nattrs--;
-	n->doc->u.doc.gen++;
+	n->doc->u.doc->gen++;
 	layout_touch(n);
 	style_changed_attr(n, CH_ATTR, aname, old);
 	free(aname);
@@ -448,7 +454,7 @@ int soie_node_set_data(soie_node *n, const char *s, size_t len)
 		return -1;
 	n->u.text.len = 0;
 	text_append(n, s, len);
-	n->doc->u.doc.gen++;
+	n->doc->u.doc->gen++;
 	layout_touch(n);
 	if (n->type == SOIE_TEXT)
 		style_changed(n, CH_INSERT);	/* :empty */
@@ -534,23 +540,23 @@ static void move_one(soie_node *n, soie_node *from, soie_node *to)
 	if (n->dirty)
 		style_forget(n);
 	if (n->type == SOIE_ELEMENT) {
-		if (from->u.doc.media)
+		if (from->u.doc->media)
 			media_forget(n);
 		n->u.el.style = n->u.el.before = n->u.el.after = NULL;
-		if (from->u.doc.focus == n)
-			from->u.doc.focus = NULL;
+		if (from->u.doc->focus == n)
+			from->u.doc->focus = NULL;
 	}
 	if (n->aprev)
 		n->aprev->anext = n->anext;
 	else
-		from->u.doc.all = n->anext;
+		from->u.doc->all = n->anext;
 	if (n->anext)
 		n->anext->aprev = n->aprev;
 	n->aprev = NULL;
-	n->anext = to->u.doc.all;
+	n->anext = to->u.doc->all;
 	if (n->anext)
 		n->anext->aprev = n;
-	to->u.doc.all = n;
+	to->u.doc->all = n;
 	n->doc = to;
 }
 
@@ -583,8 +589,8 @@ int soie_node_adopt(soie_node *doc, soie_node *n)
 	if (from == doc)
 		return 0;
 	move_tree(n, from, doc);
-	from->u.doc.gen++;
-	doc->u.doc.gen++;
+	from->u.doc->gen++;
+	doc->u.doc->gen++;
 	return 0;
 }
 
@@ -593,7 +599,7 @@ void *soie_node_user(const soie_node *n) { return n->user; }
 
 unsigned long soie_document_generation(const soie_node *doc)
 {
-	return doc->doc->u.doc.gen;
+	return doc->doc->u.doc->gen;
 }
 
 /* Mutation */
@@ -615,7 +621,7 @@ void node_detach(struct soie_node *n)
 	else
 		p->last = n->prev;
 	n->parent = n->prev = n->next = NULL;
-	n->doc->u.doc.gen++;
+	n->doc->u.doc->gen++;
 }
 
 /* Insert without checks; ref is NULL to append. */
@@ -634,7 +640,7 @@ void node_insert(struct soie_node *parent, struct soie_node *child,
 		ref->prev = child;
 	else
 		parent->last = child;
-	parent->doc->u.doc.gen++;
+	parent->doc->u.doc->gen++;
 	layout_touch(parent);
 	style_changed(child, CH_INSERT);
 }
@@ -701,24 +707,24 @@ static void node_free_one(soie_node *n)
 	case SOIE_DOCUMENT:
 		soie_script_stop(n);
 		media_free(n);
-		if (n->u.doc.layout)
-			layout_free(n->u.doc.layout);
+		if (n->u.doc->layout)
+			layout_free(n->u.doc->layout);
 		damage_free(n);
-		if (n->u.doc.styles)
-			styledb_free(n->u.doc.styles);
+		if (n->u.doc->styles)
+			styledb_free(n->u.doc->styles);
 		fonts_drop_document(n);
-		if (n->u.doc.images)
-			images_free(n->u.doc.images);
-		free(n->u.doc.dirty);
-		n->u.doc.dirty = NULL;
-		n->u.doc.ndirty = 0;
+		if (n->u.doc->images)
+			images_free(n->u.doc->images);
+		free(n->u.doc->dirty);
+		n->u.doc->dirty = NULL;
+		n->u.doc->ndirty = 0;
 		/* every node left, attached or not; template contents
 		 * are on the list too */
-		for (a = n->u.doc.all; a; a = a->anext)
+		for (a = n->u.doc->all; a; a = a->anext)
 			if (a->type == SOIE_ELEMENT)
 				a->u.el.content = NULL;
-		while (n->u.doc.all)
-			node_free_one(n->u.doc.all);
+		while (n->u.doc->all)
+			node_free_one(n->u.doc->all);
 		break;
 	default:
 		break;
@@ -728,12 +734,14 @@ static void node_free_one(soie_node *n)
 		if (n->aprev)
 			n->aprev->anext = n->anext;
 		else
-			a->u.doc.all = n->anext;
+			a->u.doc->all = n->anext;
 		if (n->anext)
 			n->anext->aprev = n->aprev;
 	}
 	if (n->name_owned)
 		free((char *)n->name);
+	if (n->type == SOIE_DOCUMENT)
+		free(n->u.doc);
 	free(n);
 }
 
@@ -766,7 +774,7 @@ void soie_node_free(soie_node *n)
 	if (n->type == SOIE_DOCUMENT) {
 		soie_script_stop(n);
 		/* nothing restyles: no walk up a deep tree per node */
-		n->u.doc.restyle_all = 1;
+		n->u.doc->restyle_all = 1;
 	}
 	node_detach(n);
 	while (c) {
