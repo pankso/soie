@@ -337,6 +337,14 @@ install: all
 	cp tools/soie-render browser/xsoie $(WSOIE) $(DESTDIR)$(PREFIX)/bin/
 	mkdir -p $(DESTDIR)$(PREFIX)/share/applications
 	cp browser/xsoie.desktop $(DESTDIR)$(PREFIX)/share/applications/
+	for s in 16 24 32 48 64 128 256; do \
+		mkdir -p $(DESTDIR)$(PREFIX)/share/icons/hicolor/$${s}x$$s/apps; \
+		cp browser/icons/soie-$$s.png \
+			$(DESTDIR)$(PREFIX)/share/icons/hicolor/$${s}x$$s/apps/soie.png; \
+	done
+	mkdir -p $(DESTDIR)$(PREFIX)/share/icons/hicolor/scalable/apps
+	cp browser/icons/soie.svg \
+		$(DESTDIR)$(PREFIX)/share/icons/hicolor/scalable/apps/
 ifneq ($(WSOIE),)
 	cp browser/wsoie.desktop $(DESTDIR)$(PREFIX)/share/applications/
 endif

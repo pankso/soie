@@ -50,7 +50,7 @@ void front_motion(int x, int y);
 void front_wheel(int dy);
 /* The text a tk_paste(clipboard, to) asked for */
 void front_pasted(int to, const char *text);
-/* The window's icon, an "S": size x size, R G B A */
+/* The window's icon, the logo: size x size, R G B A, not premultiplied */
 void front_icon(unsigned char *rgba, int size);
 
 /* Toolkit calls */

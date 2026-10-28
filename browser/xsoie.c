@@ -407,25 +407,25 @@ static void resize(int w, int h)
 		ximg->byte_order == LSBFirst);
 }
 
-/* The window icon: an "S", painted by Soie, at 32 and 16 pixels. */
+/* The window icon: the logo, painted by Soie, at 48, 32 and 16 pixels. */
 static void set_icon(void)
 {
-	static const int sizes[] = { 32, 16 };
-	unsigned long *icon = malloc((2 + 32 * 32 + 2 + 16 * 16) *
-		sizeof(*icon));
+	static const int sizes[] = { 48, 32, 16 };
+	unsigned long *icon = malloc((2 + 48 * 48 + 2 + 32 * 32 + 2 +
+		16 * 16) * sizeof(*icon));
 	int i, k = 0, j;
 
 	if (!icon)
 		return;
-	for (i = 0; i < 2; i++) {
+	for (i = 0; i < 3; i++) {
 		int s = sizes[i];
-		unsigned char px[32 * 32 * 4];
+		unsigned char px[48 * 48 * 4];
 
 		front_icon(px, s);
 		icon[k++] = (unsigned long)s;
 		icon[k++] = (unsigned long)s;
 		for (j = 0; j < s * s; j++)
-			icon[k++] = 0xff000000ul |
+			icon[k++] = (unsigned long)px[j * 4 + 3] << 24 |
 				(unsigned long)px[j * 4] << 16 |
 				(unsigned long)px[j * 4 + 1] << 8 | px[j * 4 + 2];
 	}

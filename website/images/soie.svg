@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="48 26 160 204" width="160" height="204">
+<!-- Soie: an S of three silk threads -->
+<g fill="none" stroke-width="13.5" stroke-linecap="round">
+<path stroke="#ff7a6e" d="M167.7 75.3 A45 27 0 1 0 128.0 115.0 A71 53 0 1 1 65.3 192.9"/>
+<path stroke="#e74c3c" d="M181.8 73.0 A58 40 0 1 0 128.0 128.0 A58 40 0 1 1 79.9 190.4"/>
+<path stroke="#b03a2e" d="M196.2 73.4 A71 53 0 1 0 128.0 141.0 A45 27 0 1 1 93.5 185.4"/>
+</g>
+</svg>

@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<!--
+  The picture links to soie.slitaz.org show on social networks, Signal
+  and the others (Open Graph, 1200 x 630), drawn by Soie itself:
+  tools/soie-render -w 1200 -H 630 -o website/images/share.png doc/share-image.html
+-->
+<html>
+<head>
+<meta charset="UTF-8">
+<style>
+html, body { margin: 0; }
+body {
+	width: 1200px;
+	height: 630px;
+	font-family: "DejaVu Sans", sans-serif;
+	color: #ecf0f1;
+	background: linear-gradient(160deg, #2c3e50 0%, #34495e 55%, #3d566e 100%);
+	display: flex;
+	align-items: center;
+}
+.logo {
+	height: 380px;
+	margin: 0 90px 0 120px;
+}
+h1 {
+	font-size: 128px;
+	line-height: 1;
+	margin: 0;
+	color: #ffffff;
+}
+h2 {
+	font-size: 54px;
+	line-height: 1.1;
+	margin: 18px 0 30px;
+	color: #ffffff;
+}
+h2 span { color: #ff6b61; }
+p {
+	font-size: 28px;
+	line-height: 1.4;
+	margin: 0 0 30px;
+	color: #d5dde3;
+}
+.chips { display: flex; gap: 14px; }
+.chips b {
+	font-size: 24px;
+	padding: 8px 18px;
+	border-radius: 24px;
+	background: rgba(255, 255, 255, 0.12);
+	color: #ffffff;
+}
+.url {
+	position: absolute;
+	right: 50px;
+	bottom: 34px;
+	font-size: 24px;
+	color: #95a5a6;
+}
+</style>
+</head>
+<body>
+<img class="logo" src="../website/images/soie.svg" alt="">
+<div>
+	<h1>Soie</h1>
+	<h2>The web, <span>light</span>.</h2>
+	<p>A web engine in plain C99,<br>for old PCs and new ones.</p>
+	<div class="chips"><b>0.7 MB</b><b>20&times; less memory</b><b>i486</b></div>
+</div>
+<div class="url">soie.slitaz.org</div>
+</body>
+</html>

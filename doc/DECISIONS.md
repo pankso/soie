@@ -625,6 +625,16 @@ reversed, edit the entry and say why; do not leave stale rules here.
   scroll bar) can come without copying a line of the shell. The
   engine and its files keep the Soie name (`~/.config/soie`, the
   extensions): both fronts share them.
+- The logo: an S of three silk threads side by side, coral, SliTaz
+  red and dark red, the outer one of a bowl the inner one of the
+  other (browser/icons/soie.svg, three stroked elliptical arcs, under
+  1 KB, written by hand). The threads overlap by a pixel: touching
+  edges leave a dark seam in any anti-aliased renderer. hicolor PNGs
+  from 16 to 256 px. The window icon is the same SVG, in front.c,
+  drawn by Soie at 48, 32 and 16 px; Soie paints on an opaque canvas,
+  so it is drawn on black then on white, the difference giving its
+  alpha. doc/share-image.html is the site's Open Graph picture, drawn
+  by soie-render too.
 - The shell talks to the front through three calls the front defines
   (ui_title, ui_address, ui_alert); the rest goes the other way:
   shell_tick() returns the poll timeout and says when to repaint,

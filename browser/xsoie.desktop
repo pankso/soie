@@ -4,6 +4,6 @@ Name=Soie
 GenericName=Web Browser
 Comment=Browse the web, light
 Exec=xsoie %u
-Icon=web-browser
+Icon=soie
 Categories=Network;WebBrowser;
 MimeType=text/html;application/xhtml+xml;x-scheme-handler/http;x-scheme-handler/https;

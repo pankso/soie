@@ -1098,20 +1098,68 @@ void front_buffer(unsigned char *p, int w, int h, int s, int order)
 	}
 }
 
-void front_icon(unsigned char *rgba, int s)
-{
-	char html[400];
-	soie_node *d;
+/* The logo, browser/icons/soie.svg */
+static const char icon_svg[] =
+	"<rect width='256' height='256' rx='60' fill='#2c3e50'/>"
+	"<g fill='none' stroke-width='13.5' stroke-linecap='round'>"
+	"<path stroke='#ff7a6e' d='M167.7 75.3"
+	" A45 27 0 1 0 128.0 115.0"
+	" A71 53 0 1 1 65.3 192.9'/>"
+	"<path stroke='#e74c3c' d='M181.8 73.0"
+	" A58 40 0 1 0 128.0 128.0"
+	" A58 40 0 1 1 79.9 190.4'/>"
+	"<path stroke='#b03a2e' d='M196.2 73.4"
+	" A71 53 0 1 0 128.0 141.0"
+	" A45 27 0 1 1 93.5 185.4'/>"
+	"</g>";
 
-	snprintf(html, sizeof(html), "<body style='margin:0;"
-		"background:#5a3e9c;color:white;text-align:center;"
-		"font:bold %dpx/%dpx serif'>S", s * 3 / 4, s);
+static void icon_on(unsigned char *rgba, int s, int white)
+{
+	char head[160], *html;
+	soie_node *d;
+	int n = snprintf(head, sizeof(head), "<html style=background:%s>"
+		"<body style=margin:0><svg width=%d height=%d "
+		"viewBox='0 0 256 256'>", white ? "#fff" : "#000", s, s);
+
+	memset(rgba, 0, (size_t)s * (size_t)s * 4);
+	html = malloc((size_t)n + sizeof(icon_svg));
+	if (!html)
+		return;
+	memcpy(html, head, (size_t)n);
+	memcpy(html + n, icon_svg, sizeof(icon_svg));
 	d = soie_html_parse(html, strlen(html), NULL);
+	free(html);
 	soie_style_document(d, NULL);
 	soie_layout_document(d, s, s);
-	memset(rgba, 0, (size_t)s * (size_t)s * 4);
 	soie_paint(d, rgba, s, s, s * 4, 0, 0);
 	soie_node_free(d);
+}
+
+/* Soie paints a page on an opaque canvas: the logo on black, then on
+ * white, gives its transparency (c a on black, c a + 255 (1 - a) on
+ * white). */
+void front_icon(unsigned char *rgba, int s)
+{
+	unsigned char *w = malloc((size_t)s * (size_t)s * 4);
+	int i, k;
+
+	icon_on(rgba, s, 0);
+	if (!w)
+		return;
+	icon_on(w, s, 1);
+	for (i = 0; i < s * s * 4; i += 4) {
+		int a = 255 - (w[i] - rgba[i] + w[i + 1] - rgba[i + 1] +
+			w[i + 2] - rgba[i + 2]) / 3;
+
+		a = a < 0 ? 0 : a > 255 ? 255 : a;
+		for (k = 0; k < 3; k++) {
+			int c = a ? rgba[i + k] * 255 / a : 0;
+
+			rgba[i + k] = (unsigned char)(c > 255 ? 255 : c);
+		}
+		rgba[i + 3] = (unsigned char)a;
+	}
+	free(w);
 }
 
 int front_tick(void)
