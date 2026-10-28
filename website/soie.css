@@ -1,0 +1,290 @@
+/*
+ * soie.slitaz.org: the page's own pieces, over slitaz-2026.css (header,
+ * footer, colours). Plain CSS that Soie renders as well as Firefox:
+ * flexbox, grid, gradients, rounded corners, no script.
+ */
+
+body { background: var(--white); }
+
+/* Hero: the pitch on the left, the browser on the right */
+.lead {
+	background: linear-gradient(160deg, #2c3e50 0%, #34495e 55%, #3d566e 100%);
+	color: #ecf0f1;
+	padding: var(--space-2xl) var(--space-xl);
+}
+.lead-in {
+	max-width: 1100px;
+	margin: 0 auto;
+	display: grid;
+	grid-template-columns: 5fr 6fr;
+	gap: var(--space-2xl);
+	align-items: center;
+}
+.lead h2 {
+	color: #ffffff;
+	font-size: 3rem;
+	line-height: 1.1;
+	margin: 0 0 var(--space-md);
+}
+.lead h2 span { color: var(--primary-light); }
+.lead p {
+	color: #d5dde3;
+	font-size: var(--font-size-lg);
+	line-height: 1.6;
+	margin-bottom: var(--space-lg);
+}
+.lead .hero-buttons { justify-content: flex-start; }
+.lead .btn-secondary {
+	background: transparent;
+	color: #ffffff;
+	border: 2px solid #7f8c8d;
+}
+.lead small {
+	display: block;
+	margin-top: var(--space-md);
+	color: #95a5a6;
+	font-size: var(--font-size-sm);
+}
+.window {
+	background: #ffffff;
+	border-radius: var(--radius-md);
+	box-shadow: 0 20px 40px rgba(0, 0, 0, 0.35);
+	overflow: hidden;
+}
+.window img {
+	display: block;
+	width: 100%;
+	height: auto;
+}
+
+/* The numbers strip */
+.stats {
+	background: var(--light);
+	padding: var(--space-xl);
+}
+.stats-in {
+	max-width: 1100px;
+	margin: 0 auto;
+	display: grid;
+	grid-template-columns: repeat(4, 1fr);
+	gap: var(--space-lg);
+}
+.stat {
+	background: var(--white);
+	border-radius: var(--radius-md);
+	padding: var(--space-lg);
+	text-align: center;
+	border-top: 4px solid var(--primary);
+}
+.stat b {
+	display: block;
+	font-size: 2.2rem;
+	line-height: 1.2;
+	color: var(--dark);
+}
+.stat span {
+	display: block;
+	color: var(--text-light);
+	font-size: var(--font-size-sm);
+	margin-top: var(--space-xs);
+}
+
+/* Sections */
+.part {
+	max-width: 1000px;
+	margin: 0 auto;
+	padding: var(--space-2xl) var(--space-xl);
+}
+.part h2 {
+	font-size: var(--font-size-3xl);
+	margin-bottom: var(--space-sm);
+}
+.part > p { line-height: 1.8; }
+.part .intro {
+	font-size: var(--font-size-lg);
+	color: var(--text-light);
+	margin-bottom: var(--space-xl);
+}
+.band { background: #f4f6f8; }
+
+/* The story, as a timeline */
+.timeline {
+	list-style: none;
+	margin: var(--space-lg) 0;
+	padding: 0;
+	border-left: 3px solid var(--border);
+}
+.timeline li {
+	margin: 0 0 var(--space-lg);
+	padding-left: var(--space-lg);
+}
+.timeline .when {
+	display: inline-block;
+	background: var(--dark);
+	color: #ffffff;
+	font-size: var(--font-size-sm);
+	font-weight: 600;
+	padding: 2px 10px;
+	border-radius: var(--radius-full);
+	margin-bottom: var(--space-xs);
+}
+.timeline li.now .when { background: var(--primary); }
+.timeline h3 {
+	font-size: var(--font-size-lg);
+	margin: var(--space-xs) 0;
+}
+.timeline p {
+	margin: 0;
+	color: var(--text);
+}
+.timeline a.src {
+	font-size: var(--font-size-sm);
+	color: var(--secondary);
+}
+
+/* Benchmarks: one bar per browser, the bar's width is the value */
+.bench {
+	display: grid;
+	grid-template-columns: repeat(3, 1fr);
+	gap: var(--space-lg);
+	margin-top: var(--space-lg);
+}
+.chart {
+	background: var(--white);
+	border: 1px solid var(--border);
+	border-radius: var(--radius-md);
+	padding: var(--space-lg);
+}
+.chart h3 {
+	font-size: var(--font-size-base);
+	margin: 0 0 var(--space-md);
+}
+.row {
+	display: flex;
+	align-items: center;
+	margin: var(--space-sm) 0;
+	font-size: var(--font-size-sm);
+}
+.row .who {
+	width: 4.5rem;
+	color: var(--text-light);
+}
+.row .bar {
+	flex: 1;
+	background: var(--light);
+	border-radius: var(--radius-sm);
+	height: 1.4rem;
+}
+.row .bar i {
+	display: block;
+	height: 1.4rem;
+	border-radius: var(--radius-sm);
+	background: #95a5a6;
+}
+.row.soie .bar i { background: var(--primary); }
+.row .val {
+	width: 5rem;
+	text-align: right;
+	font-weight: 600;
+	color: var(--dark);
+}
+table.data {
+	width: 100%;
+	border-collapse: collapse;
+	margin-top: var(--space-lg);
+	font-size: var(--font-size-sm);
+	background: var(--white);
+}
+table.data th, table.data td {
+	padding: var(--space-sm);
+	border-bottom: 1px solid var(--border);
+	text-align: right;
+}
+table.data th:first-child, table.data td:first-child { text-align: left; }
+table.data th { color: var(--dark); }
+table.data b.s { color: var(--primary-dark); }
+.note {
+	color: var(--text-light);
+	font-size: var(--font-size-sm);
+	margin-top: var(--space-md);
+}
+
+/* Side by side shots */
+.pair {
+	display: grid;
+	grid-template-columns: 1fr 1fr;
+	gap: var(--space-md);
+	margin: var(--space-lg) 0 var(--space-sm);
+}
+.pair figure { margin: 0; }
+.pair img {
+	display: block;
+	width: 100%;
+	height: auto;
+	border: 1px solid var(--border);
+	border-radius: var(--radius-sm);
+}
+.pair figcaption {
+	text-align: center;
+	font-size: var(--font-size-sm);
+	color: var(--text-light);
+	margin-top: var(--space-xs);
+}
+.pair figcaption b { color: var(--dark); }
+.pair-title {
+	font-size: var(--font-size-lg);
+	margin-top: var(--space-xl);
+}
+
+/* Cards: inside Soie, its packages */
+.cards {
+	display: grid;
+	grid-template-columns: repeat(3, 1fr);
+	gap: var(--space-lg);
+	margin-top: var(--space-lg);
+}
+.card {
+	background: var(--white);
+	border: 1px solid var(--border);
+	border-radius: var(--radius-md);
+	padding: var(--space-lg);
+}
+.card h3 {
+	font-size: var(--font-size-lg);
+	margin: 0 0 var(--space-sm);
+	color: var(--dark);
+}
+.card p {
+	margin: 0;
+	color: var(--text);
+	font-size: var(--font-size-sm);
+	line-height: 1.6;
+}
+.card code { font-size: var(--font-size-sm); }
+
+.part pre {
+	background: #1e272e;
+	color: #dfe6e9;
+	padding: var(--space-md) var(--space-lg);
+	border-radius: var(--radius-md);
+	overflow-x: auto;
+	font-size: var(--font-size-sm);
+	line-height: 1.6;
+}
+.part pre code { background: none; color: inherit; padding: 0; }
+.part code {
+	background: var(--light);
+	padding: 1px 5px;
+	border-radius: var(--radius-sm);
+	font-size: 0.9em;
+}
+
+ul.limits { margin: var(--space-md) 0; padding-left: var(--space-lg); }
+ul.limits li { margin: var(--space-sm) 0; line-height: 1.6; }
+
+/* Narrow screens: one column */
+@media (max-width: 860px) {
+	.lead-in, .bench, .cards, .pair { grid-template-columns: 1fr; }
+	.stats-in { grid-template-columns: 1fr 1fr; }
+	.lead h2 { font-size: 2.2rem; }
+}

@@ -1,0 +1,323 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8">
+	<title>Soie - a light web engine, written to last</title>
+	<meta name="description" content="Soie is a web engine in plain C99: HTML, CSS, JavaScript and video in about 46,000 lines, a 700 KB download, for old PCs and new ones." />
+	<meta name="robots" content="index, follow, all" />
+	<meta name="author" content="Christophe Lincoln"/>
+	<meta name="viewport" content="width=device-width, initial-scale=1" />
+	<link rel="shortcut icon" href="favicon.ico" />
+	<link rel="stylesheet" href="slitaz-2026.css" />
+	<link rel="stylesheet" href="soie.css" />
+</head>
+<body>
+
+<!-- Header -->
+<header id="header">
+	<input type="checkbox" id="nav-toggle">
+	<h1>
+		<a href="https://www.slitaz.org/">
+			<img src="images/logo.png" alt="SliTaz Logo">
+			Soie
+		</a>
+	</h1>
+	<nav id="network" aria-label="Network">
+		<ul>
+			<li><a href="#why">Why</a></li>
+			<li><a href="#bench">Benchmarks</a></li>
+			<li><a href="#get">Get it</a></li>
+			<li><a href="https://hg.slitaz.org/soie">Source</a></li>
+		</ul>
+	</nav>
+	<label for="nav-toggle" id="nav-burger" aria-label="Menu">&#9776;</label>
+</header>
+
+<!-- Lead -->
+<section class="lead">
+	<div class="lead-in">
+		<div>
+			<h2>The web, <span>light</span>.</h2>
+			<p>
+				Soie is a web engine written from scratch in plain C99:
+				HTML, CSS, JavaScript and video in about 46,000 lines of
+				code. It fits in a 700&nbsp;KB download, runs on the
+				32-bit PCs every big browser has left behind, and leaves
+				the memory of new machines to the work that matters.
+			</p>
+			<div class="hero-buttons">
+				<a href="#get" class="btn btn-primary">Get Soie 0.1.0</a>
+				<a href="#why" class="btn btn-secondary">Why Soie?</a>
+			</div>
+			<small>Free software, BSD licence. Made for and by SliTaz.</small>
+		</div>
+		<div class="window">
+			<img src="images/shot-slitaz.png" alt="xsoie showing www.slitaz.org" width="1024" height="760">
+		</div>
+	</div>
+</section>
+
+<!-- Numbers -->
+<section class="stats">
+	<div class="stats-in">
+		<div class="stat"><b>0.7&nbsp;MB</b><span>to download Soie and its X11 browser, against 84&nbsp;MB for Firefox ESR</span></div>
+		<div class="stat"><b>1.9&nbsp;MB</b><span>installed, against 294&nbsp;MB</span></div>
+		<div class="stat"><b>20&times;</b><span>less memory than Firefox: 33&nbsp;MB against 650&nbsp;MB, on six sites</span></div>
+		<div class="stat"><b>i486</b><span>and x86_64: one engine, tested on both</span></div>
+	</div>
+</section>
+
+<!-- Why -->
+<section id="why"><div class="part">
+	<h2>Why we wrote Soie</h2>
+	<p class="intro">
+		SliTaz has always run on old machines. In ten years the web
+		engines we relied on left those machines, one after the other.
+		These are the facts, with their sources.
+	</p>
+	<ol class="timeline">
+		<li>
+			<span class="when">March 2016</span>
+			<h3>Chrome stops on 32-bit Linux</h3>
+			<p>Google ends Chrome for 32-bit Linux: no more updates, no
+				more security fixes.
+				<a class="src" href="https://groups.google.com/a/chromium.org/g/chromium-dev/c/FoE6sL-p6oU/m/xwZjPAaCAgAJ">chromium-dev announcement</a></p>
+		</li>
+		<li>
+			<span class="when">April 2016</span>
+			<h3>The last WebKitGTK SliTaz can build</h3>
+			<p>WebKitGTK 2.4.11 comes out. It is still the WebKit in the
+				SliTaz packages today: no release of its series has come
+				since, and the newer ones do not build on our tool chain.
+				<a class="src" href="https://webkitgtk.org/2016/04/10/webkitgtk2.4.11-released.html">webkitgtk.org</a></p>
+		</li>
+		<li>
+			<span class="when">April 2017</span>
+			<h3>Firefox 53 needs a Pentium&nbsp;4</h3>
+			<p>Firefox ends Linux support for processors older than the
+				Pentium&nbsp;4 and the AMD Opteron (SSE2): a Pentium&nbsp;III
+				or an Athlon&nbsp;XP no longer starts it.
+				<a class="src" href="https://support.mozilla.org/kb/your-hardware-no-longer-supported">Mozilla support</a></p>
+		</li>
+		<li>
+			<span class="when">June 2024</span>
+			<h3>WebKit needs GCC 11.2</h3>
+			<p>WebKit raises its compiler requirement to GCC 11.2, to build
+				with C++23. A small distribution has to change its whole
+				tool chain just to follow one library.
+				<a class="src" href="https://bugs.webkit.org/show_bug.cgi?id=275507">WebKit bug 275507</a></p>
+		</li>
+		<li>
+			<span class="when">October 2025</span>
+			<h3>Firefox 144, the last for 32-bit Linux</h3>
+			<p>Mozilla ends 32-bit x86 Linux with Firefox 144. Firefox ESR
+				140 keeps getting security updates "until at least
+				September 2026".
+				<a class="src" href="https://blog.mozilla.org/futurereleases/2025/09/05/firefox-32-bit-linux-support-to-end-in-2026/">Mozilla blog</a></p>
+		</li>
+		<li class="now">
+			<span class="when">October 2026</span>
+			<h3>Soie 0.1.0</h3>
+			<p>So we wrote our own engine, one a single person can read
+				from end to end, built with the compilers SliTaz has, for
+				the machines SliTaz runs on. It does not try to be Firefox:
+				it tries to show the web as it is, with little.</p>
+		</li>
+	</ol>
+	<p>
+		There is a second reason. A browser that needs half a gigabyte to
+		show a page takes that memory from everything else, and today
+		everything else includes the AI models people want to run on
+		their own machine. A light engine is not only for old PCs.
+	</p>
+</div></section>
+
+<!-- Benchmarks -->
+<section id="bench" class="band">
+	<div class="part">
+		<h2>Soie and Firefox, side by side</h2>
+		<p class="intro">
+			The same pages, opened in xsoie 0.1.0 and Firefox 153 ESR, on
+			the same machine, each in a fresh window, scripts on.
+		</p>
+		<div class="bench">
+		<div class="chart">
+			<h3>Memory at its peak</h3>
+			<div class="row soie"><span class="who">Soie</span><span class="bar"><i style="width: 5.1%"></i></span><span class="val">33 MB</span></div>
+			<div class="row"><span class="who">Firefox</span><span class="bar"><i style="width: 100%"></i></span><span class="val">650 MB</span></div>
+		</div>
+		<div class="chart">
+			<h3>Processor time</h3>
+			<div class="row soie"><span class="who">Soie</span><span class="bar"><i style="width: 11.8%"></i></span><span class="val">0.6 s</span></div>
+			<div class="row"><span class="who">Firefox</span><span class="bar"><i style="width: 100%"></i></span><span class="val">4.7 s</span></div>
+		</div>
+		<div class="chart">
+			<h3>Until the page is ready</h3>
+			<div class="row soie"><span class="who">Soie</span><span class="bar"><i style="width: 19.3%"></i></span><span class="val">1.7 s</span></div>
+			<div class="row"><span class="who">Firefox</span><span class="bar"><i style="width: 100%"></i></span><span class="val">8.7 s</span></div>
+		</div>
+		</div>
+		<p class="note">Averages over the six pages below.</p>
+		<table class="data">
+			<tr><th>Page</th><th>Memory</th><th>CPU</th><th>Ready</th></tr>
+			<tr><td>www.slitaz.org</td><td><b class="s">17</b> / 605 MB</td><td><b class="s">0.09</b> / 3.83 s</td><td><b class="s">0.5</b> / 6.5 s</td></tr>
+			<tr><td>Wikipedia, Linux</td><td><b class="s">48</b> / 663 MB</td><td><b class="s">1.51</b> / 4.91 s</td><td><b class="s">2.7</b> / 8.9 s</td></tr>
+			<tr><td>Hacker News</td><td><b class="s">16</b> / 614 MB</td><td><b class="s">0.11</b> / 4.06 s</td><td><b class="s">1.6</b> / 8.9 s</td></tr>
+			<tr><td>LWN.net</td><td><b class="s">16</b> / 608 MB</td><td><b class="s">0.12</b> / 4.16 s</td><td><b class="s">1.4</b> / 8.9 s</td></tr>
+			<tr><td>MDN, CSS</td><td><b class="s">22</b> / 633 MB</td><td><b class="s">0.25</b> / 4.69 s</td><td><b class="s">1.7</b> / 8.9 s</td></tr>
+			<tr><td>GitHub, torvalds/linux</td><td><b class="s">79</b> / 779 MB</td><td><b class="s">1.27</b> / 6.79 s</td><td><b class="s">2.2</b> / 10.4 s</td></tr>
+		</table>
+		<p class="note">In each cell, <b class="s">Soie</b> / Firefox.</p>
+		<p class="note">
+			Measured with <code>tools/browser-bench.sh</code> from the Soie
+			sources, October 2026, on an Intel i7-13700H under SliTaz
+			x86_64: median of 3 runs, live sites. Memory is the PSS of the
+			browser's processes at their peak (shared pages counted once),
+			CPU the processor time they used, ready the time until the page
+			stopped working.
+		</p>
+
+		<h2 style="margin-top: var(--space-2xl)">The same page, two engines</h2>
+		<p class="intro">Screenshots of the same 1024&times;768 view, taken the same minute. The fonts differ (Soie uses DejaVu, as SliTaz does), the layout is the page's.</p>
+		<h3 class="pair-title">www.slitaz.org</h3>
+		<div class="pair">
+			<figure><img src="images/cmp-slitaz-soie.jpg" alt="www.slitaz.org in Soie" width="1024" height="768"><figcaption><b>Soie</b> 0.1.0</figcaption></figure>
+			<figure><img src="images/cmp-slitaz-firefox.jpg" alt="www.slitaz.org in Firefox" width="1024" height="768"><figcaption><b>Firefox</b> 153 ESR</figcaption></figure>
+		</div>
+		<h3 class="pair-title">Wikipedia</h3>
+		<div class="pair">
+			<figure><img src="images/cmp-wikipedia-soie.jpg" alt="Wikipedia in Soie" width="1024" height="768"><figcaption><b>Soie</b> 0.1.0</figcaption></figure>
+			<figure><img src="images/cmp-wikipedia-firefox.jpg" alt="Wikipedia in Firefox" width="1024" height="768"><figcaption><b>Firefox</b> 153 ESR</figcaption></figure>
+		</div>
+		<p class="note">Wikipedia content under CC BY-SA.</p>
+		<h3 class="pair-title">MDN Web Docs</h3>
+		<div class="pair">
+			<figure><img src="images/cmp-mdn-soie.jpg" alt="MDN Web Docs in Soie" width="1024" height="768"><figcaption><b>Soie</b> 0.1.0</figcaption></figure>
+			<figure><img src="images/cmp-mdn-firefox.jpg" alt="MDN Web Docs in Firefox" width="1024" height="768"><figcaption><b>Firefox</b> 153 ESR</figcaption></figure>
+		</div>
+		<p class="note">MDN content under CC BY-SA. Some of MDN's top bar controls are still missing in Soie.</p>
+	</div>
+</section>
+
+<!-- Inside -->
+<section><div class="part">
+	<h2>What is inside</h2>
+	<p class="intro">
+		One engine, a few extensions, small browsers: each piece does one
+		thing, and every choice is written down in
+		<a href="https://hg.slitaz.org/soie/file/tip/doc/DECISIONS.md">DECISIONS.md</a>.
+	</p>
+	<div class="cards">
+		<div class="card">
+			<h3>libsoie</h3>
+			<p>The engine. HTML parsed the way the WHATWG says (it passes
+				the html5lib tree tests), the CSS cascade (it passes
+				css-parsing-tests), blocks, inline text, tables, flexbox,
+				grid, SVG, painted with FreeType and HarfBuzz. Restyle and
+				layout are incremental: a page that changes costs what
+				changed.</p>
+		</div>
+		<div class="card">
+			<h3>Extensions</h3>
+			<p>What a browser needs beyond the engine, each a small module:
+				cookies, content blocking, WebP, JavaScript with QuickJS
+				(DOM, fetch, workers), and audio and video with FFmpeg,
+				Media Source Extensions included: YouTube plays.</p>
+		</div>
+		<div class="card">
+			<h3>Browsers</h3>
+			<p><b>xsoie</b> for X11 and <b>wsoie</b> for Wayland, for the
+				lightest systems; <b>SoieView</b>, a GTK&nbsp;3 widget, for
+				<a href="https://hg.slitaz.org/toile">Toile</a>, the SliTaz
+				desktop browser.</p>
+		</div>
+		<div class="card">
+			<h3>Solid</h3>
+			<p>Two outside audits before this release, one for speed, one
+				for security; the tests run under AddressSanitizer and on
+				real sites; random changes to pages are checked against a
+				fresh layout.</p>
+		</div>
+		<div class="card">
+			<h3>Simple</h3>
+			<p>Plain C99, a plain Makefile, no toolkit in the engine, no
+				code generator, no build system to learn: <code>make</code>
+				and it builds, on old compilers too.</p>
+		</div>
+		<div class="card">
+			<h3>Yours</h3>
+			<p>BSD licence. A C API to embed the engine (<code>soie.h</code>),
+				an ABI for extensions (<code>ext.h</code>), and a headless
+				renderer, <code>soie-render</code>, for tests and
+				screenshots.</p>
+		</div>
+	</div>
+</div></section>
+
+<!-- Get it -->
+<section id="get" class="band">
+	<div class="part">
+		<h2>Get Soie 0.1.0</h2>
+		<p>On SliTaz, the lightest way to browse the web:</p>
+		<pre><code>spk-add xsoie</code></pre>
+		<p>Soie comes in packages, so that a system installs only what it
+			needs:</p>
+		<table class="data">
+			<tr><th>Package</th><th style="text-align:left">What it holds</th></tr>
+			<tr><td><b>soie</b></td><td style="text-align:left">the engine, with cookies, content blocking, WebP and JavaScript</td></tr>
+			<tr><td><b>xsoie</b></td><td style="text-align:left">the X11 browser</td></tr>
+			<tr><td><b>wsoie</b></td><td style="text-align:left">the Wayland browser (x86_64)</td></tr>
+			<tr><td><b>soie-gtk</b></td><td style="text-align:left">SoieView, the GTK 3 widget Toile uses</td></tr>
+			<tr><td><b>soie-media</b></td><td style="text-align:left">audio and video, with FFmpeg and ALSA</td></tr>
+			<tr><td><b>soie-dev</b></td><td style="text-align:left">headers, static library, pkg-config files, soie-render</td></tr>
+		</table>
+		<p style="margin-top: var(--space-xl)">From the sources, on any
+			GNU/Linux with a C99 compiler, GNU make, pkg-config, FreeType,
+			HarfBuzz, libpng and libjpeg (the browsers also want Xlib or
+			Wayland, GnuTLS and zlib; the extensions libwebp, FFmpeg and
+			ALSA, and QuickJS 2026-06-04):</p>
+		<pre><code>wget https://hg.slitaz.org/soie/archive/0.1.0.tar.gz
+tar xzf 0.1.0.tar.gz &amp;&amp; cd soie-0.1.0
+make &amp;&amp; make check
+make install PREFIX=/usr</code></pre>
+		<p>The <a href="https://hg.slitaz.org/soie/file/tip/README.md">README</a>
+			tells the rest; the history is in the
+			<a href="https://hg.slitaz.org/soie">Mercurial repository</a>.</p>
+	</div>
+</section>
+
+<!-- Limits -->
+<section><div class="part">
+	<h2>What Soie does not do yet</h2>
+	<p>Soie is young, and we would rather say it here than let you find
+		out:</p>
+	<ul class="limits">
+		<li>Google search and YouTube may stop answering after a while:
+			their bot checks do not trust a JavaScript engine that is not
+			SpiderMonkey or V8.</li>
+		<li>No JavaScript inside iframes yet.</li>
+		<li>No HSTS: an https page may be redirected to http.</li>
+		<li>No <code>:hover</code> or <code>:focus</code> styles.</li>
+		<li>No tabs in xsoie and wsoie (Toile has them).</li>
+		<li>Some pages still lay out differently from Firefox: the
+			comparisons above show where we stand.</li>
+	</ul>
+	<p>Bugs and ideas are welcome on the
+		<a href="https://maille.slitaz.org/">SliTaz forum</a>.</p>
+</div></section>
+
+<!-- Footer -->
+<footer id="footer">
+	<p>
+		Copyright &copy; 2026
+		<a href="https://www.slitaz.org/">SliTaz</a> -
+		<a href="https://hg.slitaz.org/soie">Repository</a>
+		<a href="https://maille.slitaz.org/">Forum</a>
+		<a href="https://pkgs.slitaz.org/">Packages</a>
+	</p>
+	<p>Soie is free software, under the BSD licence (2 clauses). This page
+		is rendered by Soie as well as by the others.</p>
+</footer>
+
+</body>
+</html>
