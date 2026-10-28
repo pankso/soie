@@ -186,3 +186,17 @@ width=400
 |     block <p> 0,20 400x20
 |       line 0,20 400x20
 |         text "école łódź" 0,22 80x16
+
+#data
+<!DOCTYPE html><body style="margin:0"><div style="display:flex"><svg viewBox="0 0 112 32" style="height:40px"></svg><span>x</span></div>
+#errors
+#layout
+width=300
+#document
+| block <html> 0,0 300x40
+|   block <body> 0,0 300x40
+|     block <div> 0,0 300x40
+|       replaced <svg> 0,0 140x40
+|       block <span> 140,0 8x40
+|         line 140,0 8x20
+|           text "x" 140,2 8x16

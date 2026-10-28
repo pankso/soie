@@ -317,6 +317,8 @@ static int establishes_bfc(const struct box *b)
 
 /* Intrinsic sizes (CSS Sizing 3): content widths, then outer. */
 
+static int has_ratio(const struct box *b);
+
 void content_sizes(struct box *b, float *mn, float *mx)
 {
 	float w, cmin, cmax;
@@ -329,7 +331,13 @@ void content_sizes(struct box *b, float *mn, float *mx)
 		return;
 	}
 	if (b->type == B_REPLACED) {
+		float h = spec_height(b, P_HEIGHT, -1);
+
 		w = spec_width(b, P_WIDTH, -1);
+		/* width auto, a height given: through the ratio (a 256 px
+		 * SVG logo at height: 28px is 28 wide, not 256) */
+		if (w < 0 && h >= 0 && b->iw > 0 && b->ih > 0 && has_ratio(b))
+			w = h * b->iw / b->ih;
 		*mn = *mx = w >= 0 ? w : b->iw > 0 ? b->iw : 0;
 		/* compressible (CSS Sizing 3, 5.2.2): a percentage width
 		 * or max-width makes its min-content contribution 0

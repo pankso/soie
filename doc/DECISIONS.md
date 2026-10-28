@@ -1320,6 +1320,11 @@ on the same frozen DOM.
   the height of its natural ratio, or its natural height: it kept 0,
   and every icon and image of a flex row without a CSS height vanished
   (GitHub's octicons, whose width and height are attributes).
+- The other way round, a height but width auto: its intrinsic width
+  goes through the ratio too (content_sizes()), not the natural width:
+  the site's 256 px SVG logo at height: 28px took 256 px of the
+  header, slitaz.org's 40 px logo 40 for 28, BBC's and Ars Technica's
+  icons too wide or too narrow.
 - Real sites built on complex grids (Wikipedia's Vector skin, the
   Tailwind site) render largely right but not yet like browsers: the
   remaining gaps are in grid placement details and in var()-computed
