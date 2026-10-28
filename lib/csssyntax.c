@@ -488,8 +488,16 @@ static char *preprocess(const char *s, size_t len, size_t *out_len)
 /* Token stream, fully tokenized up front. */
 struct tstream {
 	struct cv *t;
-	int n, i;
+	int n, i, depth;
 };
+
+/*
+ * Blocks and functions nest this deep at most: the parsers of rules,
+ * selectors and values walk the tree recursively, a hostile sheet of
+ * nested brackets would run them out of stack. Deeper contents are
+ * dropped (real sheets stay under ten levels).
+ */
+#define CV_DEPTH 64
 
 static void tokenize_all(const char *s, size_t len, struct tstream *ts)
 {
@@ -502,7 +510,7 @@ static void tokenize_all(const char *s, size_t len, struct tstream *ts)
 	t.pos = 0;
 	t.len = plen;
 	ts->t = NULL;
-	ts->n = ts->i = 0;
+	ts->n = ts->i = ts->depth = 0;
 	for (;;) {
 		if (ts->n == cap) {
 			cap = cap ? cap * 2 : 64;
@@ -589,6 +597,35 @@ static void consume_until(struct tstream *ts, int close, struct cvlist *kids)
 	}
 }
 
+/* Too deep: skip what is inside, up to the closing token */
+static void skip_until(struct tstream *ts)
+{
+	int level = 1;
+
+	while (ts_peek(ts)->type != CT_EOF) {
+		struct cv v = ts_take(ts);
+
+		if (v.type == CT_LBRACE || v.type == CT_LBRACKET ||
+		    v.type == CT_LPAREN || v.type == CT_FUNCTION)
+			level++;
+		else if ((v.type == CT_RBRACE || v.type == CT_RBRACKET ||
+		    v.type == CT_RPAREN) && !--level)
+			return;
+		cv_free(&v);
+	}
+}
+
+static void consume_kids(struct tstream *ts, int close, struct cvlist *kids)
+{
+	if (ts->depth >= CV_DEPTH) {
+		skip_until(ts);
+		return;
+	}
+	ts->depth++;
+	consume_until(ts, close, kids);
+	ts->depth--;
+}
+
 static void consume_cv(struct tstream *ts, struct cv *out)
 {
 	*out = ts_take(ts);
@@ -599,9 +636,9 @@ static void consume_cv(struct tstream *ts, struct cv *out)
 		out->delim = out->type == CT_LBRACE ? '{' :
 			out->type == CT_LBRACKET ? '[' : '(';
 		out->type = CT_BLOCK;
-		consume_until(ts, close, &out->kids);
+		consume_kids(ts, close, &out->kids);
 	} else if (out->type == CT_FUNCTION) {
-		consume_until(ts, CT_RPAREN, &out->kids);
+		consume_kids(ts, CT_RPAREN, &out->kids);
 	}
 }
 

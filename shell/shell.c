@@ -212,13 +212,19 @@ static int scheme_of(const char *url)
 /*
  * May the page at from have url? A front's scheme is for the front and
  * its own pages (what the user types, a toile:// page's links), never
- * for the web's (WebKit's display isolated schemes).
+ * for the web's (WebKit's display isolated schemes). file:// alike: a
+ * link, a script, a refresh or a form of a web page never opens a
+ * local file, only the user and local pages do.
  */
 static int scheme_allowed(const char *from, const char *url)
 {
 	int k = scheme_of(url);
 
-	return k < 0 || !from || !*from || scheme_of(from) == k;
+	if (!from || !*from)
+		return 1;
+	if (!strncasecmp(url, "file:", 5))
+		return !strncasecmp(from, "file:", 5);
+	return k < 0 || scheme_of(from) == k;
 }
 
 /* The answer of the front's scheme k for url, as a finished job */

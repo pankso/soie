@@ -660,6 +660,7 @@ struct paintstate {
 	const char *family;	/* interned; NULL: base's */
 	int weight;
 	char anchor;		/* text-anchor: 's'tart, 'm'iddle, 'e'nd */
+	int nest;		/* groups and svgs entered, up to SVG_NEST */
 };
 
 static const soie_node *by_id(const soie_node *n, const char *id);
@@ -1355,18 +1356,25 @@ static void viewport(struct mat *m, const soie_node *el, float x, float y,
 	mul(m, &t);
 }
 
-static const soie_node *by_id(const soie_node *n, const char *id)
+static const soie_node *by_id(const soie_node *root, const char *id)
 {
-	const soie_node *k, *r;
+	const soie_node *k = root->first;
 	const char *a;
 
-	for (k = n->first; k; k = k->next) {
-		if (k->type != SOIE_ELEMENT)
-			continue;
-		if ((a = soie_element_get_attr(k, "id")) && !strcmp(a, id))
-			return k;
-		if ((r = by_id(k, id)))
-			return r;
+	/* in tree order, without recursion: documents can be deep */
+	while (k) {
+		if (k->type == SOIE_ELEMENT) {
+			if ((a = soie_element_get_attr(k, "id")) &&
+			    !strcmp(a, id))
+				return k;
+			if (k->first) {
+				k = k->first;
+				continue;
+			}
+		}
+		while (!k->next && k->parent != root)
+			k = k->parent;
+		k = k->next;
 	}
 	return NULL;
 }
@@ -1702,11 +1710,16 @@ static void element(struct canvas *c, const soie_node *k, struct mat m,
 	}
 }
 
+/* Groups nest this deep at most: walk() recurses through them */
+#define SVG_NEST 256
+
 static void walk(struct canvas *c, const soie_node *n, struct mat m,
 	struct paintstate ps, int depth)
 {
 	const soie_node *k;
 
+	if (++ps.nest > SVG_NEST)
+		return;
 	for (k = n->first; k; k = k->next)
 		element(c, k, m, ps, depth);
 }

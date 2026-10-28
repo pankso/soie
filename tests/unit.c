@@ -527,6 +527,49 @@ static void test_deep(void)
 	free(s);
 }
 
+/* head, then unit n times, then tail: a hostile page */
+static char *repeat(const char *head, const char *unit, size_t n,
+	const char *tail, size_t *len)
+{
+	size_t h = strlen(head), u = strlen(unit), t = strlen(tail), i;
+	char *s = malloc(h + u * n + t + 1);
+
+	memcpy(s, head, h);
+	for (i = 0; i < n; i++)
+		memcpy(s + h + i * u, unit, u);
+	memcpy(s + h + u * n, tail, t + 1);
+	*len = h + u * n + t;
+	return s;
+}
+
+/* Deep nesting of a page must not exhaust the stack anywhere else:
+ * CSS blocks and functions, SVG groups, the hit test. */
+static void test_hostile_depth(void)
+{
+	static const char *const pages[][3] = {
+		{ "<style>", "a{", "</style><p>t" },
+		{ "<p style=\"width:calc(", "(", "1px\">t" },
+		{ "<style>", ":not(", "p{color:red}</style><p>t" },
+		{ "<svg width=20 height=20>", "<g>", "<rect width=9 height=9>" },
+		{ "", "<div>", "t" },
+	};
+	unsigned char px[20 * 20 * 4];
+	size_t i, len;
+
+	for (i = 0; i < sizeof(pages) / sizeof(pages[0]); i++) {
+		char *s = repeat(pages[i][0], pages[i][1], i < 4 ? 200000 :
+			5000, pages[i][2], &len);
+		soie_node *doc = soie_html_parse(s, len, NULL);
+
+		CHECK(soie_style_document(doc, NULL) == 0);
+		soie_layout_document(doc, 20, 20);
+		soie_paint(doc, px, 20, 20, 20 * 4, 0, 0);
+		soie_hit_test(doc, 5, 5);
+		soie_node_free(doc);
+		free(s);
+	}
+}
+
 int main(void)
 {
 	soie_fonts_stub(1);
@@ -542,6 +585,7 @@ int main(void)
 	test_script_api();
 	test_select();
 	test_deep();
+	test_hostile_depth();
 	printf("unit: %s (%d failures)\n", failures ? "FAIL" : "ok", failures);
 	return failures != 0;
 }

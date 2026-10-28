@@ -321,9 +321,15 @@ int main(int argc, char **argv)
 			unsigned char *px;
 
 			soie_layout_document(doc, w, h);
+			/* the whole page, 65536 rows at most */
 			if (all && soie_layout_height(doc) > h)
-				h = (int)(soie_layout_height(doc) + 0.99f);
-			px = malloc((size_t)w * (size_t)h * 4);
+				h = soie_layout_height(doc) < 65536 ?
+					(int)(soie_layout_height(doc) + 0.99f) :
+					65536;
+			if (!(px = malloc((size_t)w * (size_t)h * 4))) {
+				perror("soie-render");
+				return 1;
+			}
 			soie_paint(doc, px, w, h, w * 4, 0, 0);
 			if (write_png(png, px, w, h)) {
 				perror(png);

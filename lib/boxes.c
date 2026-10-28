@@ -1051,60 +1051,76 @@ static int hittable(const struct style *st)
 		!kw(st, P_POINTER_EVENTS, "none"));
 }
 
-static soie_node *hit(struct box *b, float x, float y);
+static soie_node *hit(struct box *b, float x, float y, int depth);
+
+/*
+ * Boxes deeper than this are not hit: hit() recurses, a hostile page
+ * nesting thousands of elements would run it out of stack.
+ */
+#define HIT_DEPTH 1024
 
 /* Floats inside the inline boxes of b: the last one under x, y */
-static soie_node *hit_in_inline(struct box *b, float x, float y)
+static soie_node *hit_in_inline(struct box *b, float x, float y, int depth)
 {
 	struct box *c;
 	soie_node *r, *top = NULL;
 
+	if (depth > HIT_DEPTH)
+		return NULL;
 	for (c = b->first; c; c = c->next)
 		if (c->type == B_INLINE && !positioned(c)) {
-			if ((r = hit_in_inline(c, x, y)))
+			if ((r = hit_in_inline(c, x, y, depth + 1)))
 				top = r;
 		} else if ((c->flags & BF_FLOAT) && !positioned(c) &&
-			   b->type == B_INLINE && (r = hit(c, x, y))) {
+			   b->type == B_INLINE && (r = hit(c, x, y, depth + 1))) {
 			top = r;
 		}
 	return top;
 }
 
 /* b's layer: b and its descendants, but the positioned ones */
-static soie_node *hit(struct box *b, float x, float y)
+static soie_node *hit(struct box *b, float x, float y, int depth)
 {
-	struct box *c, *kids[4096];
+	struct box *c, *some[32], **kids = some;
 	int i, n = 0;
-	soie_node *r;
+	soie_node *r = NULL;
 
-	for (c = b->first; c && n < 4096; c = c->next)
+	if (depth > HIT_DEPTH)
+		return NULL;
+	for (c = b->first; c; c = c->next)
+		n++;
+	if (n > 32)
+		kids = xmalloc((size_t)n * sizeof(*kids));
+	for (n = 0, c = b->first; c; c = c->next)
 		kids[n++] = c;
 	/* floats are over the rest */
-	for (i = n - 1; i >= 0; i--)
-		if ((kids[i]->flags & BF_FLOAT) && !positioned(kids[i]) &&
-		    (r = hit(kids[i], x, y)))
-			return r;
-	if (b->flags & BF_INLINE_KIDS) {
-		if ((r = hit_in_inline(b, x, y)))
-			return r;
-		for (i = b->nfrags - 1; i >= 0; i--) {
+	for (i = n - 1; i >= 0 && !r; i--)
+		if ((kids[i]->flags & BF_FLOAT) && !positioned(kids[i]))
+			r = hit(kids[i], x, y, depth + 1);
+	if (!r && (b->flags & BF_INLINE_KIDS)) {
+		r = hit_in_inline(b, x, y, depth + 1);
+		for (i = b->nfrags - 1; i >= 0 && !r; i--) {
 			struct frag *f = &b->frags[i];
 
 			if (f->kind == F_ATOMIC) {
-				if (!positioned(f->box) && (r = hit(f->box, x, y)))
-					return r;
+				if (!positioned(f->box))
+					r = hit(f->box, x, y, depth + 1);
 			} else if (inside(x, y, f->x, f->y, f->w, f->h) &&
 				   hittable(f->box->style)) {
-				return node_of(f->kind == F_TEXT ?
+				r = node_of(f->kind == F_TEXT ?
 					f->box->parent : f->box);
 			}
 		}
-	} else {
-		for (i = n - 1; i >= 0; i--)
+	} else if (!r) {
+		for (i = n - 1; i >= 0 && !r; i--)
 			if (!(kids[i]->flags & (BF_FLOAT | BF_ABS)) &&
-			    !positioned(kids[i]) && (r = hit(kids[i], x, y)))
-				return r;
+			    !positioned(kids[i]))
+				r = hit(kids[i], x, y, depth + 1);
 	}
+	if (kids != some)
+		free(kids);
+	if (r)
+		return r;
 	if (b->type != B_INLINE && b->node && hittable(b->style) &&
 	    inside(x, y, b->x - b->p[3] - b->b[3], b->y - b->p[0] - b->b[0],
 		   b->w + b->p[1] + b->p[3] + b->b[1] + b->b[3],
@@ -1175,12 +1191,12 @@ static soie_node *hit_context(struct box *root, float x, float y)
 	qsort(v, (size_t)n, sizeof(*v), layer_cmp);
 	for (i = 0; i < n && !r && v[i].z >= 0; i++)
 		r = stacking_context(v[i].box) ? hit_context(v[i].box, x, y) :
-			hit(v[i].box, x, y);
+			hit(v[i].box, x, y, 0);
 	if (!r)
-		r = hit(root, x, y);
+		r = hit(root, x, y, 0);
 	for (; i < n && !r; i++)
 		r = stacking_context(v[i].box) ? hit_context(v[i].box, x, y) :
-			hit(v[i].box, x, y);
+			hit(v[i].box, x, y, 0);
 	free(v);
 	return r;
 }

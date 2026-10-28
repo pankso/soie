@@ -1638,6 +1638,29 @@ checked one by one in the code and fixed; what came out of it:
   screen is never in the decoder's queue, only the interface's thread
   swaps them.
 
+A second audit (October 2026, ASan and a mutation fuzzer, every
+finding with its reproducer) found the first point above was only
+true for a page's resources:
+
+- A navigation of the page itself (a link, location, a meta refresh,
+  a form, window.open) went to file:// too: net.c's check looks at the
+  first party, and a page's load has none. scheme_allowed() now holds
+  file:// like a front's scheme: only from a local page, or from the
+  user (address bar, history).
+- Nesting that ran the stack out: component values nest 64 deep at
+  most (deeper blocks and functions are dropped, real sheets stay under
+  ten), which bounds every recursive walk of rules, selectors and
+  calc(); SVG groups and svgs 256 deep (by_id() walks without
+  recursion); the hit test 1024 deep, its kids no longer in a 32 KB
+  array on the stack of each level (2000 nested divs were enough).
+- Freeing a deep document walked up to the root for each node (its
+  restyle check): 80,000 nested elements took minutes. A document
+  that goes marks itself restyle_all, and nothing walks.
+- soie-render -a: a page taller than 65536 rows is cut there, and a
+  failed allocation is said.
+- Checked sound: image decoders (fuzzed, no crash), HTTP framing,
+  cookies, CORS, TLS verification, download names.
+
 ## Character encoding
 
 - The tokenizer only ever sees valid UTF-8 with normalized newlines.
