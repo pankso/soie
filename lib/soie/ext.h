@@ -60,11 +60,14 @@ struct soie_ext {
 
 /* Returns -1 for a wrong ABI version or kind. */
 int soie_ext_register(const struct soie_ext *e);
+/* Whether a module of a kind is there (maybe not loaded yet). */
+int soie_ext_present(soie_ext_kind kind);
 /* The i-th registered hook set of a kind, NULL past the last one. */
 const struct soie_ext *soie_ext_get(soie_ext_kind kind, int i);
 /* dlopen() a module and run its soie_ext_init(). */
 int soie_ext_load(const char *path);
-/* Load every *.so of a directory, in name order; returns how many. */
+/* Load every *.so of a directory, in name order; returns how many.
+ * media.so is loaded when audio or video is first asked for. */
 int soie_ext_load_dir(const char *dir);
 
 /*

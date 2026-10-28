@@ -1817,6 +1817,16 @@ static JSValue n_mse_supported(JSContext *js, JSValueConst this, int argc,
 	return JS_NewBool(js, r);
 }
 
+/* mediaPresent(): a media extension is there, loaded or not yet */
+static JSValue n_media_present(JSContext *js, JSValueConst this, int argc,
+	JSValueConst *argv)
+{
+	(void)this;
+	(void)argc;
+	(void)argv;
+	return JS_NewBool(js, soie_ext_present(SOIE_EXT_MEDIA));
+}
+
 /* linkSheet(el, first): first runs the style pass that asks for it */
 static JSValue n_link_sheet(JSContext *js, JSValueConst this, int argc,
 	JSValueConst *argv)
@@ -2480,6 +2490,7 @@ static const JSCFunctionListEntry natives[] = {
 	JS_CFUNC_DEF("playerState", 1, n_player_state),
 	JS_CFUNC_DEF("canPlay", 1, n_can_play),
 	JS_CFUNC_DEF("mseSupported", 1, n_mse_supported),
+	JS_CFUNC_DEF("mediaPresent", 0, n_media_present),
 	JS_CFUNC_DEF("mseOpen", 1, n_mse_open),
 	JS_CFUNC_DEF("mseAdd", 2, n_mse_add),
 	JS_CFUNC_DEF("mseAppend", 6, n_mse_append),

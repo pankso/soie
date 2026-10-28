@@ -1705,15 +1705,22 @@ run again):
   the front when it changed; a page left drops its jobs no thread
   started; connecting waits 3 s for an address before the next one
   (an IPv6 route to nowhere cost 20 s), the last one still 20 s.
+- media.so (6 MB of FFmpeg mapped) is loaded when a page first asks
+  for audio or video, not at start: soie_ext_load_dir() keeps its path
+  and soie_ext_get(SOIE_EXT_MEDIA) loads it, one thread doing it (the
+  registry is read from the fetch threads too: the count is published
+  after the slot). dom.js asks soie_ext_present() whether to have
+  MediaSource, which loads nothing. A page without media: 18.9 MB at
+  most, 14.7 now.
 - Not done, for later: keeping the parsed rules of unchanged sheets
-  when a script inserts one (GitHub reparses 7 MB, 370 ms; keeping
-  them costs the rules' memory twice, or a styledb split by sheet);
-  loading media.so (6 MB of FFmpeg) at the first audio or video (the
-  extension registry is read from several threads); TLS session
-  resumption (tickets link visits: they would need partitioning by
-  site and private window); an image drawn at its own size copied
-  (no gain measured); normal flow blocks are still laid out again at
-  each layout.
+  when a script inserts one (GitHub reparses 7 MB, 370 ms): keeping
+  the parsed trees would only save the parse (150 ms of it) for twice
+  the rules' memory, refused; what would pay is adding an appended
+  sheet (or insertRule(), which appends to its <style>) to the rules
+  in place. TLS session resumption (tickets link visits: they would
+  need partitioning by site and private window). An image drawn at
+  its own size copied (no gain measured). Normal flow blocks are still
+  laid out again at each layout.
 
 ## Character encoding
 

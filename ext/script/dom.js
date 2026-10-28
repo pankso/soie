@@ -5291,8 +5291,9 @@ const globals = {
 			api.scroll(v[2] + (+x || 0), v[3] + (+y || 0));
 	},
 };
-/* MediaSource only with a media extension that plays it */
-if (api.mseSupported('video/mp4') || api.mseSupported('video/webm'))
+/* MediaSource only with a media extension (FFmpeg's plays it), asked
+ * without loading it: most pages never play anything */
+if (api.mediaPresent())
 	Object.assign(globals, { MediaSource, SourceBuffer, SourceBufferList });
 globals.TimeRanges = TimeRanges;
 globals.scroll = globals.scrollTo;

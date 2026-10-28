@@ -17,8 +17,42 @@
 
 #define MAX_EXT 64
 
+/* Registered hook sets: other threads read them (requests, cookies,
+ * images) while one may come late (below), so the count is published
+ * after the slot it covers. */
 static const struct soie_ext *exts[MAX_EXT];
 static int nexts;
+
+/*
+ * Modules of a directory loaded when their kind is first asked for:
+ * FFmpeg's media.so costs 6 MB of memory to every page, most have no
+ * audio or video.
+ */
+static const struct {
+	const char *file;
+	soie_ext_kind kind;
+} later_files[] = {
+	{ "media.so", SOIE_EXT_MEDIA },
+};
+#define NLATER (sizeof(later_files) / sizeof(later_files[0]))
+static char *later[NLATER];	/* its path, until loaded */
+static int later_state[NLATER];	/* 0: none or done, 1: waits, 2: loading */
+
+/* Is there a module of that kind, loaded or still to load? */
+int soie_ext_present(soie_ext_kind kind)
+{
+	int k, n = __atomic_load_n(&nexts, __ATOMIC_ACQUIRE);
+	size_t j;
+
+	for (j = 0; j < NLATER; j++)
+		if (later_files[j].kind == kind &&
+		    __atomic_load_n(&later_state[j], __ATOMIC_ACQUIRE))
+			return 1;
+	for (k = 0; k < n; k++)
+		if (exts[k]->kind == kind)
+			return 1;
+	return 0;
+}
 
 int soie_ext_register(const struct soie_ext *e)
 {
@@ -26,15 +60,31 @@ int soie_ext_register(const struct soie_ext *e)
 	    e->size < sizeof(*e) || e->kind < SOIE_EXT_IMAGE ||
 	    e->kind > SOIE_EXT_MEDIA || nexts == MAX_EXT)
 		return -1;
-	exts[nexts++] = e;
+	exts[nexts] = e;
+	__atomic_store_n(&nexts, nexts + 1, __ATOMIC_RELEASE);
 	return 0;
 }
 
 const struct soie_ext *soie_ext_get(soie_ext_kind kind, int i)
 {
-	int k;
+	int k, n;
+	size_t j;
 
-	for (k = 0; k < nexts; k++)
+	for (j = 0; j < NLATER; j++) {
+		int w = 1;
+
+		/* one thread loads it, the others go on without it */
+		if (later_files[j].kind == kind &&
+		    __atomic_compare_exchange_n(&later_state[j], &w, 2, 0,
+		    __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
+			soie_ext_load(later[j]);
+			free(later[j]);
+			later[j] = NULL;
+			__atomic_store_n(&later_state[j], 0, __ATOMIC_RELEASE);
+		}
+	}
+	n = __atomic_load_n(&nexts, __ATOMIC_ACQUIRE);
+	for (k = 0; k < n; k++)
 		if (exts[k]->kind == kind && i-- == 0)
 			return exts[k];
 	return NULL;
@@ -85,13 +135,24 @@ int soie_ext_load_dir(const char *dir)
 	if (n)
 		qsort(names, n, sizeof(*names), cmp_names);
 	for (i = 0; i < n; i++) {
+		size_t j;
+
 		path = xmalloc(strlen(dir) + strlen(names[i]) + 2);
 		strcpy(path, dir);
 		strcat(path, "/");
 		strcat(path, names[i]);
-		if (!soie_ext_load(path))
+		for (j = 0; j < NLATER && strcmp(names[i], later_files[j].file);
+		     j++)
+			;
+		if (j < NLATER && !later[j] && !later_state[j]) {
+			later[j] = path;	/* counted, loaded when asked */
+			later_state[j] = 1;
 			loaded++;
-		free(path);
+		} else {
+			if (!soie_ext_load(path))
+				loaded++;
+			free(path);
+		}
 		free(names[i]);
 	}
 	free(names);
