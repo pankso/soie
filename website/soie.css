@@ -6,6 +6,22 @@
 
 body { background: var(--white); }
 
+/* Our own colours, dark ones the way slitaz-2026.css does its own */
+:root {
+	--band:  #f4f6f8;
+	--badge: #2c3e50;
+}
+@media (prefers-color-scheme: dark) {
+	:root:not([data-theme="light"]) {
+		--band:  #1b1b1b;
+		--badge: #3d566e;
+	}
+}
+html[data-theme="dark"] {
+	--band:  #1b1b1b;
+	--badge: #3d566e;
+}
+
 /* Hero: the pitch on the left, the browser on the right */
 .lead {
 	background: linear-gradient(160deg, #2c3e50 0%, #34495e 55%, #3d566e 100%);
@@ -105,7 +121,7 @@ body { background: var(--white); }
 	color: var(--text-light);
 	margin-bottom: var(--space-xl);
 }
-.band { background: #f4f6f8; }
+.band { background: var(--band); }
 
 /* The story, as a timeline */
 .timeline {
@@ -120,7 +136,7 @@ body { background: var(--white); }
 }
 .timeline .when {
 	display: inline-block;
-	background: var(--dark);
+	background: var(--badge);
 	color: #ffffff;
 	font-size: var(--font-size-sm);
 	font-weight: 600;
