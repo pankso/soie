@@ -531,6 +531,8 @@ int main(int argc, char **argv)
 		case FocusIn:
 			if (xic)
 				XSetICFocus(xic);
+			front_focus();
+			front_redraw();
 			break;
 		case FocusOut:
 			if (xic)

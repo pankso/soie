@@ -27,6 +27,9 @@ int front_fd(void);
 void front_buffer(unsigned char *px, int w, int h, int stride, int bgra);
 /* The window is up: load the page asked for. */
 void front_load(void);
+/* The window got the focus: follow the desktop if it went dark or
+ * light since (shell_system_dark()). */
+void front_focus(void);
 /* Run what the shell has due and show what changed; returns the ms the
  * toolkit may wait for events, -1 without a limit. */
 int front_tick(void);

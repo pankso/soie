@@ -824,6 +824,15 @@ reversed, edit the entry and say why; do not leave stale rules here.
   surface with its device scale), the shell's zoom is the user's
   times the scale; events and adjustments converted. Checked with
   GDK_SCALE=2.
+- Dark pages: prefers-color-scheme follows the desktop. SoieView asks
+  GtkSettings (a theme named dark, gtk-application-prefer-dark-theme)
+  and follows its changes live; xsoie and wsoie have no toolkit to
+  ask, so shell_system_dark() reads what GTK would: $GTK_THEME, then
+  gtk-3.0 and gtk-4.0 settings.ini, the user's then /etc/xdg (SliTaz
+  sets SliTaz-Dark there), again each time the window gets the focus.
+  No XSETTINGS or portal: one more protocol for the same answer. Their
+  bars have their own dark colours. A page without dark rules stays
+  as it is (no forced inversion, color-scheme not implemented).
 - Private windows: SOIE_REQ_PRIVATE on every request of a private
   shell (page, resources, scripts' requests through the script host's
   flags, players) and document.cookie: the cookie extension keeps a

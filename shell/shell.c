@@ -99,6 +99,7 @@ struct shell {
 	int caret;
 	int view_w, view_h;
 	float zoom;		/* the page's, 1 */
+	int dark;		/* prefers-color-scheme: dark */
 	int private;		/* SOIE_REQ_PRIVATE: a private window */
 	/* The front's pixels are B G R A (shell_bgra()); what shell_paint()
 	 * showed last, at which scroll and document generation */
@@ -732,6 +733,7 @@ static void relayout(struct shell *s)
 	so.user_css = s->page.user_css;
 	so.scripting = scripts_on(s);	/* @media (scripting), <noscript> */
 	so.zoom = s->zoom;
+	so.dark = s->dark;
 	/* audio and video */
 	so.request = s->private ? private_request : net_request;
 	double t0 = now_s(), t1;
@@ -2908,6 +2910,88 @@ void shell_zoom(struct shell *s, float zoom)
 float shell_get_zoom(struct shell *s)
 {
 	return s->zoom;
+}
+
+void shell_dark(struct shell *s, int on)
+{
+	if (!on == !s->dark)
+		return;
+	debug(2, "%s colours", on ? "dark" : "light");
+	s->dark = !!on;
+	s->damage_full = 1;
+	if (s->page.doc)
+		relayout(s);
+}
+
+/* "dark" in a theme's name, any case: Adwaita-dark, Adwaita:dark */
+static int dark_name(const char *n)
+{
+	for (; *n; n++)
+		if (!strncasecmp(n, "dark", 4))
+			return 1;
+	return 0;
+}
+
+/* A GTK settings.ini: 1 dark, 0 light, -1 no file */
+static int gtk_ini_dark(const char *path)
+{
+	FILE *f = fopen(path, "r");
+	char line[512];
+	int dark = 0;
+
+	if (!f)
+		return -1;
+	while (fgets(line, sizeof(line), f)) {
+		char *v = strchr(line, '=');
+
+		if (!v)
+			continue;
+		v++;
+		v += strspn(v, " \t\"");
+		if (!strncmp(line, "gtk-theme-name", 14))
+			dark |= dark_name(v);
+		else if (!strncmp(line, "gtk-application-prefer-dark-theme",
+		    33))
+			dark |= *v == '1' || !strncasecmp(v, "true", 4);
+	}
+	fclose(f);
+	return dark;
+}
+
+int shell_system_dark(void)
+{
+	static const char *const ini[] = { "gtk-3.0", "gtk-4.0" };
+	const char *t = getenv("GTK_THEME"), *c = getenv("XDG_CONFIG_HOME"),
+		*h = getenv("HOME"), *sys = getenv("XDG_CONFIG_DIRS");
+	char path[4096];
+	size_t i;
+
+	if (t && *t)
+		return dark_name(t);
+	if (!sys || !*sys)
+		sys = "/etc/xdg";
+	/* the user's files, then the system's (/etc/xdg) */
+	for (i = 0; i < 2 * sizeof(ini) / sizeof(*ini); i++) {
+		const char *dir = ini[i % 2];
+		int d;
+
+		if (i >= 2)
+			/* the first of $XDG_CONFIG_DIRS */
+			snprintf(path, sizeof(path), "%.*s/%s/settings.ini",
+				(int)strcspn(sys, ":"), sys, dir);
+		else if (c && *c)
+			snprintf(path, sizeof(path), "%s/%s/settings.ini", c,
+				dir);
+		else if (h)
+			snprintf(path, sizeof(path),
+				"%s/.config/%s/settings.ini", h, dir);
+		else
+			continue;
+		d = gtk_ini_dark(path);
+		if (d >= 0)
+			return d;
+	}
+	return 0;
 }
 
 void shell_private(struct shell *s)

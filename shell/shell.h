@@ -93,6 +93,13 @@ void shell_resize(shell *s, int w, int h);
  * screen's scale times the user's zoom. */
 void shell_zoom(shell *s, float zoom);
 float shell_get_zoom(shell *s);
+/* Pages in their dark colours (prefers-color-scheme: dark) when on;
+ * light by default. */
+void shell_dark(shell *s, int on);
+/* Does the desktop ask for dark? $GTK_THEME, else the GTK settings
+ * files (a theme named dark, gtk-application-prefer-dark-theme): for
+ * the fronts without a toolkit to ask. */
+int shell_system_dark(void);
 /* Run what is due: arrived resources, late layouts, timers, media, a
  * meta refresh, scripts' navigations. *repaint is 1 when the page
  * changed, 2 when only the rectangle shell_dirty() gives did (video

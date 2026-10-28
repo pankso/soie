@@ -37,6 +37,9 @@ static const char chrome_html[] =
 	"input{width:100%;box-sizing:border-box;height:26px;padding:3px 6px;"
 	"border:1px solid #999;border-radius:13px;background:white;"
 	"font:14px sans-serif}"
+	"@media(prefers-color-scheme:dark){body{background:#2b2b2b;"
+	"border-color:#111}button{background:#3a3a3a;border-color:#555;"
+	"color:#ddd}input{background:#1e1e1e;border-color:#555;color:#eee}}"
 	"</style><table><tr>"
 	"<td style=width:28px><button id=back>\xe2\x97\x80</button>"
 	"<td style=width:28px><button id=fwd>\xe2\x96\xb6</button>"
@@ -52,6 +55,9 @@ static const char find_html[] =
 	"input{width:100%;box-sizing:border-box;height:20px;padding:1px 5px;"
 	"border:1px solid #999;border-radius:3px;background:white;"
 	"font:13px sans-serif}#n{padding:0 4px;color:#444}"
+	"@media(prefers-color-scheme:dark){body{background:#2b2b2b;"
+	"color:#ddd;border-color:#111}input{background:#1e1e1e;"
+	"border-color:#555;color:#eee}#n{color:#aaa}}"
 	"</style><table><tr><td style=width:3em>Find"
 	"<td><input id=find value=\"\"><td id=n style=width:7em></table>";
 
@@ -64,6 +70,8 @@ static unsigned char *px;
 static int win_w = 1024, win_h = 768, stride, bgra;
 
 static soie_node *chrome, *findbar;
+/* The bars' colours follow the desktop's, as the page's do */
+static soie_style_options bars;
 /* Text fields of the front: none, the address, the find bar */
 enum { F_NONE, F_URL, F_FIND };
 static int field;
@@ -151,7 +159,7 @@ static int find_w(void)
 
 static void chrome_update(void)
 {
-	soie_style_document(chrome, NULL);
+	soie_style_document(chrome, &bars);
 	soie_layout_document(chrome, win_w, BAR);
 	soie_set_focus(chrome, field == F_URL ? find_id(chrome, "url") : NULL,
 		url_caret);
@@ -178,7 +186,7 @@ static void find_update(void)
 			snprintf(buf, sizeof(buf), "not found");
 	}
 	soie_node_append(n, soie_text_new(findbar, buf, strlen(buf)));
-	soie_style_document(findbar, NULL);
+	soie_style_document(findbar, &bars);
 	soie_layout_document(findbar, find_w(), FINDH);
 	soie_set_focus(findbar, field == F_FIND ? find_id(findbar, "find") :
 		NULL, find_caret);
@@ -399,12 +407,14 @@ static void paint_low(const struct over *l)
 
 		if (sdoc)
 			soie_node_free(sdoc);
-		snprintf(html, sizeof(html), "<body style='margin:0;"
+		snprintf(html, sizeof(html), "<style>body{margin:0;"
 			"font:12px sans-serif;background:#f0f0f0;border:1px "
 			"solid #aaa;padding:3px;white-space:nowrap;"
-			"overflow:hidden'>%s", l->text);
+			"overflow:hidden}@media(prefers-color-scheme:dark){"
+			"body{background:#2b2b2b;border-color:#555;"
+			"color:#ddd}}</style>%s", l->text);
 		sdoc = soie_html_parse(html, strlen(html), NULL);
-		soie_style_document(sdoc, NULL);
+		soie_style_document(sdoc, &bars);
 		soie_layout_document(sdoc, l->at[2], l->at[3]);
 		strcpy(stext, l->text);
 		sw = l->at[2];
@@ -1130,8 +1140,26 @@ int front_fd(void)
 	return fd;
 }
 
+void front_focus(void)
+{
+	int d = shell_system_dark();
+
+	if (!d == !bars.dark)
+		return;
+	bars.dark = d;
+	shell_dark(sh, d);
+	if (sdoc) {
+		soie_node_free(sdoc);
+		sdoc = NULL;
+	}
+	chrome_update();
+	find_update();
+	dirty |= D_ALL;
+}
+
 void front_load(void)
 {
+	front_focus();
 	shell_load(sh, start);
 	dirty |= D_PAGE;
 }

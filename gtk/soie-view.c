@@ -1169,6 +1169,47 @@ static void set_property(GObject *o, guint id, const GValue *val,
 	}
 }
 
+/* The pages take the desktop's colours: dark when GTK's theme is (its
+ * name says so, or its dark variant is asked for), $GTK_THEME first. */
+static gboolean theme_watch;
+
+static int gtk_dark(void)
+{
+	GtkSettings *st = gtk_settings_get_default();
+	const char *env = g_getenv("GTK_THEME");
+	gboolean prefer = FALSE;
+	char *name = NULL, *low;
+	int dark;
+
+	if (!st || (env && *env))
+		return shell_system_dark();
+	g_object_get(st, "gtk-application-prefer-dark-theme", &prefer,
+		"gtk-theme-name", &name, NULL);
+	low = name ? g_ascii_strdown(name, -1) : NULL;
+	dark = prefer || (low && strstr(low, "dark"));
+	g_free(low);
+	g_free(name);
+	return dark;
+}
+
+static void theme_changed(GObject *o, GParamSpec *p, gpointer data)
+{
+	int dark = gtk_dark();
+	GList *l;
+
+	(void)o;
+	(void)p;
+	(void)data;
+	for (l = views; l; l = l->next) {
+		SoieView *v = l->data;
+
+		shell_dark(v->sh, dark);
+		v->full = TRUE;
+		redraw(v);
+		tick_soon(v);
+	}
+}
+
 static void constructed(GObject *o)
 {
 	SoieView *v = SOIE_VIEW(o);
@@ -1185,6 +1226,19 @@ static void constructed(GObject *o)
 	v->sh = shell_new(&ui, v, v->scripts);
 	if (v->private)
 		shell_private(v->sh);
+	if (!theme_watch) {
+		GtkSettings *st = gtk_settings_get_default();
+
+		if (st) {
+			g_signal_connect(st, "notify::gtk-theme-name",
+				G_CALLBACK(theme_changed), NULL);
+			g_signal_connect(st,
+				"notify::gtk-application-prefer-dark-theme",
+				G_CALLBACK(theme_changed), NULL);
+		}
+		theme_watch = TRUE;
+	}
+	shell_dark(v->sh, gtk_dark());
 	shell_bgra(v->sh, G_BYTE_ORDER == G_LITTLE_ENDIAN);
 	views = g_list_prepend(views, v);
 	sync_adjustment(v);
