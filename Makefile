@@ -335,6 +335,11 @@ install: all
 	mkdir -p $(DESTDIR)$(PREFIX)/lib/pkgconfig
 	cp soie.pc $(DESTDIR)$(PREFIX)/lib/pkgconfig/
 	cp tools/soie-render browser/xsoie $(WSOIE) $(DESTDIR)$(PREFIX)/bin/
+	mkdir -p $(DESTDIR)$(PREFIX)/share/applications
+	cp browser/xsoie.desktop $(DESTDIR)$(PREFIX)/share/applications/
+ifneq ($(WSOIE),)
+	cp browser/wsoie.desktop $(DESTDIR)$(PREFIX)/share/applications/
+endif
 ifneq ($(GTK),)
 	cp gtk/libsoie-gtk.so.$(SOVERSION) $(DESTDIR)$(PREFIX)/lib/
 	ln -sf libsoie-gtk.so.$(SOVERSION) \

@@ -5,7 +5,7 @@ reference browser. No toolkit, no JavaScript in the core, built to
 render modern pages on old machines. See `doc/DECISIONS.md` for what
 Soie is and is not, and how extensions plug in.
 
-Status: the eleven phases are in, version 0.1.0 (not released yet). Extensions
+Status: version 0.1.0, the first release (October 2026). Extensions
 (`lib/soie/ext.h`) bring cookies, content blocking, WebP, JavaScript
 (QuickJS) and audio/video (FFmpeg, ALSA, Media Source Extensions: YouTube plays). `browser/xsoie` browses the
 web (HTTPS, forms, history, cookies, scripts, video). The HTML parser follows the WHATWG algorithm and passes the
@@ -83,6 +83,17 @@ a little tabbed browser on it.
     tools/       soie-render, generators
     tests/       unit tests, html5lib test runner, local corpus
     doc/         DECISIONS.md
+
+## Known limits
+
+- Google search and YouTube may stop answering after a while: their
+  bot checks (BotGuard) do not trust a JavaScript engine that is not
+  SpiderMonkey or V8.
+- No JavaScript in iframes (no realm of their own yet).
+- No HSTS, and an https page may be redirected to http.
+- No `:hover`, `:focus` and other user states in style sheets.
+- No tabs in xsoie and wsoie, windows (Ctrl+N): Toile has tabs, on
+  SoieView.
 
 ## Licence
 
