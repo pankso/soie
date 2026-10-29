@@ -53,7 +53,7 @@
 				Soie is a web engine written from scratch in plain C99:
 				HTML, CSS, JavaScript and video in about 46,000 lines of
 				code. It fits in a 700&nbsp;KB download, runs on the
-				32-bit PCs every big browser has left behind, and leaves
+				32-bit PCs every big browser has left behind and leaves
 				the memory of new machines to the work that matters.
 			</p>
 			<div class="hero-buttons">
@@ -71,10 +71,10 @@
 <!-- Numbers -->
 <section class="stats">
 	<div class="stats-in">
-		<div class="stat"><b>0.7&nbsp;MB</b><span>to download Soie and its X11 browser, against 84&nbsp;MB for Firefox ESR</span></div>
-		<div class="stat"><b>1.9&nbsp;MB</b><span>installed, against 294&nbsp;MB</span></div>
-		<div class="stat"><b>20&times;</b><span>less memory than Firefox: 33&nbsp;MB against 650&nbsp;MB, on six sites</span></div>
-		<div class="stat"><b>i486</b><span>and x86_64: one engine, tested on both</span></div>
+		<div class="stat"><b>0.7&nbsp;MB</b><span>To download Soie and its X11 browser, against 84&nbsp;MB for Firefox ESR</span></div>
+		<div class="stat"><b>1.9&nbsp;MB</b><span>Installed, against 294&nbsp;MB</span></div>
+		<div class="stat"><b>20&times;</b><span>Less memory than Firefox: 33&nbsp;MB against 650&nbsp;MB, on six sites</span></div>
+		<div class="stat"><b>i486</b><span>Plus x86_64: one engine, tested on both</span></div>
 	</div>
 </section>
 
@@ -99,7 +99,7 @@
 			<h3>The last WebKitGTK SliTaz can build</h3>
 			<p>WebKitGTK 2.4.11 comes out. It is still the WebKit in the
 				SliTaz packages today: no release of its series has come
-				since, and the newer ones do not build on our tool chain.
+				since and the newer ones do not build on our tool chain.
 				<a class="src" href="https://webkitgtk.org/2016/04/10/webkitgtk2.4.11-released.html">webkitgtk.org</a></p>
 		</li>
 		<li>
@@ -130,14 +130,14 @@
 			<span class="when">October 2026</span>
 			<h3>Soie 0.1.0</h3>
 			<p>So we wrote our own engine, one a single person can read
-				from end to end, built with the compilers SliTaz has, for
+				from end to end, built with the compilers SliTaz has for
 				the machines SliTaz runs on. It does not try to be Firefox:
-				it tries to show the web as it is, with little.</p>
+				it tries to show the web as it is, with as little as possible.</p>
 		</li>
 	</ol>
 	<p>
 		There is a second reason. A browser that needs half a gigabyte to
-		show a page takes that memory from everything else, and today
+		show a page takes that memory from everything else and today
 		everything else includes the AI models people want to run on
 		their own machine. A light engine is not only for old PCs.
 	</p>
@@ -181,7 +181,7 @@
 		<p class="note">In each cell, <b class="s">Soie</b> / Firefox.</p>
 		<p class="note">
 			Measured with <code>tools/browser-bench.sh</code> from the Soie
-			sources, October 2026, on an Intel i7-13700H under SliTaz
+			sources, October 2026 on an Intel i7-13700H under SliTaz
 			x86_64: median of 3 runs, live sites. Memory is the PSS of the
 			browser's processes at their peak (shared pages counted once),
 			CPU the processor time they used, ready the time until the page
@@ -215,7 +215,7 @@
 	<h2>What is inside</h2>
 	<p class="intro">
 		One engine, a few extensions, small browsers: each piece does one
-		thing, and every choice is written down in
+		thing and every choice is written down in
 		<a href="https://hg.slitaz.org/soie/file/tip/doc/DECISIONS.md">DECISIONS.md</a>.
 	</p>
 	<div class="cards">
@@ -232,13 +232,13 @@
 			<h3>Extensions</h3>
 			<p>What a browser needs beyond the engine, each a small module:
 				cookies, content blocking, WebP, JavaScript with QuickJS
-				(DOM, fetch, workers), and audio and video with FFmpeg,
+				(DOM, fetch, workers), plus audio and video with FFmpeg,
 				Media Source Extensions included: YouTube plays.</p>
 		</div>
 		<div class="card">
 			<h3>Browsers</h3>
 			<p><b>xsoie</b> for X11 and <b>wsoie</b> for Wayland, for the
-				lightest systems; <b>SoieView</b>, a GTK&nbsp;3 widget, for
+				lightest systems; <b>SoieView</b>, a GTK&nbsp;3 widget for
 				<a href="https://hg.slitaz.org/toile">Toile</a>, the SliTaz
 				desktop browser.</p>
 		</div>
@@ -253,13 +253,13 @@
 			<h3>Simple</h3>
 			<p>Plain C99, a plain Makefile, no toolkit in the engine, no
 				code generator, no build system to learn: <code>make</code>
-				and it builds, on old compilers too.</p>
+				and it builds on old compilers too.</p>
 		</div>
 		<div class="card">
 			<h3>Yours</h3>
 			<p>BSD licence. A C API to embed the engine (<code>soie.h</code>),
 				an ABI for extensions (<code>ext.h</code>), and a headless
-				renderer, <code>soie-render</code>, for tests and
+				renderer <code>soie-render</code>, for tests and
 				screenshots.</p>
 		</div>
 	</div>
@@ -271,7 +271,7 @@
 		<h2>Get Soie 0.1.1</h2>
 		<p>On SliTaz, the lightest way to browse the web:</p>
 		<pre><code>spk-add xsoie</code></pre>
-		<p>Soie comes in packages, so that a system installs only what it
+		<p>Soie comes in many packages, so that a system installs only what it
 			needs:</p>
 		<table class="data">
 			<tr><th>Package</th><th style="text-align:left">What it holds</th></tr>
@@ -282,7 +282,7 @@
 			<tr><td><b>soie-media</b></td><td style="text-align:left">audio and video, with FFmpeg and ALSA</td></tr>
 			<tr><td><b>soie-dev</b></td><td style="text-align:left">headers, static library, pkg-config files, soie-render</td></tr>
 		</table>
-		<p style="margin-top: var(--space-xl)">From the sources, on any
+		<p style="margin-top: var(--space-xl)">From the sources on any
 			GNU/Linux with a C99 compiler, GNU make, pkg-config, FreeType,
 			HarfBuzz, libpng and libjpeg (the browsers also want Xlib or
 			Wayland, GnuTLS and zlib; the extensions libwebp, FFmpeg and
@@ -300,7 +300,7 @@ make install PREFIX=/usr</code></pre>
 <!-- Limits -->
 <section><div class="part">
 	<h2>What Soie does not do yet</h2>
-	<p>Soie is young, and we would rather say it here than let you find
+	<p>Soie is only young, and we would rather say it here than let you find
 		out:</p>
 	<ul class="limits">
 		<li>Google search and YouTube may stop answering after a while:
