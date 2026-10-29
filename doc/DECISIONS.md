@@ -1695,6 +1695,19 @@ true for a page's resources:
 - Checked sound: image decoders (fuzzed, no crash), HTTP framing,
   cookies, CORS, TLS verification, download names.
 
+Found while about:settings was attacked (October 2026, hostile pages
+over HTTP, real clicks, each test run again with the guard off to
+check it fails then):
+
+- history.pushState() and replaceState() took any URL: a page of
+  evil.example could show about:settings or a bank's address in the
+  address bar, and the shell took it for that page, so its forms went
+  where only that page may (about:settings, file://). Now HTML's rule
+  (soie_url_rewritable(): http and https keep their origin, file its
+  path, other schemes all but the fragment): dom.js throws
+  SecurityError, and the shell refuses the address on its own too
+  (js_url()), either one enough.
+
 ## Speed
 
 An audit of where the time goes (October 2026, 12 sites copied

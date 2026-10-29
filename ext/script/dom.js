@@ -3347,7 +3347,21 @@ function navigate(url, replace) {
 }
 
 /* History: pushState changes the URL scripts see and the host shows (a
- * history entry of its own), with no load */
+ * history entry of its own), with no load; to an address of the page's
+ * origin only, as browsers (a SecurityError: the address bar would
+ * lie, and the host would take the page for that URL's) */
+function rewrite(url) {
+	if (url === undefined || url === null)
+		return href;
+	const to = api.resolve(href, String(url));
+	if (!to)
+		throw new DOMException('Invalid URL', 'SyntaxError');
+	if (!api.rewritable(href, to))
+		throw new DOMException('A history state with the URL ' + to +
+			' cannot be created in a document of ' + href,
+			'SecurityError');
+	return to;
+}
 const states = [{ state: null, url: href }];
 let stateIndex = 0;
 const history = {
@@ -3356,16 +3370,14 @@ const history = {
 	get scrollRestoration() { return 'auto'; },
 	set scrollRestoration(v) {},
 	pushState(state, title, url) {
-		if (url !== undefined && url !== null)
-			href = api.resolve(href, String(url)) || href;
+		href = rewrite(url);
 		states.splice(stateIndex + 1);
 		states.push({ state, url: href });
 		stateIndex++;
 		api.showURL(href, true);
 	},
 	replaceState(state, title, url) {
-		if (url !== undefined && url !== null)
-			href = api.resolve(href, String(url)) || href;
+		href = rewrite(url);
 		states[stateIndex] = { state, url: href };
 		api.showURL(href, false);
 	},

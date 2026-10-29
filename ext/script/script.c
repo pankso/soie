@@ -1251,6 +1251,21 @@ static JSValue n_resolve(JSContext *js, JSValueConst this, int argc,
 	return r;
 }
 
+/* rewritable(doc, url): may pushState() give the page that URL? */
+static JSValue n_rewritable(JSContext *js, JSValueConst this, int argc,
+	JSValueConst *argv)
+{
+	int r;
+	STR(0, doc);
+	STR(1, url);
+
+	(void)this;
+	r = soie_url_rewritable(doc, url);
+	JS_FreeCString(js, doc);
+	JS_FreeCString(js, url);
+	return JS_NewBool(js, r);
+}
+
 /* request(method, url, headers, body) -> {status, url, headers, body} */
 /* A response for the scripts: status, url, headers, body */
 static void free_bytes(JSRuntime *rt, void *opaque, void *ptr)
@@ -2477,6 +2492,7 @@ static const JSCFunctionListEntry natives[] = {
 	JS_CFUNC_DEF("scroll", 2, n_scroll),
 	JS_CFUNC_DEF("media", 1, n_media),
 	JS_CFUNC_DEF("resolve", 2, n_resolve),
+	JS_CFUNC_DEF("rewritable", 2, n_rewritable),
 	JS_CFUNC_DEF("request", 5, n_request),
 	JS_CFUNC_DEF("requestAsync", 5, n_request_async),
 	JS_CFUNC_DEF("cookie", 1, n_cookie),

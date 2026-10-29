@@ -81,5 +81,10 @@ int soie_media_matches(const soie_node *doc, const char *query);
 
 /* Resolve a URL reference against a base URL; free() the result. */
 char *soie_url_resolve(const char *base, const char *ref);
+/* May a document at doc take the URL target without a load
+ * (history.pushState(), HTML's "can have its URL rewritten")? http and
+ * https keep their scheme, host and port, file its path, any other
+ * scheme (about:, data:) all but the fragment. Both absolute. */
+int soie_url_rewritable(const char *doc, const char *target);
 
 #endif

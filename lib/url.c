@@ -211,3 +211,49 @@ tail:
 	buf_free(&clean);
 	return out.s;
 }
+
+/* n bytes of a and b equal, ASCII case aside (schemes, hosts) */
+static int same_ci(const char *a, const char *b, size_t n)
+{
+	size_t i;
+
+	for (i = 0; i < n; i++) {
+		int x = (unsigned char)a[i], y = (unsigned char)b[i];
+
+		if (x >= 'A' && x <= 'Z')
+			x += 32;
+		if (y >= 'A' && y <= 'Z')
+			y += 32;
+		if (x != y)
+			return 0;
+	}
+	return 1;
+}
+
+static int is_scheme(const struct parts *p, const char *name)
+{
+	return p->ls == strlen(name) && same_ci(p->scheme, name, p->ls);
+}
+
+int soie_url_rewritable(const char *doc, const char *target)
+{
+	struct parts a, b;
+
+	if (!doc || !target)
+		return 0;
+	split(doc, strlen(doc), &a);
+	split(target, strlen(target), &b);
+	/* the same scheme, user and host and port */
+	if (!a.scheme || !b.scheme || a.ls != b.ls ||
+	    !same_ci(a.scheme, b.scheme, a.ls) || a.has_auth != b.has_auth ||
+	    a.la != b.la || !same_ci(a.auth, b.auth, a.la))
+		return 0;
+	if (is_scheme(&a, "http") || is_scheme(&a, "https"))
+		return 1;
+	if (a.lp != b.lp || memcmp(a.path, b.path, a.lp))
+		return 0;
+	if (is_scheme(&a, "file"))
+		return 1;
+	return a.has_query == b.has_query && a.lq == b.lq &&
+		!memcmp(a.query, b.query, a.lq);
+}

@@ -1,0 +1,6 @@
+log: same page ?x=1 #f 2 1
+log: fragment #g
+log: refused about:settings SecurityError
+log: refused https://example.org/ SecurityError
+log: refused file:///etc/passwd SecurityError
+log: still #g 2

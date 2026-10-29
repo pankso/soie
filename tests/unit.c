@@ -270,6 +270,39 @@ static void test_url(void)
 	}
 }
 
+/* history.pushState()'s rule: the page keeps its origin */
+static void test_url_rewritable(void)
+{
+	static const struct {
+		const char *doc, *to;
+		int ok;
+	} cases[] = {
+		{ "https://a.org/x", "https://a.org/y?q#f", 1 },
+		{ "https://a.org/x", "https://A.ORG/y", 1 },
+		{ "https://a.org/x", "https://b.org/x", 0 },
+		{ "https://a.org/x", "http://a.org/x", 0 },
+		{ "https://a.org/x", "https://a.org:8443/x", 0 },
+		{ "https://a.org/x", "about:settings", 0 },
+		{ "https://a.org/x", "file:///etc/passwd", 0 },
+		{ "file:///home/a.html", "file:///home/a.html#f", 1 },
+		{ "file:///home/a.html", "file:///etc/passwd", 0 },
+		{ "about:blank", "about:blank#f", 1 },
+		{ "about:blank", "about:settings", 0 },
+		{ "about:settings", "about:settings?x", 0 },
+		{ NULL, NULL, 0 }
+	};
+	int i;
+
+	for (i = 0; cases[i].doc; i++) {
+		int r = soie_url_rewritable(cases[i].doc, cases[i].to);
+
+		if (r != cases[i].ok)
+			printf("  rewritable %s -> %s: got %d\n", cases[i].doc,
+				cases[i].to, r);
+		CHECK(r == cases[i].ok);
+	}
+}
+
 static void test_style_api(void)
 {
 	soie_node *doc;
@@ -578,6 +611,7 @@ int main(void)
 	test_charsets();
 	test_entities();
 	test_url();
+	test_url_rewritable();
 	test_style_api();
 	test_resize();
 	test_resize_late_vw();

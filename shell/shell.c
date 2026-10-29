@@ -478,6 +478,13 @@ static void js_url(void *data, const char *url, int push)
 
 	if (!strcmp(url, s->page.url))
 		return;
+	/* another origin's address on this page would be a lie in the
+	 * address bar, and let the page pass for it: file:// (dom.js
+	 * throws before, this is the host's word) */
+	if (!soie_url_rewritable(s->page.url, url)) {
+		debug(1, "not this page's address: %s", url);
+		return;
+	}
 	debug(2, "url %s%s", url, push ? "" : " (replaced)");
 	if (push && s->hist.cur >= 0)
 		s->hist.scroll[s->hist.cur] = s->page.scroll;

@@ -1,0 +1,20 @@
+<!DOCTYPE html>
+<title>History</title>
+<script>
+var log = (...a) => console.log(a.map(String).join(' '));
+var base = location.href;
+history.pushState({ n: 1 }, '', '?x=1#f');
+log('same page', location.search, location.hash,
+    history.length, history.state.n);
+history.replaceState(null, '', '#g');
+log('fragment', location.hash);
+for (var to of ['about:settings', 'https://example.org/', 'file:///etc/passwd']) {
+	try {
+		history.pushState(null, '', to);
+		log('pushed', to);
+	} catch (e) {
+		log('refused', to, e.name);
+	}
+}
+log('still', location.hash, history.length);
+</script>
