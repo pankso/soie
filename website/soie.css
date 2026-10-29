@@ -1,7 +1,8 @@
 /*
  * soie.slitaz.org: the page's own pieces, over slitaz-2026.css (header,
  * footer, colours). Plain CSS that Soie renders as well as Firefox:
- * flexbox, grid, gradients, rounded corners, no script.
+ * flexbox, grid, gradients, rounded corners; menu.js only closes the
+ * phone menu.
  */
 
 body { background: var(--white); }
@@ -298,9 +299,49 @@ table.data b.s { color: var(--primary-dark); }
 ul.limits { margin: var(--space-md) 0; padding-left: var(--space-lg); }
 ul.limits li { margin: var(--space-sm) 0; line-height: 1.6; }
 
-/* Narrow screens: one column */
+/* Narrow screens: one column; minmax(0, 1fr), or the big numbers
+ * make the columns wider than a phone */
 @media (max-width: 860px) {
-	.lead-in, .bench, .cards, .pair { grid-template-columns: 1fr; }
-	.stats-in { grid-template-columns: 1fr 1fr; }
+	.lead-in, .bench, .cards, .pair {
+		grid-template-columns: minmax(0, 1fr);
+	}
+	.stats-in { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 	.lead h2 { font-size: 2.2rem; }
+}
+
+/* Phones: this page has no #nav for slitaz-2026.css's burger to open,
+ * so it opens our own links, under the header; the burger goes to the
+ * right (the other sites' theme button pushes it there) */
+@media (max-width: 768px) {
+	#header #nav-burger { margin-left: auto; }
+	#nav-toggle:checked ~ #network {
+		display: block;
+		position: absolute;
+		top: 100%;
+		left: 0;
+		right: 0;
+		background: inherit;
+		border-bottom: 1px solid #1a252f;
+		box-shadow: var(--shadow-md);
+	}
+	#nav-toggle:checked ~ #network ul {
+		display: flex;
+		flex-direction: column;
+		gap: 0;
+		margin: 0;
+		padding: var(--space-xs) 0;
+		list-style: none;
+	}
+	#nav-toggle:checked ~ #network a {
+		display: block;
+		padding: var(--space-sm) var(--space-md);
+		text-align: center;
+		font-size: var(--font-size-base);
+		color: #f0f2f4;
+	}
+	.lead, .stats { padding: var(--space-xl) var(--space-md); }
+	.part { padding: var(--space-xl) var(--space-md); }
+	.stats-in { gap: var(--space-md); }
+	.stat { padding: var(--space-md) var(--space-sm); }
+	.stat b { font-size: 1.7rem; }
 }
