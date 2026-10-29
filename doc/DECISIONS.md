@@ -1866,6 +1866,14 @@ run again):
   servers, not on a forge. The git history (106 commits, from
   2026-10-22) was converted with `hg convert`, dates and messages as
   they were.
+- 0.1.1 (2026-10-29): history.pushState() and replaceState() keep
+  the page's origin (a 0.1.0 page could take another's address, see
+  the security audits); about:settings for xsoie and wsoie; the
+  desktop's dark or light theme; the logo and the window icon;
+  flex columns, replaced boxes sized by their ratio, SVG curves
+  smooth at any size; checkboxes and radios as browsers draw them.
+  Same soname and extension ABI: one function added
+  (soie_url_rewritable()).
 
 ## Build
 
