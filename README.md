@@ -60,6 +60,9 @@ It loads the extensions of `$SOIE_EXT_DIR`, else those of the source
 tree when run from it, else the installed ones.
 Cookies live in `~/.local/share/soie/cookies.txt`; a hosts-style
 block list in `~/.config/soie/block.txt` turns content blocking on.
+The ⚙ button (or `about:settings`) sets the start page, the search
+engine, JavaScript, colours, zoom, cookies, blocking and the downloads
+folder, kept in `~/.config/soie/settings`.
 `soie-render -x ext/webp.so page.html` loads an extension;
 `soie-render -x ext/script.so -j page.html` runs the page's scripts
 (console output on stderr). `browser/xsoie -s` turns scripts off,

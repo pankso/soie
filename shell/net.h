@@ -49,6 +49,9 @@ struct response {
 int net_fetch(const soie_request *req, struct response *r);
 /* The same as an extension request function (data unused). */
 int net_request(void *data, const soie_request *req, soie_response *res);
+/* Content blocking (the net extensions' filter) on or off, on at
+ * first; any thread. */
+void net_blocking(int on);
 void response_free(struct response *r);
 /* Is a response with these headers (a header block, or "name: value"
  * lines) shown as a page, or downloaded? */

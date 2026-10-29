@@ -678,6 +678,35 @@ reversed, edit the entry and say why; do not leave stale rules here.
   Without it Google answered in the language of the address's country
   (German, from Switzerland).
 
+## about:settings
+
+- The settings of xsoie and wsoie, a page of the shell's
+  (shell/settings.c), not of each front: start page, search URL,
+  JavaScript, colours (the system's, light, dark), zoom, cookies (all,
+  no third party, none), content blocking, downloads folder; and a
+  button that clears the cookies. ~/.config/soie/settings holds them,
+  key=value lines one can edit by hand, written whole through a
+  rename; bad values are left out and the defaults stand.
+- A front opts in with shell_settings(): Toile has its settings and
+  does not call it, about:settings is not found there.
+- Only the user reaches it, typed or from itself: scheme_allowed()
+  holds it as it does file://, for links, forms, scripts' navigations,
+  refreshes and windows; resources and scripts' requests never get it
+  (the network does not know about:). It changes nothing on a GET (a
+  link that would reach it could not save), only a POST of its own
+  form; no script runs on it.
+- A plain form without a script, drawn by Soie with the page's colours
+  (prefers-color-scheme); the ⚙ button of the bar opens it. The
+  shell applies search, scripts, cookies, blocking and downloads; the
+  front zoom and colours, through a new ui call (settings). Other
+  windows, other processes, take them when they open.
+- Form controls looked their age next to it: checkboxes and radios
+  are painted as Firefox's and Chrome's (a gray ring on white, the
+  accent blue and a white tick or a dot when checked, never the
+  page's text colour, invisible on dark pages), radios round; the UA
+  sheet gives them browsers' margins and no field border; placeholders
+  are the text colour at 55 %.
+
 ## The shell on its own, many page views
 
 - The shell left browser/ for shell/ (shell.c, net.c, fetch.c,

@@ -307,8 +307,10 @@ static void ui_open(void *data, const char *url)
 	v->open = g_strdup(url);
 }
 
+/* No settings: the host (Toile) has its own, about:settings is not
+ * found here */
 static const struct shell_ui ui = { ui_title, ui_address, ui_alert,
-	ui_open, ui_download };
+	ui_open, ui_download, NULL };
 
 /*
  * A new window on uri: the handlers of "create" give the view, which

@@ -43,6 +43,9 @@ struct shell_ui {
 	 * through alert. It is then the process's (shell_downloads()). */
 	void (*download)(void *data, unsigned id, const char *url,
 		const char *type, long long total, char *dest, size_t size);
+	/* about:settings changed them: apply shell_settings() again
+	 * (zoom, colours) */
+	void (*settings)(void *data);
 };
 
 /* Load the extensions, start the fetch threads, once; returns the
@@ -100,6 +103,34 @@ void shell_dark(shell *s, int on);
  * files (a theme named dark, gtk-application-prefer-dark-theme): for
  * the fronts without a toolkit to ask. */
 int shell_system_dark(void);
+
+/*
+ * Settings, for a front with none of its own (xsoie, wsoie; Toile has
+ * its own and does not call this): ~/.config/soie/settings, read at
+ * the first call, which also opens about:settings, the page that shows
+ * and changes them. Only the user reaches that page (typed, or from
+ * itself): a web page's link, form, script, refresh or window never
+ * does (scheme_allowed()). The shell applies what is its own (search,
+ * scripts, cookies, blocking, downloads), the front the rest.
+ */
+enum { SHELL_COOKIES_ALL, SHELL_COOKIES_NO_THIRD_PARTY, SHELL_COOKIES_NONE };
+enum { SHELL_COLORS_SYSTEM, SHELL_COLORS_LIGHT, SHELL_COLORS_DARK };
+struct shell_settings {
+	char home[1024];	/* the start page, "" for about:soie */
+	char search[1024];	/* a URL with %s, "" for $SOIE_SEARCH or
+				 * DuckDuckGo Lite */
+	char downloads[1024];	/* a folder, "" for $XDG_DOWNLOAD_DIR or
+				 * ~/Downloads */
+	int scripts;		/* JavaScript, 1 */
+	int cookies;		/* SHELL_COOKIES_*, no third party */
+	int colors;		/* SHELL_COLORS_*, the system's */
+	int zoom;		/* percent, 100 */
+	int block;		/* content blocking (block.txt), 1 */
+};
+const struct shell_settings *shell_settings(void);
+/* Dark pages by the settings: the system's (shell_system_dark()) unless
+ * they say light or dark. */
+int shell_settings_dark(void);
 /* Run what is due: arrived resources, late layouts, timers, media, a
  * meta refresh, scripts' navigations. *repaint is 1 when the page
  * changed, 2 when only the rectangle shell_dirty() gives did (video

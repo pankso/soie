@@ -27,6 +27,7 @@
 #include "net.h"
 #include "fetch.h"
 #include "shell.h"
+#include "settings.h"
 #include "debug.h"
 
 #define HOME SHELL_HOME
@@ -216,7 +217,8 @@ static int scheme_of(const char *url)
  * its own pages (what the user types, a toile:// page's links), never
  * for the web's (WebKit's display isolated schemes). file:// alike: a
  * link, a script, a refresh or a form of a web page never opens a
- * local file, only the user and local pages do.
+ * local file, only the user and local pages do. about:settings is the
+ * user's and its own: a page that could post to it would change them.
  */
 static int scheme_allowed(const char *from, const char *url)
 {
@@ -224,6 +226,8 @@ static int scheme_allowed(const char *from, const char *url)
 
 	if (!from || !*from)
 		return 1;
+	if (settings_url(url))
+		return settings_url(from);
 	if (!strncasecmp(url, "file:", 5))
 		return !strncasecmp(from, "file:", 5);
 	return k < 0 || scheme_of(from) == k;
@@ -479,8 +483,8 @@ static void js_url(void *data, const char *url, int push)
 	if (!strcmp(url, s->page.url))
 		return;
 	/* another origin's address on this page would be a lie in the
-	 * address bar, and let the page pass for it: file:// (dom.js
-	 * throws before, this is the host's word) */
+	 * address bar, and let the page pass for it: about:settings,
+	 * file:// (dom.js throws before, this is the host's word) */
 	if (!soie_url_rewritable(s->page.url, url)) {
 		debug(1, "not this page's address: %s", url);
 		return;
@@ -916,7 +920,10 @@ static void start_scripts(struct shell *s);
 
 static int scripts_on(struct shell *s)
 {
-	return s->scripts && soie_ext_get(SOIE_EXT_SCRIPT, 0) != NULL;
+	const struct shell_settings *st = settings_get();
+
+	return s->scripts && (!st || st->scripts) &&
+		soie_ext_get(SOIE_EXT_SCRIPT, 0) != NULL;
 }
 
 /* What the page needs, all asked for at once, sheets and scripts
@@ -1068,7 +1075,10 @@ static void first_render(struct shell *s)
 	clamp_scroll(s);
 	set_title(s);
 	s->ui.address(s->ui_data, s->page.url);
-	s->page.loading = scripts_on(s) && strcmp(s->page.url, HOME) ?
+	/* none on the shell's own pages: nothing to run, nothing to
+	 * reach about:settings from inside it */
+	s->page.loading = scripts_on(s) && strcmp(s->page.url, HOME) &&
+		!settings_url(s->page.url) ?
 		L_SCRIPTS : L_NONE;
 	if (s->page.loading == L_SCRIPTS && !res_pending(s, K_SCRIPT))
 		start_scripts(s);
@@ -1141,6 +1151,16 @@ static void load(struct shell *s, const char *url, const char *post, int push)
 		load_here(s, HOME, home_html);
 		return;
 	}
+	if (settings_get() && settings_url(url)) {
+		int changed;
+		char *html = settings_page(post, &changed);
+
+		load_here(s, SETTINGS_URL, html);
+		free(html);
+		if (changed && s->ui.settings)
+			s->ui.settings(s->ui_data);
+		return;
+	}
 	if ((k = scheme_of(url)) >= 0) {
 		struct job j;
 
@@ -1174,11 +1194,17 @@ static void load(struct shell *s, const char *url, const char *post, int push)
  * (chunked, compressed bodies).
  */
 
-/* $XDG_DOWNLOAD_DIR, ~/Downloads (made), ~ */
+/* The settings' folder, $XDG_DOWNLOAD_DIR, ~/Downloads (made), ~ */
 static void dl_dir(char *out, size_t size)
 {
+	const struct shell_settings *st = settings_get();
 	const char *d = getenv("XDG_DOWNLOAD_DIR"), *home = getenv("HOME");
 
+	if (st && *st->downloads) {
+		snprintf(out, size, "%s", st->downloads);
+		if (!mkdir(out, 0755) || errno == EEXIST)
+			return;
+	}
 	if (d && *d == '/') {
 		snprintf(out, size, "%s", d);
 		return;
@@ -1757,6 +1783,7 @@ static void submit(struct shell *s, soie_node *form, soie_node *submitter)
 	abs = soie_url_resolve(s->page.url, action && *action ? action :
 		s->page.url);
 	if (!abs || !scheme_allowed(s->page.url, abs)) {
+		debug(1, "not from this page: %s", abs ? abs : "a form");
 		free(abs);
 		free(q);
 		return;
@@ -3047,7 +3074,9 @@ void shell_go(struct shell *s, const char *typed)
 		sprintf(url, "https://%s", v);
 	} else {
 		/* words: a search, %s in the URL becomes them */
-		fmt = getenv("SOIE_SEARCH");
+		const struct shell_settings *st = settings_get();
+
+		fmt = st && *st->search ? st->search : getenv("SOIE_SEARCH");
 		if (!fmt || !strstr(fmt, "%s"))
 			fmt = "https://lite.duckduckgo.com/lite/?q=%s";
 		pc = strstr(fmt, "%s");

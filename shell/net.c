@@ -1170,6 +1170,13 @@ static int same_origin(const char *a, const char *b)
 	return same;
 }
 
+static int blocking = 1;
+
+void net_blocking(int on)
+{
+	__atomic_store_n(&blocking, !!on, __ATOMIC_RELAXED);
+}
+
 int net_fetch(const soie_request *rq, struct response *r)
 {
 	const char *url = rq->url, *method, *body = rq->body;
@@ -1181,7 +1188,8 @@ int net_fetch(const soie_request *rq, struct response *r)
 
 	memset(r, 0, sizeof(*r));
 	r->dl = dl;
-	if (soie_ext_blocked(rq)) {
+	if (__atomic_load_n(&blocking, __ATOMIC_RELAXED) &&
+	    soie_ext_blocked(rq)) {
 		set_error(r, "blocked");
 		return -1;
 	}

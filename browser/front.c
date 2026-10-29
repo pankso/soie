@@ -44,7 +44,9 @@ static const char chrome_html[] =
 	"<td style=width:28px><button id=back>\xe2\x97\x80</button>"
 	"<td style=width:28px><button id=fwd>\xe2\x96\xb6</button>"
 	"<td style=width:28px><button id=reload>\xe2\x86\xbb</button>"
-	"<td><input id=url></table>";
+	"<td><input id=url>"
+	"<td style=width:28px><button id=settings>\xe2\x9a\x99</button>"
+	"</table>";
 
 static const char find_html[] =
 	"<!DOCTYPE html><style>"
@@ -244,9 +246,18 @@ static void ui_open(void *data, const char *url)
 	spawn(url);
 }
 
+/* about:settings changed them: the zoom and the colours here */
+static void ui_settings(void *data)
+{
+	(void)data;
+	shell_zoom(sh, (float)shell_settings()->zoom / 100);
+	front_focus();
+	dirty |= D_ALL;
+}
+
 /* Downloads go to ~/Downloads, said on the status line (alert) */
 static const struct shell_ui ui = { ui_title, ui_address, ui_alert,
-	ui_open, NULL };
+	ui_open, NULL, ui_settings };
 
 /* Drawing */
 
@@ -721,6 +732,8 @@ static void click_chrome(int x, int y, int select)
 			shell_history(sh, 1);
 		else if (!strcmp(id, "reload"))
 			shell_reload(sh);
+		else if (!strcmp(id, "settings"))
+			shell_load(sh, "about:settings");
 		dirty |= D_PAGE;
 	} else if (ancestor(n, "input")) {
 		if (field != F_URL || !select)
@@ -856,8 +869,8 @@ void front_key(const char *k, const char *text, int mods)
 	    !strcmp(k, "0"))) {
 		float z = shell_get_zoom(sh);
 
-		shell_zoom(sh, *k == '0' ? 1 : *k == '-' ? z / 1.1f :
-			z * 1.1f);
+		shell_zoom(sh, *k == '0' ? (float)shell_settings()->zoom / 100 :
+			*k == '-' ? z / 1.1f : z * 1.1f);
 		dirty |= D_PAGE;
 		return;
 	}
@@ -1190,7 +1203,7 @@ int front_fd(void)
 
 void front_focus(void)
 {
-	int d = shell_system_dark();
+	int d = shell_settings_dark();
 
 	if (!d == !bars.dark)
 		return;
@@ -1214,7 +1227,7 @@ void front_load(void)
 
 int front_start(const char *name, int argc, char **argv, int *w, int *h)
 {
-	const char *out = NULL;
+	const char *out = NULL, *url = NULL;
 	int i, js = 1;
 
 	prog = name;
@@ -1232,7 +1245,7 @@ int front_start(const char *name, int argc, char **argv, int *w, int *h)
 				"[-o out.png] [URL]\n", prog);
 			return 2;
 		} else
-			start = argv[i];
+			url = argv[i];
 	}
 	if (*w < 100)
 		*w = 100;
@@ -1247,8 +1260,15 @@ int front_start(const char *name, int argc, char **argv, int *w, int *h)
 	chrome = soie_html_parse(chrome_html, strlen(chrome_html), NULL);
 	findbar = soie_html_parse(find_html, strlen(find_html), NULL);
 	if (out) {
+		/* a render for tests: the defaults, not the user's settings */
 		shell_resize(sh, *w, *h - BAR);
-		return shell_render_png(sh, start, out);
+		return shell_render_png(sh, url ? url : start, out);
+	}
+	{
+		const struct shell_settings *st = shell_settings();
+
+		start = url ? url : *st->home ? st->home : SHELL_HOME;
+		shell_zoom(sh, (float)st->zoom / 100);
 	}
 	return -1;
 }
