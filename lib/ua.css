@@ -123,6 +123,12 @@ input, textarea, select {
   background-color: Field; color: FieldText;
   border: 2px inset ButtonBorder; padding: 1px 2px;
 }
+/* the engine paints the box and the ring itself (forms.c), with the
+ * margins of Firefox's and Chrome's */
+input[type=checkbox i], input[type=radio i] {
+  background-color: initial; border: initial; padding: initial;
+  margin: 3px 3px 3px 4px;
+}
 button, input[type=button i], input[type=submit i], input[type=reset i] {
   background-color: ButtonFace; color: ButtonText;
   border: 2px outset ButtonBorder; padding: 1px 6px;

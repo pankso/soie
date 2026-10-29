@@ -52,7 +52,7 @@ void paint_control(struct canvas *c, const struct box *b)
 	const soie_node *n = b->node;
 	const struct style *st = b->style;
 	const char *type = soie_element_get_attr(n, "type"), *v;
-	unsigned char fg[4], gray[4] = { 117, 117, 117, 255 };
+	unsigned char fg[4];
 	struct fontm m;
 	struct buf text = { 0 };
 	float base, x = b->x, tw;
@@ -63,14 +63,42 @@ void paint_control(struct canvas *c, const struct box *b)
 	base = b->y + (b->h - m.ascent - m.descent) / 2 + m.ascent;
 	if (n->tag == TAG_INPUT && type && (ascii_ieq(type, "checkbox") ||
 					    ascii_ieq(type, "radio"))) {
+		/* the colours of Firefox's and Chrome's, not the text's:
+		 * a gray ring on white, the accent blue when checked */
+		static const unsigned char ring[4] = { 118, 118, 118, 255 },
+			white[4] = { 255, 255, 255, 255 },
+			accent[4] = { 0, 117, 255, 255 };
 		int checked = soie_element_get_attr(n, "checked") != NULL;
-		unsigned char white[4] = { 255, 255, 255, 255 };
-		float s = b->w < b->h ? b->w : b->h;
+		float s = b->w < b->h ? b->w : b->h, x0 = b->x, y0 = b->y;
 
-		fill_rect(c, b->x, b->y, s, s, fg);
-		fill_rect(c, b->x + 1, b->y + 1, s - 2, s - 2, white);
-		if (checked)
-			fill_rect(c, b->x + 3, b->y + 3, s - 6, s - 6, fg);
+		if (ascii_ieq(type, "radio")) {
+			fill_round(c, x0, y0, s, s, s / 2,
+				checked ? accent : ring);
+			fill_round(c, x0 + 1, y0 + 1, s - 2, s - 2,
+				(s - 2) / 2, white);
+			if (checked)
+				fill_round(c, x0 + s * 0.25f, y0 + s * 0.25f,
+					s * 0.5f, s * 0.5f, s * 0.25f, accent);
+			return;
+		}
+		if (!checked) {
+			fill_round(c, x0, y0, s, s, 2, ring);
+			fill_round(c, x0 + 1, y0 + 1, s - 2, s - 2, 1.5f,
+				white);
+		} else {
+			/* a tick, in fractions of the box */
+			static const float tick[12] = { .20f, .52f, .40f, .70f,
+				.78f, .28f, .88f, .40f, .40f, .88f, .10f, .62f };
+			float p[12];
+			int i;
+
+			for (i = 0; i < 12; i += 2) {
+				p[i] = x0 + tick[i] * s;
+				p[i + 1] = y0 + tick[i + 1] * s;
+			}
+			fill_round(c, x0, y0, s, s, 2, accent);
+			fill_polygon(c, p, 6, white);
+		}
 		return;
 	}
 	if (n->tag == TAG_SELECT) {
@@ -132,8 +160,12 @@ void paint_control(struct canvas *c, const struct box *b)
 	}
 	if ((!v || !*v) && !focused &&
 	    (v = soie_element_get_attr(n, "placeholder"))) {
+		/* the text's colour, faded as browsers do (Firefox 0.54) */
+		float a = c->alpha;
+
+		c->alpha *= 0.55f;
 		paint_text(c, st, v, strlen(v), x, base);
-		(void)gray;
+		c->alpha = a;
 		buf_free(&text);
 		return;
 	}

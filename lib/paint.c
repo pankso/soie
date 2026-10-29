@@ -303,6 +303,14 @@ static void fill_rrect(struct canvas *c, float x, float y, float w, float h,
 		}
 }
 
+void fill_round(struct canvas *c, float x, float y, float w, float h,
+	float r, const unsigned char *rgba)
+{
+	const float rr[4] = { r, r, r, r };
+
+	fill_rrect(c, x, y, w, h, rr, 0, 0, 0, 0, NULL, rgba);
+}
+
 static void style_rgba(const struct style *st, int prop, unsigned char *out)
 {
 	const struct color *col = st->v[prop].u.color;

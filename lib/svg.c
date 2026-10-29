@@ -271,6 +271,23 @@ static void poly_fill(struct canvas *c, struct poly *p, int evenodd,
 	free(xs);
 }
 
+void fill_polygon(struct canvas *c, const float *pts, int n,
+	const unsigned char *rgba)
+{
+	struct poly p;
+	int i;
+
+	memset(&p, 0, sizeof(p));
+	for (i = 0; i < n; i++) {
+		int k = (i + 1) % n;
+
+		poly_edge(&p, pts[2 * i] - c->ox, pts[2 * i + 1] - c->oy,
+			pts[2 * k] - c->ox, pts[2 * k + 1] - c->oy);
+	}
+	poly_fill(c, &p, 0, rgba, NULL);
+	free(p.e);
+}
+
 static void mul(struct mat *m, const struct mat *n)
 {
 	struct mat r;

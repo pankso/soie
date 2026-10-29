@@ -37,6 +37,13 @@ static inline int mask_at(const struct canvas *c, int x, int y)
 
 extern soie_node *paint_doc;
 
+/* The polygon of n points x, y (page coordinates), anti-aliased:
+ * marks of form controls (svg.c) */
+void fill_polygon(struct canvas *c, const float *pts, int n,
+	const unsigned char *rgba);
+/* A rectangle with round corners of radius r (r = w / 2: a disc) */
+void fill_round(struct canvas *c, float x, float y, float w, float h,
+	float r, const unsigned char *rgba);
 void fill_rect(struct canvas *c, float x, float y, float w, float h,
 	const unsigned char *rgba);
 void paint_replaced(struct canvas *c, const struct box *b);
