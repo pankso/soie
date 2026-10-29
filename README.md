@@ -1,6 +1,6 @@
 # Soie
 
-A lightweight HTML/CSS rendering engine in C99, with a small
+A lightweight HTML/CSS rendering engine in C99 with a small
 reference browser. No toolkit, no JavaScript in the core, built to
 render modern pages on old machines. See `doc/DECISIONS.md` for what
 Soie is and is not, and how extensions plug in.
@@ -10,7 +10,7 @@ Status: version 0.1.1 (October 2026). Extensions
 (QuickJS) and audio/video (FFmpeg, ALSA, Media Source Extensions: YouTube plays). `browser/xsoie` browses the
 web (HTTPS, forms, history, cookies, scripts, video). The HTML parser follows the WHATWG algorithm and passes the
 html5lib tree-construction tests; the CSS parser, selectors, cascade and computed values pass css-parsing-tests,
-including all of CSS Color 4; block and inline layout work, with a
+including all of CSS Color 4; block and inline layout work with a
 FreeType/HarfBuzz text (phase 4) and tables; flexbox and grid.
 
 ## Build
@@ -19,7 +19,7 @@ FreeType/HarfBuzz text (phase 4) and tables; flexbox and grid.
     make check          # unit tests and the local corpus, no network
     make check-html5lib # fetches the html5lib corpus, runs it
     make check-css      # fetches css-parsing-tests, runs it (Python 3)
-    make asan           # the tests under AddressSanitizer (gcc-83), in asan-build/
+    make asan           # the tests under AddressSanitizer (gcc-83) in asan-build/
     make asan-sites     # the same, and real sites rendered whole (network)
     make install PREFIX=/usr DESTDIR=...
 
@@ -30,7 +30,7 @@ Extensions are modules in `ext/`, installed in `$(PREFIX)/lib/soie/ext`:
 `cookies.so` and `block.so` need nothing, `webp.so` is built when
 pkg-config finds libwebp, `media.so` when it finds FFmpeg and ALSA,
 `script.so` (JavaScript) when quickjs-dev is installed (built with
--fPIC), or from the QuickJS sources:
+-fPIC) or from the QuickJS sources:
 `make QUICKJS_SRC=/path/to/quickjs-2026-06-04`.
 `make EXTS="ext/cookies.so"` picks them. `make check-js` tests the
 script extension.
@@ -45,7 +45,7 @@ script extension.
     tools/soie-render -l -w 800 page.html # box tree and geometry
     tools/soie-render -o page.png -a page.html # render the whole page
 
-The browser: `browser/xsoie [URL]`, or `browser/xsoie -o out.png URL`
+The browser: `browser/xsoie [URL]` or `browser/xsoie -o out.png URL`
 to render a page without a display. It also needs Xlib, GnuTLS and
 zlib. Its shell (`shell/`) has no toolkit; what its fronts
 share (bars, keys, repainting only what changed) is `browser/front.c`,
