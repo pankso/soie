@@ -32,6 +32,7 @@ static void usage(void)
 	      "  -D          prefers-color-scheme: dark\n"
 	      "  -S          stub font (0.5em per character), as the tests\n"
 	      "  -b URL      base URL (default: the file's file:// URL)\n"
+	      "  -r DIR      document root, for tests: file:///P reads DIR/P\n"
 	      "  -j          run the page's scripts (and timers, 2 s at most)\n"
 	      "  -T MS       the scripts' time, in milliseconds (2000)\n"
 	      "  -x MODULE   load an extension module (.so), may repeat\n"
@@ -90,15 +91,27 @@ static char *read_all(const char *path, size_t *len)
 	return buf;
 }
 
-/* Fetch callback: local files only (file:// URLs). */
+/* Document root (-r), for test suites with root-absolute URLs. */
+static const char *docroot;
+
+/* Fetch callback: local files only (file:// URLs). With a document
+ * root, file:///P reads DIR/P, without the query or fragment. */
 static int fetch(void *data, const char *url, char **buf, size_t *len)
 {
+	char path[8192];
 	FILE *f;
 
 	(void)data;
 	if (strncmp(url, "file://", 7))
 		return -1;
-	f = fopen(url + 7, "rb");
+	if (docroot) {
+		snprintf(path, sizeof(path), "%s%.*s", docroot,
+			(int)strcspn(url + 7, "?#"), url + 7);
+		if (strstr(path, "/../"))
+			return -1;
+		f = fopen(path, "rb");
+	} else
+		f = fopen(url + 7, "rb");
 	if (!f)
 		return -1;
 	*buf = read_file(f, len);
@@ -261,6 +274,8 @@ int main(int argc, char **argv)
 			soie_fonts_stub(1);
 		else if (!strcmp(argv[i], "-b") && i + 1 < argc)
 			base = argv[++i];
+		else if (!strcmp(argv[i], "-r") && i + 1 < argc)
+			docroot = argv[++i];
 		else if (!strcmp(argv[i], "-T") && i + 1 < argc)
 			script_ms = atoi(argv[++i]);
 		else if (!strcmp(argv[i], "-j"))

@@ -1,0 +1,56 @@
+WPT layout reftests
+===================
+
+A fixed subset of the Web Platform Tests reftests, to give a
+reproducible layout conformance number: 100 from css/css-flexbox and
+100 from css/css-grid, at a pinned WPT commit.
+
+  reftests.list  the subset, one test and its reference(s) per line;
+                 the WPT commit and the selection rule at the top
+  mklist.sh      makes reftests.list from a WPT checkout (rules in its
+                 header): .html reftests with rel="match" only, no
+                 rel="mismatch", no reftest-wait, no print/paged, not
+                 css-grid/grid-lanes (Grid Level 3 draft, masonry);
+                 then an even spread over the sorted eligible tests
+  run.sh         renders each test and reference with tools/soie-render
+                 at 800x600, compares pixels, prints PASS/FAIL per test
+                 and a summary per directory
+
+Fetch the pinned tree (about 70 MB, no network needed afterwards):
+
+  git clone --depth 1 --filter=blob:none --sparse \
+      https://github.com/web-platform-tests/wpt.git wpt
+  cd wpt
+  git fetch --depth 1 origin dee08ed764d2df968e3d1bf9d8dda1b485b01a79
+  git checkout dee08ed764d2df968e3d1bf9d8dda1b485b01a79
+  git sparse-checkout set css/css-flexbox css/css-grid css/support \
+      css/reference fonts resources images
+
+Run (after make, from the Soie tree):
+
+  tests/wpt/run.sh /path/to/wpt
+  tests/wpt/run.sh -k /tmp/wpt-out /path/to/wpt   # keep PNGs and diffs
+
+The WPT tree is only read: pages, style sheets, images and fonts. The
+only code run is the pages' own scripts, inside Soie (-j, 2 s at most).
+
+How it compares: a test passes when it matches all its references with
+no differing pixel (compare -metric AE), or within the ranges of its
+<meta name="fuzzy"> (max difference per channel and number of pixels,
+as wptrunner reads them; keyed metas apply to their reference only,
+fuzzy metas in reference files are ignored). Root-absolute URLs such
+as /fonts/ahem.css work through soie-render's test-only option -r DIR:
+each page is loaded with the base file:///<its path in the tree> and
+file:///P is read from DIR/P. Ahem is a plain @font-face.
+
+Last result (WPT dee08ed764d2, Soie tip of 2026-10-30, 36 s):
+
+  css/css-flexbox   44/100 pass   44.0 %
+  css/css-grid      23/100 pass   23.0 %
+
+Main failure groups then: abspos static position and positioned items
+in grid, self and baseline alignment (grid and flex), orthogonal and
+vertical writing modes, subgrid, aspect-ratio and replaced items,
+flex-basis 0 with min-width auto, flex-wrap: balance; and about ten
+tests off by one row or column of partly covered pixels (Soie paints
+fractional edges anti-aliased, browsers snap them to device pixels).
