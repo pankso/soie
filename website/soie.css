@@ -50,6 +50,21 @@ html[data-theme="dark"] {
 	line-height: 1.6;
 	margin-bottom: var(--space-lg);
 }
+.lead p.say {
+	color: #95a5a6;
+	font-size: var(--font-size-base);
+	margin-bottom: var(--space-md);
+}
+.lead p.say {
+	color: #95a5a6;
+	font-size: var(--font-size-base);
+	margin-bottom: var(--space-md);
+}
+.lead p.say {
+	color: #95a5a6;
+	font-size: var(--font-size-base);
+	margin-bottom: var(--space-md);
+}
 .lead .hero-buttons { justify-content: flex-start; }
 .lead .btn-secondary {
 	background: transparent;
