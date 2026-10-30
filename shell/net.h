@@ -47,6 +47,9 @@ struct response {
  * the network. A body without a Content-Type header is sent as a
  * urlencoded form. */
 int net_fetch(const soie_request *req, struct response *r);
+/* Open a connection to url's server and leave it in the pool for the
+ * requests to come, unless n are there already. */
+int net_preconnect(const char *url, int n);
 /* The same as an extension request function (data unused). */
 int net_request(void *data, const soie_request *req, soie_response *res);
 /* Content blocking (the net extensions' filter) on or off, on at

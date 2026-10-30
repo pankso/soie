@@ -19,6 +19,8 @@
 static pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t cond = PTHREAD_COND_INITIALIZER;
 static struct job *urgent, *normal, *done;	/* FIFO, FIFO, any order */
+
+#define K_AHEAD (-1)	/* a connection opened ahead, no fetch; flags: how many */
 static int pipefd[2] = { -1, -1 };
 
 static void append(struct job **list, struct job *j)
@@ -48,6 +50,11 @@ static void *worker(void *arg)
 			normal = j->next;
 		}
 		pthread_mutex_unlock(&lock);
+		if (j->kind == K_AHEAD) {
+			net_preconnect(j->url, j->flags);
+			job_free(j);
+			continue;
+		}
 		memset(&rq, 0, sizeof(rq));
 		rq.url = j->url;
 		rq.body = j->post;
@@ -126,6 +133,14 @@ struct job *fetch_done(void)
 		done = j->next;
 	pthread_mutex_unlock(&lock);
 	return j;
+}
+
+void fetch_preconnect(const char *url, int n, unsigned gen)
+{
+	int i;
+
+	for (i = 0; i < n; i++)
+		fetch_add(url, NULL, NULL, K_AHEAD, gen, 1, n, NULL);
 }
 
 /* A page left: its jobs not started yet go (downloads stay), the next

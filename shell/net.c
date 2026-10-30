@@ -610,14 +610,40 @@ static int pool_take(const char *key, struct conn *c)
 	pthread_mutex_unlock(&pool_lock);
 	if (found < 0)
 		return -1;
-	/* readable while idle: closed by the server, or garbage */
+	/* readable while idle: closed by the server, or garbage; but a
+	 * TLS 1.3 server sends its session tickets once the handshake is
+	 * over, and a connection opened ahead (net_preconnect()) has them
+	 * waiting: read, they leave nothing to the application */
 	p.fd = c->fd;
 	p.events = POLLIN;
-	if (poll(&p, 1, 0) != 0) {
-		conn_close(c);
-		return -1;
+	while (poll(&p, 1, 0) != 0) {
+		int flags = fcntl(c->fd, F_GETFL);
+		ssize_t k = 0;
+		char b;
+
+		if (c->tls) {
+			fcntl(c->fd, F_SETFL, flags | O_NONBLOCK);
+			k = gnutls_record_recv(c->tls, &b, 1);
+			fcntl(c->fd, F_SETFL, flags);
+		}
+		if (k != GNUTLS_E_AGAIN) {
+			conn_close(c);
+			return -1;
+		}
 	}
 	return 0;
+}
+
+/* Idle connections to key in the pool */
+static int pool_count(const char *key)
+{
+	int i, n = 0;
+
+	pthread_mutex_lock(&pool_lock);
+	for (i = 0; i < npool; i++)
+		n += !strcmp(pool[i].key, key);
+	pthread_mutex_unlock(&pool_lock);
+	return n;
 }
 
 static void pool_put(const char *key, struct conn *c)
@@ -637,6 +663,30 @@ static void pool_put(const char *key, struct conn *c)
 	pool[npool].since = time(NULL);
 	npool++;
 	pthread_mutex_unlock(&pool_lock);
+}
+
+int net_preconnect(const char *url, int n)
+{
+	struct conn c = { -1, NULL };
+	struct response r;
+	struct url u;
+	char key[300];
+
+	if (parse_url(url, &u))
+		return -1;
+	snprintf(key, sizeof(key), "%s://%s:%s", u.scheme, u.host, u.port);
+	if (pool_count(key) >= n)
+		return 0;
+	memset(&r, 0, sizeof(r));
+	c.fd = dial(u.host, u.port, &r);
+	if (c.fd < 0)
+		return -1;
+	if (!strcmp(u.scheme, "https") && tls_start(&c, u.host, &r)) {
+		conn_close(&c);
+		return -1;
+	}
+	pool_put(key, &c);
+	return 0;
 }
 
 static int dechunk(struct response *r, const char *s, size_t n)

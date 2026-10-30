@@ -47,6 +47,7 @@ static const char home_html[] =
  * the page's style sheets and scripts first, then the rest.
  */
 enum { K_DOC, K_STYLE, K_SCRIPT, K_IMAGE };	/* job kinds */
+#define PRECONNECT 3	/* connections opened ahead to a page's server */
 enum { R_PENDING, R_DONE, R_FAILED, R_GIVEN };	/* GIVEN: to the engine */
 struct res {
 	char *url;
@@ -1181,6 +1182,8 @@ static void load(struct shell *s, const char *url, const char *post, int push)
 		s->page_dl = d;
 		fetch_add(url, post, NULL, K_DOC, s->page.gen, 1, s->private,
 			d);
+		/* while the page comes, connections for its resources */
+		fetch_preconnect(url, PRECONNECT, s->page.gen);
 	}
 	s->page.loading = L_DOC;
 	s->ui.address(s->ui_data, url);

@@ -594,6 +594,19 @@ reversed, edit the entry and say why; do not leave stale rules here.
   Saving a TCP and TLS handshake per resource: Le Monde 9.7 to 3.8 s,
   Wikipedia 2.4 to 1.7, GitHub 4.2 to 2.9 (without scripts); renders
   identical.
+- Connections opened ahead (October 2026): with a page's request go
+  three jobs that open connections to its server and leave them in
+  the pool (net_preconnect(), none when three wait there already), so
+  that its sheets, scripts and images do not each pay a TCP and TLS
+  handshake once the page is in. A TLS 1.3 server sends its session
+  tickets after the handshake: an idle connection with only those to
+  read is kept, not taken for one the server dropped. Measured on live
+  sites, 200 ms from the servers, until all resources are in: Hacker
+  News 1.9 to 1.2 s, Wikipedia 2.3 to 1.5, www.slitaz.org 0.27 to
+  0.13. Only the page's own server: what comes from elsewhere (a CDN)
+  gains nothing. The cost is a handshake per connection never used,
+  felt on the slowest processors; three is what a page of one server
+  needs (its connection, plus three for the first resources).
 - Forms: text-like inputs, password, textarea, checkbox, radio,
   select (a click cycles the options), submit buttons and Enter;
   GET and POST in application/x-www-form-urlencoded. No file upload,

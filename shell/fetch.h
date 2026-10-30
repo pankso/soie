@@ -31,6 +31,9 @@ int fetch_start(int threads);
 struct job *fetch_add(const char *url, const char *post,
 	const char *first_party, int kind, unsigned gen, int urgent,
 	int flags, struct download *dl);
+/* Open n connections to url's server ahead, for the resources of the
+ * page it is loading (page generation gen): urgent, not reported. */
+void fetch_preconnect(const char *url, int n, unsigned gen);
 /* A finished job, or NULL when there is none yet. */
 struct job *fetch_done(void);
 void job_free(struct job *j);
