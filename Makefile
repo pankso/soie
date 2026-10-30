@@ -282,6 +282,9 @@ PERTURB = MALLOC_PERTURB_=165
 
 # Our own corpus, no network needed.
 check: tests/unit tests/html5lib tests/painttest tests/exttest $(EXTS)
+	@v=$$(awk '/define SOIE_VERSION_/ { printf "%s%s", s, $$3; s = "." }' \
+		lib/soie/soie.h); [ "$$v" = "$(VERSION)" ] || \
+		{ echo "lib/soie/soie.h says $$v, the Makefile $(VERSION)"; exit 1; }
 	$(PERTURB) ./tests/unit
 	$(PERTURB) ./tests/exttest
 	$(PERTURB) ./tests/painttest tests/paint/*.html
