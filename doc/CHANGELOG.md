@@ -1,0 +1,43 @@
+# Changelog
+
+All notable changes to Soie. The format follows
+[Keep a Changelog](https://keepachangelog.com/en/1.1.0/), versions
+follow [Semantic Versioning](https://semver.org/). The reasons behind
+each change are in [DECISIONS.md](DECISIONS.md).
+
+## [0.1.1] - 2026-10-29
+
+### Added
+- about:settings, the settings page of xsoie and wsoie, kept in
+  `~/.config/soie/settings`.
+- The fronts follow the desktop's dark or light theme.
+- The logo, an S of three silk threads: icons, window icon, favicon.
+
+### Changed
+- Checkboxes and radio buttons are drawn as browsers draw them,
+  placeholders are faded.
+- SVG curves are cut finer when they are large on screen.
+
+### Fixed
+- history.pushState() and replaceState() keep the page's origin: in
+  0.1.0 a page could take another site's address (security).
+- Flex column items are measured at their laid out width, max-width
+  included.
+- The auto width of a replaced box with a height follows its ratio.
+
+## [0.1.0] - 2026-10-28
+
+### Added
+- First public release.
+- libsoie: HTML parsed as the WHATWG says (html5lib tree tests), the
+  CSS cascade (css-parsing-tests), blocks, inline text, tables,
+  flexbox, grid and SVG, painted with FreeType and HarfBuzz;
+  incremental restyle and layout.
+- Extensions: cookies, content blocking, WebP, JavaScript with
+  QuickJS (DOM, fetch, workers), audio and video with FFmpeg and
+  Media Source Extensions.
+- Browsers: xsoie (X11), wsoie (Wayland), SoieView (GTK 3 widget).
+- soie-render, a headless renderer for tests and screenshots.
+
+[0.1.1]: https://hg.slitaz.org/soie/rev/0.1.1
+[0.1.0]: https://hg.slitaz.org/soie/rev/0.1.0
