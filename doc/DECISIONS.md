@@ -1879,6 +1879,16 @@ run again):
   servers, not on a forge. The git history (106 commits, from
   2026-10-22) was converted with `hg convert`, dates and messages as
   they were.
+- A read-only git mirror on GitHub (October 2026), for those who clone
+  with git: tools/git-mirror.sh rebuilds it from the Mercurial history
+  with git fast-import (no hg-git, no converter to install), the same
+  commits each time, so a push only adds. hg.slitaz.org stays the
+  repository, maille.slitaz.org the place for bugs; the mirror has no
+  issues. Its pull requests are welcome all the same:
+  tools/pr-import.sh applies one (gh pr diff --patch, hg import) for
+  review, commits it with its authors once approved, and closes it
+  with links to the Mercurial revisions. Not Codeberg: its terms
+  refuse code written by language models, which Soie is.
 - 0.1.1 (2026-10-29): history.pushState() and replaceState() keep
   the page's origin (a 0.1.0 page could take another's address, see
   the security audits); about:settings for xsoie and wsoie; the
