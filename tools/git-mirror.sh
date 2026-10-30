@@ -13,7 +13,8 @@
 # Usage: tools/git-mirror.sh [REMOTE_URL...]
 #   Without a URL it only builds the git repository ($GIT_MIRROR, by
 #   default ~/.cache/soie/git-mirror). Run it after each push of a tag:
-#   tools/git-mirror.sh git@github.com:pankso/soie.git
+#   tools/git-mirror.sh https://github.com/pankso/soie.git
+#   An https URL is pushed with gh's login when gh is there.
 #
 
 HG=$(cd "$(dirname "$0")/.." && pwd)
@@ -91,5 +92,12 @@ echo "$(git --git-dir="$GIT" rev-list --count main) commits," \
 	"$(git --git-dir="$GIT" tag | wc -l) tags in $GIT"
 
 for remote in "$@"; do
-	git --git-dir="$GIT" push "$remote" main --tags || exit 1
+	if [ "${remote#https://github.com/}" != "$remote" ] &&
+	    command -v gh >/dev/null; then
+		git --git-dir="$GIT" -c credential.helper= \
+			-c credential.helper='!gh auth git-credential' \
+			push "$remote" main --tags
+	else
+		git --git-dir="$GIT" push "$remote" main --tags
+	fi || exit 1
 done
