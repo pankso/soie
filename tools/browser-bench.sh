@@ -4,27 +4,31 @@
 # the same way: each browser opens the page in a window on its own
 # Xvfb, and its whole process tree is sampled in /proc.
 #
-#   settle  seconds until the page is done: the tree's CPU stayed under
-#           5% for 2 s (the time of its last activity is reported)
+#   settle  seconds until the page is done: the last change of the page
+#           on screen (the window less its top 100 pixels) before 2 s
+#           without any, once the tree's CPU stayed under 5% for 2 s
+#   cpu     CPU seconds the tree used until settle
+#   peak    largest memory, MB, PSS (shared pages counted once)
+#   end     memory once settled, MB, PSS
 #
 # By default each run starts the browser on the page (start-up
 # included). -W measures a browser already open: started on an empty
 # page, left to calm down, then sent to the page (Firefox through its
 # remote command, the others by typing the address), and only what
 # follows is counted (settle from then, cpu above the idle browser).
-#   cpu     CPU seconds the tree used
-#   peak    largest memory, MB, PSS (shared pages counted once)
-#   end     memory once settled, MB, PSS
+# Firefox runs on a copy of a profile made once per bench and started
+# once, so that its first-run work is not counted.
 #
 # Usage: tools/browser-bench.sh [-n runs] [-b "soie dillo firefox"]
 #        [-s DIR] [-W] URL...
 # -s serves DIR on http://127.0.0.1:8077/ while measuring: copies made
 # by tools/bench-mirror.py, for Dillo (no HTTPS) and without network
-# noise. FIREFOX=/path/to/firefox picks a Firefox not in the PATH.
-# Runs alternate browsers, medians are reported.
+# noise. FIREFOX=/path/to/firefox picks a Firefox not in the PATH,
+# TRACE=1 prints every sample on stderr. Runs alternate browsers,
+# medians are reported.
 #
 
-RUNS=3
+RUNS=5
 BROWSERS="soie dillo firefox"
 W=1024
 H=768
@@ -39,7 +43,7 @@ while [ $# -gt 0 ]; do
 	-b) BROWSERS=$2; shift 2 ;;
 	-s) SERVE=$2; shift 2 ;;
 	-W) WARM=1; shift ;;
-	-h|--help) sed -n '2,29p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+	-h|--help) sed -n '2,28p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
 	*) break ;;
 	esac
 done
@@ -93,7 +97,44 @@ firefox_profile() {
 	user_pref("termsofuse.acceptedDate", "1735689600000");
 	user_pref("browser.termsofuse.prefMigrationCheck", true);
 	user_pref("trailhead.firstrun.didSeeAboutWelcome", true);
+	user_pref("browser.startup.page", 0);
+	user_pref("browser.startup.homepage", "about:blank");
+	user_pref("startup.homepage_welcome_url", "");
+	user_pref("startup.homepage_welcome_url.additional", "");
+	user_pref("browser.startup.upgradeDialog.enabled", false);
+	user_pref("browser.messaging-system.whatsNewPanel.enabled", false);
+	user_pref("toolkit.telemetry.unified", false);
+	user_pref("toolkit.telemetry.archive.enabled", false);
+	user_pref("browser.ping-centre.telemetry", false);
+	user_pref("app.normandy.enabled", false);
+	user_pref("app.shield.optoutstudies.enabled", false);
+	user_pref("network.captive-portal-service.enabled", false);
+	user_pref("network.connectivity-service.enabled", false);
+	user_pref("identity.fxaccounts.enabled", false);
+	user_pref("services.sync.engine.addons", false);
+	user_pref("extensions.getAddons.cache.enabled", false);
+	user_pref("browser.discovery.enabled", false);
+	user_pref("browser.newtabpage.activity-stream.feeds.telemetry", false);
+	user_pref("browser.newtabpage.activity-stream.telemetry", false);
+	user_pref("browser.link.open_newwindow", 1);
+	user_pref("browser.link.open_newwindow.override.external", 1);
+	user_pref("widget.gtk.overlay-scrollbars.enabled", false);
 	EOF
+}
+
+# The profile every Firefox run copies: made and started once, left
+# to finish its first-run work (caches, add-on registry), then closed.
+firefox_base() {
+	[ -d "$TMP/ffbase" ] && return
+	firefox_profile "$TMP/ffbase"
+	"$FIREFOX" --no-remote --profile "$TMP/ffbase" --width $W \
+		--height $H about:blank >/dev/null 2>&1 &
+	fpid=$!
+	watch "$fpid" "$(now_ms)" 0 >/dev/null
+	sleep 5
+	kill "$fpid" 2>/dev/null
+	while kill -0 "$fpid" 2>/dev/null; do usleep 250000; done
+	rm -f "$TMP/ffbase/lock" "$TMP/ffbase/.parentlock"
 }
 
 # ms since boot (busybox date has no %N)
@@ -113,7 +154,7 @@ start() {
 	dillo)
 		HOME=$dir dillo -g ${W}x$H $url ;;
 	firefox)
-		firefox_profile "$dir/profile"
+		cp -a "$TMP/ffbase" "$dir/profile"
 		# -W sends it pages later: remotely reachable
 		if [ -n "$WARM" ]; then
 			set -- --new-instance
@@ -192,16 +233,23 @@ sample() {
 	}'
 }
 
-# Measure one load: prints "settle cpu peak end"
-# Sample the tree under pid until it calms down; prints
-# "last_busy_ms ticks peak_kb pss_kb pids..." (times from t0, CPU
-# above base ticks).
+# A fingerprint of the page area of the screen (the window less its
+# top 100 pixels: tabs, address bar and throbbers are left out)
+shot() {
+	import -window root -crop ${W}x$((H - 100))+0+100 rgb:- 2>/dev/null |
+		md5sum
+}
+
+# Sample the tree under pid and the screen until both calm down;
+# prints "last_change_ms ticks peak_kb pss_kb pids..." (times from t0,
+# CPU above base ticks, counted until the last change on screen).
 watch() {
 	pid=$1 t0=$2 base=$3
 	last_busy=0 prev=$base peak=0 pss=0 pids=$pid
-	calm_ticks=$((HZ * CALM / 100 / 4))	# per 0.25 s sample
+	last_change=0 change_ticks=$base pic=$(shot) now=0
 	while :; do
-		usleep 250000
+		usleep 100000
+		was=$now
 		now=$(( $(now_ms) - t0 ))
 		set -- $(sample "$pid")
 		[ $# -ge 3 ] || break		# the browser exited
@@ -209,13 +257,24 @@ watch() {
 		shift 2
 		pids="$*"
 		[ "$pss" -gt "$peak" ] && peak=$pss
-		[ $((ticks - prev)) -gt "$calm_ticks" ] && last_busy=$now
+		dt=$((ticks - prev))
+		# busy: above CALM percent of one CPU since the last sample
+		[ $((dt * 100 * 1000)) -gt $((CALM * HZ * (now - was))) ] &&
+			last_busy=$now
 		prev=$ticks
+		p=$(shot)
+		if [ "$p" != "$pic" ]; then
+			pic=$p
+			last_change=$now
+			change_ticks=$ticks
+		fi
+		[ -n "$TRACE" ] && echo "trace $now cpu $dt mem $((pss / 1024)) procs $# screen $last_change" >&2
 		[ "$now" -gt $((last_busy + QUIET * 1000)) ] &&
+			[ "$now" -gt $((last_change + QUIET * 1000)) ] &&
 			[ "$now" -gt 1500 ] && break
 		[ "$now" -gt $((MAXWAIT * 1000)) ] && break
 	done
-	echo "$last_busy $((prev - base)) $peak $pss $pids"
+	echo "$last_change $((change_ticks - base)) $peak $pss $pids"
 }
 
 # Measure one load: prints "settle cpu peak end"
@@ -230,6 +289,7 @@ measure() {
 		base=$(sample "$pid" | cut -d' ' -f1)
 		t0=$(now_ms)
 		go "$b" "$url"
+		[ -n "$TRACE" ] && echo "trace go took $(( $(now_ms) - t0 ))" >&2
 		set -- $(watch "$pid" "$t0" "${base:-0}")
 	else
 		pid=$(start "$b" "$url")
@@ -254,6 +314,7 @@ median() {
 		print NR % 2 ? v[(NR + 1) / 2] : (v[NR / 2] + v[NR / 2 + 1]) / 2 }'
 }
 
+case " $BROWSERS " in *" firefox "*) firefox_base ;; esac
 printf '%-36s %-8s %8s %8s %8s %8s\n' page browser settle cpu peak end
 for url in "$@"; do
 	for b in $BROWSERS; do
