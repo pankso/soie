@@ -46,6 +46,9 @@ struct gitem {
 	struct box *b;
 	int r0, r1, c0, c1;	/* lines, 0-based, end exclusive */
 	int rdef, cdef;		/* definite position in that axis */
+	int bl;			/* baseline aligned in its row: 1 first,
+				 * 2 last */
+	float asc;		/* its margin box top to that baseline */
 };
 
 static struct ucontext unit_ctx(const struct style *st)
@@ -645,6 +648,65 @@ static int align_kw(const char *s, int def)
 	return 'f';
 }
 
+/* Line i of t where the grid starts at o: the start edge of track i
+ * (end 0), the end edge of track i - 1 (end 1); auto (-1) or a line
+ * past the grid is the padding edge pad */
+static float line_at(const struct tracks *t, int i, int end, float g,
+	float pad, float o)
+{
+	if (i < 0 || i > t->n)
+		return pad;
+	if (end && i > 0)
+		return o + track_pos(t, i - 1, g) + t->t[i - 1].base;
+	if (i == t->n)
+		return i ? o + track_pos(t, i - 1, g) + t->t[i - 1].base : o;
+	return o + track_pos(t, i, g);
+}
+
+/* An absolute child's self alignment in its static position
+ * rectangle: 'f', 'c' or 'e' (normal and stretch are start, the last
+ * baseline end) */
+static int abs_align(const char *self, const char *items)
+{
+	const char *s = self && strcmp(self, "auto") ? self : items;
+	int a;
+
+	if (s && strstr(s, "last"))
+		return 'e';
+	a = align_kw(s, 'f');
+	return a == 'c' || a == 'e' ? a : 'f';
+}
+
+/*
+ * An item of one row aligned by its baseline, laid out at the origin,
+ * outer height h: its bl and asc (the bottom of its border box when it
+ * has no baseline), and its row's la: the largest ascent of the first
+ * baseline group, the largest descent of the last one, and the largest
+ * part of their items on the other side.
+ */
+static void baseline_item(struct gitem *it, const struct style *gst,
+	float h, float *la)
+{
+	struct box *b = it->b;
+	const char *s = b->style->v[P_ALIGN_SELF].u.str;
+	float y, a;
+
+	if (!s || !strcmp(s, "auto"))
+		s = gst->v[P_ALIGN_ITEMS].u.str;
+	it->bl = 0;
+	if (!s || !strstr(s, "baseline"))
+		return;
+	it->bl = strstr(s, "last") ? 2 : 1;
+	y = box_baseline(b, it->bl == 2);
+	it->asc = y > -1e29f ? b->m[0] + b->b[0] + b->p[0] + y - b->y :
+		h - b->m[2];
+	a = it->bl == 2 ? h - it->asc : it->asc;
+	if (a > la[it->bl - 1])
+		la[it->bl - 1] = a;
+	if (h - a > la[it->bl + 1])
+		la[it->bl + 1] = h - a;
+}
+
 /* justify-content, align-content: the free space before the first
  * track and between two, n tracks */
 static void distribute(const char *s, float free, int n, float *off,
@@ -664,9 +726,38 @@ static float gapv(const struct style *st, int prop, float ref)
 	return st->v[prop].kw ? 0 : len_val(&st->v[prop], ref);
 }
 
+/* An absolute child's lines, -1 for auto (the padding edge): a span
+ * against auto is auto too (CSS Grid 1, 9.1) */
+static void abs_place(struct box *c, struct tracks *cols,
+	struct tracks *rows, struct area *areas, int nareas,
+	struct gitem **abs, int *nabs)
+{
+	const struct style *st = c->style;
+	struct gitem *it;
+	int s1, s2, a, b;
+
+	*abs = xrealloc(*abs, (size_t)(*nabs + 1) * sizeof(**abs));
+	it = &(*abs)[(*nabs)++];
+	memset(it, 0, sizeof(*it));
+	it->b = c;
+	a = line_of(st->v[P_GRID_COLUMN_START].u.str, cols, areas, nareas, 0,
+		0, &s1);
+	b = line_of(st->v[P_GRID_COLUMN_END].u.str, cols, areas, nareas, 1,
+		0, &s2);
+	it->c0 = a;
+	it->c1 = b >= 0 ? b : a >= 0 && s2 ? a + s2 : -1;
+	a = line_of(st->v[P_GRID_ROW_START].u.str, rows, areas, nareas, 0,
+		1, &s1);
+	b = line_of(st->v[P_GRID_ROW_END].u.str, rows, areas, nareas, 1,
+		1, &s2);
+	it->r0 = a;
+	it->r1 = b >= 0 ? b : a >= 0 && s2 ? a + s2 : -1;
+}
+
 /* Shared by layout and intrinsic sizes. */
 static int place(struct box *gb, float W, float H, struct tracks *cols,
-	struct tracks *rows, struct gitem **out, float cg, float rg)
+	struct tracks *rows, struct gitem **out, float cg, float rg,
+	struct gitem **abs, int *nabs)
 {
 	const struct style *st = gb->style;
 	struct area areas[64];
@@ -691,6 +782,9 @@ static int place(struct box *gb, float W, float H, struct tracks *cols,
 		if (c->flags & BF_ABS) {
 			box_edges(c, W);
 			abs_static(c, gb->x, gb->y);
+			if (abs)
+				abs_place(c, cols, rows, areas, nareas, abs,
+					nabs);
 			continue;
 		}
 		v = xrealloc(v, (size_t)(n + 1) * sizeof(*v));
@@ -840,9 +934,13 @@ float layout_grid(struct box *gb, float cbh)
 	float W = gb->w, H = box_spec_h(gb, P_HEIGHT, cbh);
 	float cg = gapv(st, P_COLUMN_GAP, W), rg = gapv(st, P_ROW_GAP, 0);
 	float total, xoff = 0, yoff = 0, xs = 0, ys = 0;
-	int n, i;
+	struct gitem *av = NULL;
+	float *rasc;		/* per row as baseline_item() says */
+	int n, i, nav = 0;
 
-	n = place(gb, W, H, &cols, &rows, &v, cg, rg);
+	n = place(gb, W, H, &cols, &rows, &v, cg, rg, &av, &nav);
+	rasc = xmalloc(((size_t)rows.n * 4 + 4) * sizeof(*rasc));
+	memset(rasc, 0, ((size_t)rows.n * 4 + 4) * sizeof(*rasc));
 	column_contributions(&cols, v, n);
 	size_tracks(&cols, W, cg);
 	/* items at their column widths give the row contributions */
@@ -864,11 +962,23 @@ float layout_grid(struct box *gb, float cbh)
 		h = b->h + b->m[0] + b->m[2] + b->b[0] + b->b[2] + b->p[0] +
 			b->p[2];
 		if (v[i].r1 - v[i].r0 == 1) {
+			baseline_item(&v[i], st, h, rasc + 4 * v[i].r0);
 			if (h > rows.t[v[i].r0].cmin)
 				rows.t[v[i].r0].cmin = h;
 			if (h > rows.t[v[i].r0].cmax)
 				rows.t[v[i].r0].cmax = h;
 		}
+	}
+	for (i = 0; i < rows.n; i++) {
+		/* a row holds its baseline groups whole */
+		const float *la = rasc + 4 * i;
+		float g = la[0] + la[2] > la[1] + la[3] ? la[0] + la[2] :
+			la[1] + la[3];
+
+		if (g > rows.t[i].cmin)
+			rows.t[i].cmin = g;
+		if (g > rows.t[i].cmax)
+			rows.t[i].cmax = g;
 	}
 	size_tracks(&rows, H, rg);
 	/* content alignment of the whole grid */
@@ -921,7 +1031,12 @@ float layout_grid(struct box *gb, float cbh)
 			else if (jal == 'e')
 				dx = aw - b->w - ew;
 		}
-		if (aal == 's' && is_auto(b->style, P_HEIGHT) &&
+		if (v[i].bl) {
+			const float *la = rasc + 4 * v[i].r0;
+
+			dy = v[i].bl == 1 ? la[0] - v[i].asc :
+				ah - la[1] - v[i].asc;
+		} else if (aal == 's' && is_auto(b->style, P_HEIGHT) &&
 		    b->type != B_REPLACED)
 			b->h = box_clamp_h(b, ah - eh, ah);
 		else if (aal == 'c')
@@ -939,6 +1054,35 @@ float layout_grid(struct box *gb, float cbh)
 		}
 	}
 	total = yoff + span_size(&rows, 0, rows.n, rg + ys);
+	{
+		/* absolute children: their static position rectangle,
+		 * the content box, and their grid area */
+		float ch = box_clamp_h(gb, H >= 0 ? H : total, cbh);
+		float px0 = gb->x - gb->p[3], py0 = gb->y - gb->p[0];
+		float px1 = gb->x + W + gb->p[1];
+		float py1 = gb->y + ch + gb->p[2];
+
+		for (i = 0; i < nav; i++) {
+			struct gitem *a = &av[i];
+			const struct style *is = a->b->style;
+			float x0 = line_at(&cols, a->c0, 0, cg + xs, px0,
+				gb->x + xoff), x1 = line_at(&cols, a->c1, 1,
+				cg + xs, px1, gb->x + xoff);
+			float y0 = line_at(&rows, a->r0, 0, rg + ys, py0,
+				gb->y + yoff), y1 = line_at(&rows, a->r1, 1,
+				rg + ys, py1, gb->y + yoff);
+
+			abs_rect(a->b, gb->x, gb->y, W, ch,
+				abs_align(is->v[P_JUSTIFY_SELF].u.str,
+					st->v[P_JUSTIFY_ITEMS].u.str),
+				abs_align(is->v[P_ALIGN_SELF].u.str,
+					st->v[P_ALIGN_ITEMS].u.str));
+			abs_area(a->b, x0, y0, x1 > x0 ? x1 - x0 : 0,
+				y1 > y0 ? y1 - y0 : 0);
+		}
+		free(av);
+	}
+	free(rasc);
 	free(v);
 	free_tracks(&cols);
 	free_tracks(&rows);
@@ -949,16 +1093,27 @@ void grid_sizes(struct box *gb, float *mn, float *mx)
 {
 	struct tracks cols, rows;
 	struct gitem *v;
-	float cg = gapv(gb->style, P_COLUMN_GAP, 0);
+	float cg = gapv(gb->style, P_COLUMN_GAP, 0), unit = 0;
 	int n, i;
 
-	n = place(gb, -1, -1, &cols, &rows, &v, cg, 0);
+	n = place(gb, -1, -1, &cols, &rows, &v, cg, 0, NULL, NULL);
 	column_contributions(&cols, v, n);
 	*mn = *mx = 0;
+	/* flexible tracks share one size per fr: the largest max-content
+	 * per fr of them (CSS Grid 1, 12.7.1), four 1fr columns of cards
+	 * are four times the widest card */
+	for (i = 0; i < cols.n; i++) {
+		struct track *k = &cols.t[i];
+
+		if (k->max.kind == TK_FR && k->max.v > 0 &&
+		    k->cmax / k->max.v > unit)
+			unit = k->cmax / k->max.v;
+	}
 	for (i = 0; i < cols.n; i++) {
 		struct track *k = &cols.t[i];
 		float a = k->min.kind == TK_LEN ? k->min.v : k->cmin;
-		float b = k->max.kind == TK_LEN ? k->max.v : k->cmax;
+		float b = k->max.kind == TK_LEN ? k->max.v :
+			k->max.kind == TK_FR ? unit * k->max.v : k->cmax;
 
 		if (b < a)
 			b = a;

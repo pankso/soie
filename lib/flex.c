@@ -24,6 +24,8 @@ struct item {
 	float grow, shrink;
 	int frozen;
 	int auto_ms, auto_me, auto_cs, auto_ce;	/* auto margins */
+	int bl;			/* baseline aligned: 1 first, 2 last */
+	float asc;		/* its margin box top to that baseline */
 };
 
 static int by_order(const void *a, const void *b)
@@ -53,6 +55,33 @@ static int is_reverse(const struct style *st)
 {
 	return kw(st, P_FLEX_DIRECTION, "row-reverse") ||
 		kw(st, P_FLEX_DIRECTION, "column-reverse");
+}
+
+/* An item aligned by its baseline: it->bl and it->asc, the baseline
+ * synthesized from the border box's bottom when it has none; in a
+ * column, from its left edge (right for the last baseline), the text
+ * running across the cross axis */
+static int baseline_of(struct item *it, const struct style *fst, int row)
+{
+	const struct box *b = it->b;
+	const char *s = b->style->v[P_ALIGN_SELF].u.str;
+	float y;
+
+	if (!s || !strcmp(s, "auto"))
+		s = fst->v[P_ALIGN_ITEMS].u.str;
+	it->bl = 0;
+	if (!s || !strstr(s, "baseline"))
+		return 0;
+	it->bl = strstr(s, "last") ? 2 : 1;
+	if (!row) {
+		it->asc = it->bl == 1 ? b->m[3] : it->cbefore + it->cross +
+			b->p[1] + b->b[1];
+		return 1;
+	}
+	y = box_baseline(b, it->bl == 2);
+	it->asc = y > -1e29f ? it->cbefore + y - b->y :
+		it->cbefore + it->cross + b->p[2] + b->b[2];
+	return 1;
 }
 
 /* align-self, align-items, justify-content: text keywords. */
@@ -90,7 +119,39 @@ static float max_content_height(struct box *b, float w)
 }
 
 /* Flex base size and hypothetical main size (9.2.3). */
-static void base_size(struct item *it, int row, float W, float H)
+/* A scroll container in that axis: overflow other than visible and
+ * clip */
+static int scrolls(const struct style *st, int prop)
+{
+	return !kw(st, prop, "visible") && !kw(st, prop, "clip");
+}
+
+/* The width of a column's item: its own, else the line's when it
+ * stretches, else fit-content (an item aligned center, end or by its
+ * baseline was as wide as the line, nothing left to align) */
+static float column_width(const struct item *it, const struct style *fst,
+	float W)
+{
+	struct box *b = it->b;
+	const char *as = b->style->v[P_ALIGN_SELF].u.str;
+	float w = box_spec_w(b, P_WIDTH, W), avail = W - it->cbefore -
+		it->cafter, mn, mx;
+
+	if (w >= 0)
+		return box_clamp_w(b, w, W);
+	if (b->type == B_REPLACED && b->iw > 0)
+		return box_clamp_w(b, b->iw, W);
+	if (b->type != B_REPLACED && !it->auto_cs && !it->auto_ce &&
+	    align_of(as && strcmp(as, "auto") ? as :
+		fst->v[P_ALIGN_ITEMS].u.str, "stretch") == 's')
+		return box_clamp_w(b, avail, W);
+	content_sizes(b, &mn, &mx);
+	w = mx < avail ? mx : avail;
+	return box_clamp_w(b, w < mn ? mn : w, W);
+}
+
+static void base_size(struct item *it, int row, float W, float H,
+	const struct style *fst)
 {
 	struct box *b = it->b;
 	const struct style *st = b->style;
@@ -110,10 +171,7 @@ static void base_size(struct item *it, int row, float W, float H)
 		/* the width it is laid out at below, max-width included:
 		 * measured wider, its text wraps less, the height is short
 		 * (a centred section of 1000 px in a body that is a column) */
-		cw = box_spec_w(b, P_WIDTH, W);
-		if (cw < 0)
-			cw = W - it->cbefore - it->cafter;
-		cw = box_clamp_w(b, cw, W);
+		cw = column_width(it, fst, W);
 	}
 	if (sz < 0) {
 		/* content: max-content in the main axis */
@@ -129,35 +187,54 @@ static void base_size(struct item *it, int row, float W, float H)
 	if (sz < 0)
 		sz = 0;
 	it->base = sz;
-	/* automatic minimum size: the min-content size */
+	/*
+	 * automatic minimum size (4.5): the content size suggestion, the
+	 * min-content size (through the aspect ratio of a replaced box
+	 * from its definite cross size), clamped by the max size, and the
+	 * specified size if smaller; 0 for a scroll container (clip is
+	 * not one)
+	 */
 	if (row) {
 		float smn = box_spec_w(b, P_MIN_WIDTH, W);
+		float spec = box_spec_w(b, P_WIDTH, W);
 
-		if (smn < 0 && kw(st, P_OVERFLOW_X, "visible")) {
-			content_sizes(b, &mn, &mx);
-			smn = mn;
-			if (box_spec_w(b, P_WIDTH, W) >= 0 &&
-			    box_spec_w(b, P_WIDTH, W) < smn)
-				smn = box_spec_w(b, P_WIDTH, W);
+		it->mx = box_spec_w(b, P_MAX_WIDTH, W);
+		if (smn < 0 && !scrolls(st, P_OVERFLOW_X)) {
+			float ch = box_spec_h(b, P_HEIGHT, H);
+
+			if (box_has_ratio(b) && ch >= 0) {
+				smn = box_clamp_h(b, ch, H) * b->iw / b->ih;
+			} else {
+				content_sizes(b, &mn, &mx);
+				smn = mn;
+			}
+			if (it->mx >= 0 && it->mx < smn)
+				smn = it->mx;
+			if (spec >= 0 && spec < smn)
+				smn = spec;
 		}
 		it->mn = smn < 0 ? 0 : smn;
-		it->mx = box_spec_w(b, P_MAX_WIDTH, W);
 	} else {
 		float smn = box_spec_h(b, P_MIN_HEIGHT, H);
+		float spec = box_spec_h(b, P_HEIGHT, H);
 
+		it->mx = box_spec_h(b, P_MAX_HEIGHT, H);
 		/* its content height, its height if smaller (flex: 1 is
 		 * a basis of 0: go.dev's <main> was 0 high, the footer
 		 * over it) */
-		if (smn < 0 && b->type != B_REPLACED &&
-		    kw(st, P_OVERFLOW_Y, "visible")) {
-			float h = box_spec_h(b, P_HEIGHT, H);
-
-			smn = content ? sz : max_content_height(b, cw);
-			if (h >= 0 && h < smn)
-				smn = h;
+		if (smn < 0 && !scrolls(st, P_OVERFLOW_Y)) {
+			if (box_has_ratio(b))
+				smn = cw * b->ih / b->iw;
+			else if (b->type == B_REPLACED)
+				smn = b->ih;
+			else
+				smn = content ? sz : box_content_height(b, cw);
+			if (it->mx >= 0 && it->mx < smn)
+				smn = it->mx;
+			if (spec >= 0 && spec < smn)
+				smn = spec;
 		}
 		it->mn = smn < 0 ? 0 : smn;
-		it->mx = box_spec_h(b, P_MAX_HEIGHT, H);
 	}
 	if (it->mx < 0)
 		it->mx = 1e30f;
@@ -251,17 +328,50 @@ static void flex_line(struct item *v, int n, float avail)
 	}
 }
 
+/*
+ * The static position of the absolute children: as the only item of
+ * the container, its content box (CSS Flexbox 1, 4.1), placed by
+ * justify-content on the main axis (space-between as start, around
+ * and evenly as center) and by its align-self on the cross axis.
+ */
+static void abs_children(struct box *f, float w, float h, int row,
+	int rev, int jc)
+{
+	const struct style *st = f->style;
+	int wrev = kw(st, P_FLEX_WRAP, "wrap-reverse");
+	struct box *c;
+
+	jc = jc == 'c' || jc == 'a' || jc == 'v' ? 'c' : jc == 'e' ? 'e' :
+		'f';
+	if (rev)
+		jc = jc == 'e' ? 'f' : jc == 'f' ? 'e' : jc;
+	for (c = f->first; c; c = c->next) {
+		const char *as = c->style->v[P_ALIGN_SELF].u.str;
+		int a;
+
+		if (!(c->flags & BF_ABS))
+			continue;
+		a = align_of(as && strcmp(as, "auto") ? as :
+			st->v[P_ALIGN_ITEMS].u.str, "stretch");
+		a = a == 'c' || a == 'e' ? a : 'f';
+		if (wrev)
+			a = a == 'e' ? 'f' : a == 'f' ? 'e' : a;
+		abs_rect(c, f->x, f->y, w, h, row ? jc : a, row ? a : jc);
+	}
+}
+
 float layout_flex(struct box *f, float cbh)
 {
 	const struct style *st = f->style;
 	int row = is_row(st), rev = is_reverse(st);
 	int wrap = !kw(st, P_FLEX_WRAP, "nowrap");
+	int wrev = kw(st, P_FLEX_WRAP, "wrap-reverse");
 	float W = f->w, H = box_spec_h(f, P_HEIGHT, cbh);
 	float main_avail, mgap, cgap, y, cross_total = 0, extra;
 	struct item *v = NULL;
 	struct box *c;
 	int n = 0, i, start, nlines = 0, *lstart = NULL;
-	float *lcross = NULL;
+	float *lcross = NULL, *lasc;
 	int jc = align_of(st->v[P_JUSTIFY_CONTENT].u.str, "flex-start");
 	int ac = align_of(st->v[P_ALIGN_CONTENT].u.str, "stretch");
 
@@ -308,7 +418,7 @@ float layout_flex(struct box *f, float cbh)
 	cgap = gap(st, row ? P_ROW_GAP : P_COLUMN_GAP, row ? 0 : W);
 	main_avail = row ? W : (H >= 0 ? H : 1e30f);
 	for (i = 0; i < n; i++)
-		base_size(&v[i], row, W, H);
+		base_size(&v[i], row, W, H, st);
 	/* lines */
 	lstart = xmalloc((size_t)(n + 2) * sizeof(*lstart));
 	lcross = xmalloc((size_t)(n + 2) * sizeof(*lcross));
@@ -361,29 +471,45 @@ float layout_flex(struct box *f, float cbh)
 			layout_item(b, 0, 0, it->main, hs);
 			it->cross = b->h;
 		} else {
-			float ws = box_spec_w(b, P_WIDTH, W);
-
-			/* auto: the intrinsic width of a replaced box, or the
-			 * line's (stretched later) */
-			if (ws < 0 && b->type == B_REPLACED && b->iw > 0)
-				ws = b->iw;
-			else if (ws < 0)
-				ws = W - it->cbefore - it->cafter;
-			ws = box_clamp_w(b, ws, W);
-			layout_item(b, 0, 0, ws, it->main);
+			layout_item(b, 0, 0, column_width(it, st, W),
+				it->main);
 			it->cross = b->w;
 		}
 	}
+	/* per line: the largest ascent of the first baseline items, the
+	 * largest descent of the last baseline ones, and the size of each
+	 * group */
+	lasc = xmalloc((size_t)(nlines + 1) * 4 * sizeof(*lasc));
 	for (i = 0; i < nlines; i++) {
+		float *la = lasc + 4 * i;
+		float below = 0, above = 0;
 		int k;
 
 		lcross[i] = 0;
+		la[0] = la[1] = 0;
 		for (k = lstart[i]; k < lstart[i + 1]; k++) {
 			float o = v[k].cross + v[k].cbefore + v[k].cafter;
 
 			if (o > lcross[i])
 				lcross[i] = o;
+			if (baseline_of(&v[k], st, row)) {
+				int l = v[k].bl == 2;
+				float a = l ? o - v[k].asc : v[k].asc;
+
+				if (a > la[l])
+					la[l] = a;
+				if (l && v[k].asc > above)
+					above = v[k].asc;
+				else if (!l && o - v[k].asc > below)
+					below = o - v[k].asc;
+			}
 		}
+		la[2] = la[0] + below;
+		la[3] = la[1] + above;
+		if (la[2] > lcross[i])
+			lcross[i] = la[2];
+		if (la[3] > lcross[i])
+			lcross[i] = la[3];
 		cross_total += lcross[i];
 	}
 	cross_total += cgap * (float)(nlines - 1);
@@ -412,6 +538,8 @@ float layout_flex(struct box *f, float cbh)
 	for (i = 0; i < nlines; i++) {
 		int a = lstart[i], z = lstart[i + 1], k, autos = 0;
 		float used = 0, free_space, pos, space = 0, lineavail;
+		/* the lines from the cross end with wrap-reverse */
+		float ly = wrev ? cross_total + extra - y - lcross[i] : y;
 
 		for (k = a; k < z; k++) {
 			used += v[k].main + v[k].mbefore + v[k].mafter;
@@ -459,7 +587,18 @@ float layout_flex(struct box *f, float cbh)
 				st->v[P_ALIGN_ITEMS].u.str, "stretch");
 			float cpos = 0, cross = it->cross, mx, my, dx, dy;
 
-			if (al == 's' && (row ? is_auto(b->style, P_HEIGHT) :
+			if (it->bl && !it->auto_cs && !it->auto_ce) {
+				const float *la = lasc + 4 * i;
+
+				/* the group at the line's cross start (end
+				 * for the last baseline), wrap-reverse swaps
+				 * them */
+				cpos = it->bl == 1 ? la[0] - it->asc :
+					lcross[i] - la[1] - it->asc;
+				if (wrev)
+					cpos += it->bl == 1 ? lcross[i] - la[2] :
+						la[3] - lcross[i];
+			} else if (al == 's' && (row ? is_auto(b->style, P_HEIGHT) :
 			    is_auto(b->style, P_WIDTH)) && !it->auto_cs &&
 			    !it->auto_ce && stretches(b)) {
 				cross = lcross[i] - it->cbefore - it->cafter;
@@ -488,13 +627,17 @@ float layout_flex(struct box *f, float cbh)
 				cpos = (lcross[i] - cross - it->cbefore -
 					it->cafter) / 2;
 			}
+			if (wrev && !it->bl)
+				/* wrap-reverse: cross start and end swap */
+				cpos = lcross[i] - cross - it->cbefore -
+					it->cafter - cpos;
 			if (row) {
 				b->h = cross;
 				mx = f->x + pos + it->mbefore;
-				my = f->y + y + cpos + it->cbefore;
+				my = f->y + ly + cpos + it->cbefore;
 			} else {
 				b->w = cross;
-				mx = f->x + y + cpos + it->cbefore;
+				mx = f->x + ly + cpos + it->cbefore;
 				my = f->y + pos + it->mbefore;
 				b->h = it->main;
 			}
@@ -530,6 +673,8 @@ float layout_flex(struct box *f, float cbh)
 			used += mgap * (float)(n > 1 ? n - 1 : 0);
 			h = H >= 0 ? H : used;
 		}
+		abs_children(f, W, box_clamp_h(f, h, cbh), row, rev, jc);
+		free(lasc);
 		free(v);
 		free(lstart);
 		free(lcross);

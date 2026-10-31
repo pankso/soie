@@ -45,14 +45,19 @@ file:///P is read from DIR/P. Ahem is a plain @font-face.
 
 Last result (WPT dee08ed764d2, Soie tip of 2026-10-31, 36 s):
 
-  css/css-flexbox   50/100 pass   50.0 %
-  css/css-grid      35/100 pass   35.0 %
+  css/css-flexbox   61/100 pass   61.0 %
+  css/css-grid      46/100 pass   46.0 %
 
-(2026-10-30: 44 and 23. Since: backgrounds and borders on whole
-pixels, grid space-around/space-evenly, auto-fit collapsing, line names
-before the first track kept.)
+(2026-10-30: 44 and 23. Then backgrounds and borders on whole pixels,
+grid space-around/space-evenly, auto-fit collapsing, line names
+before the first track kept: 50 and 35. Then the static position of
+absolute children, grid areas as containing blocks, the grid and
+grid-template shorthands, baseline alignment, wrap-reverse, the
+automatic minimum size: 61 and 46. Two tests that passed by chance
+fail since: a vertical writing mode one and a subgrid one, both
+features Soie does not have.)
 
-Main failure groups then: abspos static position and positioned items
-in grid, self and baseline alignment (grid and flex), orthogonal and
-vertical writing modes, subgrid, aspect-ratio and replaced items,
-flex-basis 0 with min-width auto, flex-wrap: balance.
+Main failure groups now: writing modes (vertical, orthogonal items,
+RTL), subgrid, safe/unsafe overflow alignment, flex-wrap: balance,
+vertical-align: top/bottom on inline boxes (some references use it),
+multi-span track contributions in grid, tables as flex items.

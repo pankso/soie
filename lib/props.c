@@ -405,7 +405,7 @@ enum {
 	SH_GRID_ROW, SH_GRID_COLUMN, SH_GRID_AREA, SH_MARGIN_INLINE,
 	SH_MARGIN_BLOCK, SH_PADDING_INLINE, SH_PADDING_BLOCK,
 	SH_INSET_INLINE, SH_INSET_BLOCK, SH_BORDER_INLINE, SH_BORDER_BLOCK,
-	SH_MASK, SH_ALL, NSHORTHANDS
+	SH_MASK, SH_GRID_TEMPLATE, SH_GRID, SH_ALL, NSHORTHANDS
 };
 
 static const char *const shorthand_names[NSHORTHANDS] = {
@@ -417,7 +417,8 @@ static const char *const shorthand_names[NSHORTHANDS] = {
 	"text-decoration", "white-space", "text-wrap", "grid-row",
 	"grid-column", "grid-area", "margin-inline", "margin-block",
 	"padding-inline", "padding-block", "inset-inline", "inset-block",
-	"border-inline", "border-block", "mask", "all"
+	"border-inline", "border-block", "mask", "grid-template", "grid",
+	"all"
 };
 
 /* Logical and legacy names, for a horizontal left-to-right page. */
@@ -587,6 +588,14 @@ static int shorthand_longhands(int sh, int *out)
 	case SH_GRID_AREA:
 		L(P_GRID_ROW_START), L(P_GRID_COLUMN_START);
 		L(P_GRID_ROW_END), L(P_GRID_COLUMN_END);
+		break;
+	case SH_GRID:
+		L(P_GRID_AUTO_FLOW), L(P_GRID_AUTO_ROWS);
+		L(P_GRID_AUTO_COLUMNS);
+		/* fall through */
+	case SH_GRID_TEMPLATE:
+		L(P_GRID_TEMPLATE_ROWS), L(P_GRID_TEMPLATE_COLUMNS);
+		L(P_GRID_TEMPLATE_AREAS);
 		break;
 	case SH_MARGIN_INLINE: L(P_MARGIN_LEFT), L(P_MARGIN_RIGHT); break;
 	case SH_MARGIN_BLOCK: L(P_MARGIN_TOP), L(P_MARGIN_BOTTOM); break;
@@ -1171,6 +1180,164 @@ static int sh_text_wrap(struct cur *c, struct svec *out)
 	return 1;
 }
 
+static void emit_text(struct svec *out, int prop, const char *s)
+{
+	svec_add(out, prop)->str = xstrndup(s, strlen(s));
+}
+
+/* The text of tokens from to to, "" when only white space */
+static char *text_of(const struct cur *c, int from, int to)
+{
+	return serialize_text(c->v + from, to - from);
+}
+
+/* The part of grid: [auto-flow && dense?] <auto tracks>?, whose
+ * axis is column when it is after the slash */
+static int auto_flow(const struct cur *c, int from, int to, int column,
+	struct svec *out)
+{
+	int i, dense = 0, flow = 0, sizes = -1;
+
+	for (i = from; i < to; i++) {
+		const struct cv *v = &c->v[i];
+
+		if (v->type == CT_WS)
+			continue;
+		if (cv_ident(v, "auto-flow") && !flow && sizes < 0)
+			flow = 1;
+		else if (cv_ident(v, "dense") && !dense && sizes < 0)
+			dense = 1;
+		else if (sizes < 0)
+			sizes = i;
+	}
+	if (!flow)
+		return 0;
+	emit_text(out, P_GRID_AUTO_FLOW, column ? dense ? "column dense" :
+		"column" : dense ? "row dense" : "row");
+	if (sizes >= 0) {
+		char *t = text_of(c, sizes, to);
+
+		emit_text(out, column ? P_GRID_AUTO_COLUMNS : P_GRID_AUTO_ROWS,
+			t);
+		free(t);
+	} else {
+		emit_initial(out, column ? P_GRID_AUTO_COLUMNS :
+			P_GRID_AUTO_ROWS);
+	}
+	emit_initial(out, column ? P_GRID_AUTO_ROWS : P_GRID_AUTO_COLUMNS);
+	return 1;
+}
+
+/*
+ * grid-template: none, <rows> / <columns>, or the areas form
+ * [<names>? <string> <size>? <names>?]+ [/ <columns>]?, whose rows
+ * are the sizes (auto when not given) and names around the strings.
+ * grid (full): the same with the auto tracks back to their initial
+ * values, or an auto-flow side (CSS Grid 1, 7.4 and 7.8).
+ */
+static int sh_grid_template(struct cur *c, struct svec *out, int full)
+{
+	int from, slash = -1, i, strings = 0;
+	char *t;
+
+	cur_peek(c);
+	from = c->i;
+	for (i = from; i < c->n; i++) {
+		if (c->v[i].type == CT_DELIM && c->v[i].delim == '/') {
+			if (slash >= 0)
+				return 0;
+			slash = i;
+		}
+		strings += c->v[i].type == CT_STRING && slash < 0;
+	}
+	c->i = c->n;
+	if (full && slash >= 0) {
+		if (auto_flow(c, from, slash, 0, out)) {
+			t = text_of(c, slash + 1, c->n);
+			emit_text(out, P_GRID_TEMPLATE_COLUMNS, *t ? t : "none");
+			free(t);
+			emit_initial(out, P_GRID_TEMPLATE_ROWS);
+			emit_initial(out, P_GRID_TEMPLATE_AREAS);
+			return 1;
+		}
+		if (auto_flow(c, slash + 1, c->n, 1, out)) {
+			t = text_of(c, from, slash);
+			emit_text(out, P_GRID_TEMPLATE_ROWS, *t ? t : "none");
+			free(t);
+			emit_initial(out, P_GRID_TEMPLATE_COLUMNS);
+			emit_initial(out, P_GRID_TEMPLATE_AREAS);
+			return 1;
+		}
+	}
+	if (strings) {
+		struct buf rows = { 0 }, areas = { 0 };
+		int end = slash >= 0 ? slash : c->n, sized = 1;
+
+		for (i = from; i < end; i++) {
+			const struct cv *v = &c->v[i];
+
+			if (v->type == CT_WS)
+				continue;
+			t = text_of(c, i, i + 1);
+			if (v->type == CT_STRING) {
+				if (!sized)
+					buf_add(&rows, "auto ", 5);
+				buf_add(&areas, t, strlen(t));
+				buf_putc(&areas, ' ');
+				sized = 0;
+			} else {
+				if (!(v->type == CT_BLOCK && v->delim == '['))
+					sized = 1;
+				buf_add(&rows, t, strlen(t));
+				buf_putc(&rows, ' ');
+			}
+			free(t);
+		}
+		if (!sized)
+			buf_add(&rows, "auto", 4);
+		buf_putc(&rows, '\0');
+		buf_putc(&areas, '\0');
+		emit_text(out, P_GRID_TEMPLATE_ROWS, rows.s);
+		emit_text(out, P_GRID_TEMPLATE_AREAS, areas.s);
+		free(rows.s);
+		free(areas.s);
+	} else {
+		if (slash < 0) {
+			t = text_of(c, from, c->n);
+			i = !strcmp(t, "none");
+			free(t);
+			if (!i)
+				return 0;
+			emit_initial(out, P_GRID_TEMPLATE_ROWS);
+			emit_initial(out, P_GRID_TEMPLATE_COLUMNS);
+			emit_initial(out, P_GRID_TEMPLATE_AREAS);
+			goto autos;
+		}
+		t = text_of(c, from, slash);
+		emit_text(out, P_GRID_TEMPLATE_ROWS, *t ? t : "none");
+		free(t);
+		emit_initial(out, P_GRID_TEMPLATE_AREAS);
+	}
+	if (slash >= 0) {
+		t = text_of(c, slash + 1, c->n);
+		if (!*t) {
+			free(t);
+			return 0;
+		}
+		emit_text(out, P_GRID_TEMPLATE_COLUMNS, t);
+		free(t);
+	} else {
+		emit_initial(out, P_GRID_TEMPLATE_COLUMNS);
+	}
+autos:
+	if (full) {
+		emit_initial(out, P_GRID_AUTO_FLOW);
+		emit_initial(out, P_GRID_AUTO_ROWS);
+		emit_initial(out, P_GRID_AUTO_COLUMNS);
+	}
+	return 1;
+}
+
 static int sh_grid_area(struct cur *c, struct svec *out)
 {
 	static const int lh[4] = { P_GRID_ROW_START, P_GRID_COLUMN_START,
@@ -1314,6 +1481,10 @@ int parse_shorthand_value(int sh, const struct cvlist *value,
 		break;
 	case SH_GRID_AREA:
 		ok = sh_grid_area(&c, out);
+		break;
+	case SH_GRID_TEMPLATE:
+	case SH_GRID:
+		ok = sh_grid_template(&c, out, sh == SH_GRID);
 		break;
 	case SH_MARGIN_INLINE:
 		ok = sh_pair(P_MARGIN_LEFT, P_MARGIN_RIGHT, &c, out, 0);

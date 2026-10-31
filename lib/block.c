@@ -109,6 +109,8 @@ static struct {
 	int nabs, cap;
 	unsigned pass;		/* this layout_root(), for abs_pass */
 	int trial;		/* in a table's trial layouts (sizes) */
+	struct box *measured;	/* box_content_height(): its height
+				 * property is not used */
 	/* the static positions those met, as they were before */
 	struct saved {
 		struct box *b;
@@ -141,7 +143,38 @@ void abs_static(struct box *b, float x, float y)
 	}
 	b->x = b->sx = x;
 	b->y = b->sy = y;
+	b->sw = -1;
+	b->area = 0;
 	abs_add(b);
+}
+
+/* Flex and grid, once their size is known: the static position
+ * rectangle of an absolute child (its abs_static() came first) and
+ * its alignment in it (CSS Align 3, 'f' 'c' or 'e' per axis). */
+void abs_rect(struct box *b, float x, float y, float w, float h, int ax,
+	int ay)
+{
+	if (g.trial)
+		return;
+	b->sx = x;
+	b->sy = y;
+	b->sw = w;
+	b->sh = h;
+	b->salign[0] = (unsigned char)ax;
+	b->salign[1] = (unsigned char)ay;
+}
+
+/* A grid area, padding box coordinates of the page: the containing
+ * block when the grid container is (CSS Grid 1, 9.1) */
+void abs_area(struct box *b, float x, float y, float w, float h)
+{
+	if (g.trial)
+		return;
+	b->area = 1;
+	b->ax = x;
+	b->ay = y;
+	b->aw = w;
+	b->ah = h;
 }
 
 static void abs_add(struct box *b)
@@ -175,6 +208,8 @@ static void move(struct box *b, float dx, float dy, int root)
 		 * placed itself does not move it, its ancestors do */
 		b->sx += dx;
 		b->sy += dy;
+		b->ax += dx;
+		b->ay += dy;
 	}
 	for (i = 0; i < b->nlines; i++) {
 		b->lines[i].x += dx;
@@ -983,7 +1018,7 @@ static void layout_alone(struct box *b, float x, float y, float w,
 	b->x = x;
 	b->y = y;
 	b->w = w;
-	hspec = spec_height(b, P_HEIGHT, cbh);
+	hspec = b == g.measured ? -1 : spec_height(b, P_HEIGHT, cbh);
 	if (hspec < 0)
 		hspec = defh;
 	memset(&own, 0, sizeof(own));
@@ -1038,6 +1073,57 @@ void layout_cell(struct box *c, float x, float y, float w)
 }
 
 /* For flex and grid */
+
+int box_has_ratio(const struct box *b)
+{
+	return b->type == B_REPLACED && b->iw > 0 && b->ih > 0 &&
+		has_ratio(b);
+}
+
+/* The height of b's content laid out at width w, its height property
+ * left out (a flex item's content size suggestion) */
+float box_content_height(struct box *b, float w)
+{
+	struct box *save = g.measured;
+
+	if (b->type == B_REPLACED)
+		return b->ih > 0 ? b->ih : 0;
+	g.measured = b;
+	b->lok = 0;
+	layout_alone(b, 0, 0, w < 0 ? 0 : w, -1, -1);
+	g.measured = save;
+	b->lok = 0;	/* not its real layout */
+	return b->h;
+}
+
+/* The first (or last) baseline of b, page coordinates: its own lines',
+ * else its first (last) in-flow child's that has one; -1e30 when none
+ * (replaced boxes, empty boxes: the caller synthesizes one). */
+float box_baseline(const struct box *b, int last)
+{
+	const struct box *c;
+	float y = -1e30f;
+
+	if (b->type == B_REPLACED)
+		return y;
+	if (b->nlines)
+		return last ? b->last_baseline : b->baseline;
+	if (b->flags & BF_INLINE_KIDS)
+		return y;
+	for (c = b->first; c; c = c->next) {
+		float k;
+
+		if (c->flags & (BF_ABS | BF_FLOAT))
+			continue;
+		k = box_baseline(c, last);
+		if (k > -1e29f) {
+			y = k;
+			if (!last)
+				break;
+		}
+	}
+	return y;
+}
 
 float box_spec_w(const struct box *b, int prop, float cbw)
 {
@@ -1104,6 +1190,16 @@ void layout_atomic(struct box *b, float cbw, float cbh)
 		b->m[0] + b->b[0] + b->p[0], w, cbh, -1);
 }
 
+/* Where in its static position rectangle of size room an absolute
+ * box of outer size size goes */
+static float static_offset(int align, float room, float size, int rect)
+{
+	if (!rect)
+		return 0;
+	return align == 'c' ? (room - size) / 2 : align == 'e' ? room - size :
+		0;
+}
+
 /* Absolute positioning (CSS 2 10.3.7, 10.6.4, simplified). */
 static void layout_abs(struct box *b)
 {
@@ -1122,6 +1218,17 @@ static void layout_abs(struct box *b)
 			ch = cb->h + cb->p[0] + cb->p[2];
 			break;
 		}
+	if (b->area && cb && cb == b->parent) {
+		/* its grid area, and its static position in it */
+		cx = sx = b->ax;
+		cy = sy = b->ay;
+		cw = b->aw;
+		ch = b->ah;
+		if (b->sw >= 0) {
+			b->sw = cw;
+			b->sh = ch;
+		}
+	}
 	edges(b, cw);
 	e = hedges(b);
 	l = is_auto(st, P_LEFT) ? -1e30f : len_val(&st->v[P_LEFT], cw);
@@ -1145,7 +1252,8 @@ static void layout_abs(struct box *b)
 	else if (r > -1e29f)
 		x = cx + cw - r - b->m[1] - w - e;
 	else
-		x = sx + b->m[3];
+		x = sx + b->m[3] + static_offset(b->salign[0], b->sw, w + e +
+			b->m[1] + b->m[3], b->sw >= 0);
 	x += b->b[3] + b->p[3];
 	y = t > -1e29f ? cy + t + b->m[0] : sy + b->m[0];
 	y += b->b[0] + b->p[0];
@@ -1165,6 +1273,9 @@ static void layout_abs(struct box *b)
 	if (t <= -1e29f && bt > -1e29f)
 		translate(b, 0, cy + ch - bt - b->m[2] - h + b->b[0] + b->p[0] -
 			b->y);
+	else if (t <= -1e29f && b->sw >= 0)
+		translate(b, 0, static_offset(b->salign[1], b->sh, h +
+			b->m[0] + b->m[2], 1));
 	{
 		float tx, ty;
 

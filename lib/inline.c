@@ -768,15 +768,19 @@ float layout_inline(struct box *b, struct bfc *f, float x, float y, float w,
 			fr->w = mw;
 			fr->h = c->h + c->p[0] + c->p[2] + c->b[0] + c->b[2] +
 				c->m[0] + c->m[2];
-			/* baseline from the margin box top */
-			if (c->type == B_ATOMIC && c->nlines &&
-			    kw(c->style, P_OVERFLOW_Y, "visible"))
-				fr->baseline = c->last_baseline;
-			else if (c->type == B_ATOMIC && !c->nlines &&
-				 c->first && c->first->nlines)
-				fr->baseline = c->first->last_baseline;
-			else
-				fr->baseline = fr->h;
+			/* baseline from the margin box top (it is at 0): a
+			 * flex or grid container's first baseline, else the
+			 * bottom of its border box; an inline-block's last,
+			 * at any depth, when its overflow is visible */
+			fr->baseline = -1e30f;
+			if (c->type == B_ATOMIC && is_flexgrid(c))
+				fr->baseline = box_baseline(c, 0);
+			else if (c->type == B_ATOMIC &&
+				 kw(c->style, P_OVERFLOW_Y, "visible"))
+				fr->baseline = box_baseline(c, 1);
+			if (fr->baseline < -1e29f)
+				fr->baseline = is_flexgrid(c) ?
+					fr->h - c->m[2] : fr->h;
 			s.pen += mw;
 			s.content = 1;
 			break;

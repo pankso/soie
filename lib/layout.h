@@ -99,6 +99,15 @@ struct box {
 	float lx, ly;		/* where its content was, translate() too */
 	unsigned abs_pass;	/* in the absolute boxes of that layout */
 	float sx, sy;		/* an absolute box's static position */
+	/* in a flex or grid container: the static position rectangle
+	 * from sx, sy, and the box's alignment in it, x then y ('f'
+	 * start, 'c' center, 'e' end); sw < 0 for none */
+	float sw, sh;
+	unsigned char salign[2];
+	/* a grid area as containing block, when the grid container is
+	 * the box's containing block */
+	unsigned char area;
+	float ax, ay, aw, ah;
 	/* the absolute boxes found laying it out: when it only moves,
 	 * they are laid out again (their containing block may have a new
 	 * height, flex stretches after) */
@@ -152,6 +161,12 @@ float bfc_left(const struct bfc *f, float y, float h, float x0);
 float bfc_right(const struct bfc *f, float y, float h, float x1);
 float bfc_next(const struct bfc *f, float y);
 void abs_static(struct box *b, float x, float y);
+void abs_rect(struct box *b, float x, float y, float w, float h, int ax,
+	int ay);
+void abs_area(struct box *b, float x, float y, float w, float h);
+float box_baseline(const struct box *b, int last);
+float box_content_height(struct box *b, float w);
+int box_has_ratio(const struct box *b);
 void box_edges(struct box *b, float cbw);
 void content_sizes(struct box *b, float *min, float *max);
 void layout_cell(struct box *c, float x, float y, float w);

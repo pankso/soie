@@ -15,11 +15,24 @@ each change are in [DECISIONS.md](DECISIONS.md).
   its resources: Hacker News loads in 1.2 s instead of 1.9.
 
 ### Added
+- Baseline alignment in flex lines and grid rows; inline-flex and
+  inline-grid sit on their first baseline.
+- `flex-wrap: wrap-reverse`.
+- The static position of absolute children of flex and grid
+  containers follows their alignment; a positioned grid container is
+  the containing block of its absolute children's grid areas.
+- The `grid` and `grid-template` shorthands.
 - Grid: `space-around` and `space-evenly` content distribution,
   `auto-fit` collapsing its empty tracks, `auto-fill`/`auto-fit` rows
   in a grid of definite height.
 
 ### Fixed
+- Flex items' automatic minimum size: images (through their aspect
+  ratio), `overflow: clip`, a column item's content height without
+  its own height.
+- A column's item that does not stretch is as wide as its content,
+  not the line.
+- The max-content width of a grid with `fr` columns.
 - xsoie crashed at the first paint on a 16-bit X server (old cards,
   fbdev, cirrus); it now converts to 16-bit, 15-bit, 24-bit and 8-bit
   colormap visuals.

@@ -1367,7 +1367,21 @@ on the same frozen DOM.
   flexible lengths with the freeze loop for min/max violations, auto
   margins first, justify-content (start, end, center, space-*),
   align-items/align-self (stretch by default), align-content, gaps,
-  reverse directions and columns. Baseline alignment is start.
+  reverse directions and columns, wrap-reverse (lines from the cross
+  end, start and end swapped in them).
+- The automatic minimum size (4.5): the content size suggestion (the
+  min-content size; for a replaced box with an aspect ratio, the size
+  its definite cross size gives through it, clamped by its cross min
+  and max), clamped by the max size, the specified size if smaller;
+  0 for a scroll container, which overflow: clip is not. A column's
+  content height is measured with the item's height property left
+  out (box_content_height()): a height: 100px item over 80 px of
+  content shrank to 100, not 80. Images in a column had 0, an image
+  of width 100px in a 0 high column vanished.
+- A column's item that does not stretch (align-self other than
+  stretch, or auto cross margins) is fit-content wide, measured and
+  laid out at that width: it was as wide as the line, nothing left to
+  center or align at the end.
 - In a column, the automatic minimum size is the content height (its
   height if smaller; 0 for a scroll container or a replaced box), and
   a column of auto height resolves its flexible lengths against its
@@ -1405,6 +1419,45 @@ on the same frozen DOM.
 - Line names before the first track ([a] repeat(...)) were dropped
   when the first track was added, and their memory with them (found
   by ASan on WPT): kept now.
+- Baseline alignment (align-self/-items baseline, first and last), in
+  flex lines and grid rows (items of one row): the items of a group
+  share the line's largest ascent (first) or descent (last), the line
+  or row grows to hold them. A box's baseline is its first (last)
+  line's, else its first (last) in-flow child's at any depth
+  (box_baseline()); without one it is synthesized from the border
+  box's bottom. In a flex column the text runs across the cross axis:
+  the baseline is synthesized from the left edge (right for the
+  last), and the group goes to the cross start (end with
+  wrap-reverse). An inline-flex or inline-grid sits on the line by
+  its first baseline (an inline-block by its last, at any depth now,
+  not only one level down). Not done: justify-self baseline (needs
+  writing modes), subgrid items in their parent's groups.
+- The static position of an absolute child of a flex or grid
+  container (CSS Align 3): as the only item of the container, in its
+  content box, placed by its self alignment (grid: justify-self and
+  align-self, auto from -items; flex: justify-content on the main
+  axis, space-between as start, space-around and -evenly as center,
+  align-self on the cross axis); normal and stretch as start, last
+  baseline as end. The container gives the rectangle and the
+  alignment (abs_rect()), layout_abs() applies them once the box's
+  size is known. When the grid container is the containing block, an
+  absolute child's grid lines make it (abs_area()): its grid area,
+  an auto line (or one past the grid) the padding edge, a span
+  against auto auto too (CSS Grid 1, 9.1); its static position is in
+  that area. RTL and vertical writing modes are not done
+  (grid-abspos-staticpos-align-self-vertWM-last-baseline-004 passed
+  by chance before, start and end meeting there).
+- grid-template and grid, the shorthands: <rows> / <columns>, the
+  areas form ('a a' 40px [x] 'b c' / 1fr 2fr: rows from the sizes
+  after the strings, auto when missing), none, and grid's auto-flow
+  forms (auto-flow dense 30px / repeat(3, 1fr)). They were not known
+  at all: grids written with them were one column of auto rows (the
+  references of the WPT positioned-grid-items tests).
+- The max-content width of a grid gives each flexible track the
+  largest max-content per fr of them (12.7.1), not its own: four 1fr
+  columns of cards are four times the widest. A fit-content section
+  (margin: 0 auto in a column body, www.slitaz.org's cards) was
+  narrower than in Firefox.
 - Text directly in a flex or grid container becomes an anonymous item,
   even when there are no block children.
 - A replaced item (image, <svg>) given its width but no height takes
