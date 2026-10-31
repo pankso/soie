@@ -439,6 +439,18 @@ reversed, edit the entry and say why; do not leave stale rules here.
   after the flow sorted by z-index, stable. Negative z-index boxes are
   not under the flow yet, and opacity multiplies colors instead of
   compositing a layer: both are cheap approximations.
+- Backgrounds and borders are painted on whole pixels: the box's
+  edges rounded to the nearest pixel, each on its own (the width is
+  the difference of the rounded edges, not a rounded width), as
+  browsers do. Painted with their exact coverage, a box over another
+  at the same fractional place let a line of the one below through,
+  and two boxes meeting at a fractional edge both half-painted the
+  pixel between them: the red lines of WPT's green-square tests, and
+  blurred table grids. Text keeps its own snapping (glyph origins),
+  rounded rectangles, SVG and images their anti-aliasing. Border
+  widths are snapped as CSS Values 4 says, before layout: whole
+  pixels, rounded down, 1 at least when not 0 (a 0.5px border is 1px,
+  1.5px is 1px). With both, 11 WPT reftests passed.
 - Borders: solid, dashed, dotted, double, inset/outset/groove/ridge
   (shaded); corners are not mitred. Rounded borders draw one color.
 - overflow other than visible clips to the padding box (rectangles
@@ -678,6 +690,16 @@ reversed, edit the entry and say why; do not leave stale rules here.
   takes one window; tabs can come later in the shell.
 - The window has a class (`xsoie`, `Xsoie`) for window managers and
   an icon painted by Soie.
+- Visuals: Soie paints 32-bit pixels, sent as they are (shared memory,
+  no copy) when the screen's are 32-bit B G R A or R G B A. Any other
+  visual gets them in a buffer of its own and xsoie converts the
+  rectangles shown: TrueColor through a table per colour built from
+  the visual's masks (565, 555, packed 24), an 8-bit colormap through
+  a cube of 6x6x6 colours allocated in the default colormap (black or
+  white when it is full). The image was made at the screen's depth and
+  painted as 32-bit: at 16 bits, twice its size, and xsoie crashed at
+  the first paint on old cards (cirrus, fbdev at vga=791), the very
+  machines of the xsoie flavor.
 - history.pushState() and replaceState() change the address the host
   shows, with no load: the script host gained a url hook (libsoie 1.3,
   NULL in older hosts), pushState a history entry of the shell's own
@@ -1356,7 +1378,7 @@ on the same frozen DOM.
   the page; with a short page the footer now ends the screen.
 - Grid: track lists with px, %, em, fr, auto, min/max-content,
   minmax(), fit-content(), repeat() including auto-fill and auto-fit
-  (both behave as auto-fill: empty tracks are kept), line names and
+  (auto-fit collapses its empty tracks, below), line names and
   grid-template-areas; placement by line numbers (negative too),
   spans, names and areas; row (or column) flow auto placement without
   dense packing; implicit tracks from grid-auto-rows/columns; track
@@ -1364,13 +1386,25 @@ on the same frozen DOM.
   growing toward max-content, fr sharing with inflexible tracks taken
   out; item alignment (justify/align-self and -items) and content
   alignment. Not yet: multi-span contributions, subgrid, masonry,
-  baseline alignment, auto-fit collapsing, vw/vh in track sizes (taken
-  as 1024x768).
+  baseline alignment, vw/vh in track sizes (taken as 1024x768).
 - Grid tracks are maximized (12.6) before the fr sharing: the free
   space goes in equal shares to the inflexible tracks, each up to its
   growth limit (a fixed maximum, else its content). MDN's content
   column, minmax(0, 48rem) between two 1fr ones, stayed 0 wide: the
   page one letter a line.
+- Content distribution of the grid (justify-content, align-content):
+  start, center, end, space-between, space-around and space-evenly;
+  the last two were taken as start (WPT grid-content-distribution).
+- auto-fit tracks that no item is in collapse: size 0, and the gutters
+  on either side of them with them (a collapsed track counts for
+  nothing in positions, spans, gaps and content distribution). Their
+  items then get the whole width: repeat(auto-fit, minmax(200px, 1fr))
+  with two items fills the row with two, as auto-fill does not.
+  Absolute items keep no track open. A row repeat gets the grid's
+  definite height for its count (one row before).
+- Line names before the first track ([a] repeat(...)) were dropped
+  when the first track was added, and their memory with them (found
+  by ASan on WPT): kept now.
 - Text directly in a flex or grid container becomes an anonymous item,
   even when there are no block children.
 - A replaced item (image, <svg>) given its width but no height takes

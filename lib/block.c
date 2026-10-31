@@ -7,6 +7,7 @@
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
+#include <math.h>
 #include <stdlib.h>
 #include <string.h>
 #include "layout.h"
@@ -214,7 +215,11 @@ static void edges(struct box *b, float cbw)
 	int i;
 
 	for (i = 0; i < 4; i++) {
+		/* snapped as a border width (CSS Values 4): whole pixels,
+		 * one at least */
 		b->b[i] = st->v[bw[i]].u.len.px;
+		if (b->b[i] > 0)
+			b->b[i] = b->b[i] < 1 ? 1 : floorf(b->b[i]);
 		b->p[i] = len_val(&st->v[pd[i]], cbw);
 		if (b->p[i] < 0)	/* a calc() below 0: lwn.net's column */
 			b->p[i] = 0;

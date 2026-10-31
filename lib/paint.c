@@ -523,12 +523,29 @@ static void border_side(struct canvas *c, const struct box *b, int side,
 	}
 }
 
+/* A box's edges on whole pixels, as browsers paint them: two boxes
+ * meeting at a fractional edge share no pixel, one over another at
+ * the same place covers it whole. */
+static void snap(const struct canvas *c, float *x, float *y, float *w,
+	float *h)
+{
+	float x1 = roundf(*x + *w - c->ox), y1 = roundf(*y + *h - c->oy);
+
+	*x = roundf(*x - c->ox);
+	*y = roundf(*y - c->oy);
+	*w = x1 - *x;
+	*h = y1 - *y;
+	*x += c->ox;
+	*y += c->oy;
+}
+
 static void paint_background(struct canvas *c, const struct box *b,
 	float x, float y, float w, float h)
 {
 	unsigned char rgba[4];
 	float r[4];
 
+	snap(c, &x, &y, &w, &h);
 	style_rgba(b->style, P_BACKGROUND_COLOR, rgba);
 	radii(b, w, h, r);
 	if (rgba[3]) {
@@ -547,6 +564,7 @@ static void paint_borders(struct canvas *c, const struct box *b, float x,
 	int i, same = 1;
 	unsigned char rgba[4], first[4];
 
+	snap(c, &x, &y, &w, &h);
 	radii(b, w, h, r);
 	if (r[0] || r[1] || r[2] || r[3]) {
 		/* rounded: one color ring (the top one), solid */

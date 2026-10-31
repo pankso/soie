@@ -43,14 +43,16 @@ as /fonts/ahem.css work through soie-render's test-only option -r DIR:
 each page is loaded with the base file:///<its path in the tree> and
 file:///P is read from DIR/P. Ahem is a plain @font-face.
 
-Last result (WPT dee08ed764d2, Soie tip of 2026-10-30, 36 s):
+Last result (WPT dee08ed764d2, Soie tip of 2026-10-31, 36 s):
 
-  css/css-flexbox   44/100 pass   44.0 %
-  css/css-grid      23/100 pass   23.0 %
+  css/css-flexbox   50/100 pass   50.0 %
+  css/css-grid      35/100 pass   35.0 %
+
+(2026-10-30: 44 and 23. Since: backgrounds and borders on whole
+pixels, grid space-around/space-evenly, auto-fit collapsing, line names
+before the first track kept.)
 
 Main failure groups then: abspos static position and positioned items
 in grid, self and baseline alignment (grid and flex), orthogonal and
 vertical writing modes, subgrid, aspect-ratio and replaced items,
-flex-basis 0 with min-width auto, flex-wrap: balance; and about ten
-tests off by one row or column of partly covered pixels (Soie paints
-fractional edges anti-aliased, browsers snap them to device pixels).
+flex-basis 0 with min-width auto, flex-wrap: balance.

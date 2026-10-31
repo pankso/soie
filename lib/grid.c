@@ -26,6 +26,9 @@ struct track {
 	struct tsize min, max;
 	float base;		/* used size */
 	float cmin, cmax;	/* content contributions */
+	unsigned char fit;	/* repeated by auto-fit */
+	unsigned char gone;	/* auto-fit and empty: collapsed, no size
+				 * and no gutters */
 };
 
 struct tracks {
@@ -99,6 +102,8 @@ static int track_size(struct cur *c, const struct style *st,
 
 static void add_track(struct tracks *t, struct tsize mn, struct tsize mx)
 {
+	int fresh = !t->names;	/* else line 0 may have names already */
+
 	t->t = xrealloc(t->t, (size_t)(t->n + 1) * sizeof(*t->t));
 	memset(&t->t[t->n], 0, sizeof(*t->t));
 	t->t[t->n].min = mn;
@@ -106,7 +111,7 @@ static void add_track(struct tracks *t, struct tsize mn, struct tsize mx)
 	t->n++;
 	t->names = xrealloc(t->names, (size_t)(t->n + 1) * sizeof(*t->names));
 	t->names[t->n] = NULL;
-	if (t->n == 1)
+	if (fresh)
 		t->names[0] = NULL;
 }
 
@@ -195,7 +200,7 @@ static void parse_tracks(const char *text, const struct style *st,
 		} else if (cv_func(v, "repeat")) {
 			struct cur in;
 			const struct cv *n;
-			int count = 1, k, first, auto_rep = 0;
+			int count = 1, k, first, auto_rep = 0, fit;
 
 			cur_init(&in, &v->kids);
 			n = cur_next(&in);
@@ -204,6 +209,7 @@ static void parse_tracks(const char *text, const struct style *st,
 			else if (cv_ident(n, "auto-fill") ||
 				 cv_ident(n, "auto-fit"))
 				auto_rep = 1;
+			fit = cv_ident(n, "auto-fit");
 			cur_next(&in);	/* comma */
 			first = t->n;
 			{
@@ -249,6 +255,8 @@ static void parse_tracks(const char *text, const struct style *st,
 					for (k = 0; k < per; k++)
 						add_track(t, t->t[first + k].min,
 							t->t[first + k].max);
+				for (k = first; fit && k < t->n; k++)
+					t->t[k].fit = 1;
 			}
 			cur_next(&c);
 		} else if (!one_track(&c, st, t)) {
@@ -450,14 +458,29 @@ static void extend(struct tracks *t, int n, const char *autos,
 }
 
 /* Size tracks for a total of avail (or -1: intrinsic). */
+/* The tracks not collapsed */
+static int live(const struct tracks *t)
+{
+	int i, n = 0;
+
+	for (i = 0; i < t->n; i++)
+		n += !t->t[i].gone;
+	return n;
+}
+
 static void size_tracks(struct tracks *t, float avail, float g)
 {
 	float sum = 0, fr = 0, free_space;
-	int i, flex = 0, again;
+	int i, flex = 0, again, nl = live(t);
 
 	for (i = 0; i < t->n; i++) {
 		struct track *k = &t->t[i];
 
+		if (k->gone) {
+			/* a fixed 0 */
+			k->min.kind = k->max.kind = TK_LEN;
+			k->min.v = k->max.v = k->cmin = k->cmax = 0;
+		}
 		if (k->min.kind == TK_LEN || k->min.kind == TK_PCT)
 			k->base = fixed_size(&k->min, avail);
 		else if (k->min.kind == TK_MAX)
@@ -470,7 +493,7 @@ static void size_tracks(struct tracks *t, float avail, float g)
 			k->base = fixed_size(&k->max, avail);
 		sum += k->base;
 	}
-	sum += g * (float)(t->n > 0 ? t->n - 1 : 0);
+	sum += g * (float)(nl > 0 ? nl - 1 : 0);
 	free_space = avail >= 0 ? avail - sum : 0;
 	/* maximize tracks (12.6): the free space shared equally by the
 	 * inflexible tracks, each up to its growth limit (a fixed maximum,
@@ -532,7 +555,7 @@ static void size_tracks(struct tracks *t, float avail, float g)
 	if (!flex || avail < 0)
 		goto stretch;
 	do {
-		float rest = avail - g * (float)(t->n > 0 ? t->n - 1 : 0), unit;
+		float rest = avail - g * (float)(nl > 0 ? nl - 1 : 0), unit;
 
 		again = 0;
 		fr = 0;
@@ -579,11 +602,16 @@ stretch:
 static float span_size(const struct tracks *t, int a, int b, float g)
 {
 	float s = 0;
-	int i;
+	int i, n = 0;
 
 	for (i = a; i < b && i < t->n; i++)
-		s += t->t[i].base;
-	return s + g * (float)(b - a - 1 > 0 ? b - a - 1 : 0);
+		if (!t->t[i].gone) {
+			s += t->t[i].base;
+			n++;
+		}
+	for (; i < b; i++)
+		n++;	/* implicit, not created */
+	return s + g * (float)(n - 1 > 0 ? n - 1 : 0);
 }
 
 static float track_pos(const struct tracks *t, int a, float g)
@@ -592,7 +620,8 @@ static float track_pos(const struct tracks *t, int a, float g)
 	int i;
 
 	for (i = 0; i < a && i < t->n; i++)
-		s += t->t[i].base + g;
+		if (!t->t[i].gone)
+			s += t->t[i].base + g;
 	return s;
 }
 
@@ -616,13 +645,27 @@ static int align_kw(const char *s, int def)
 	return 'f';
 }
 
+/* justify-content, align-content: the free space before the first
+ * track and between two, n tracks */
+static void distribute(const char *s, float free, int n, float *off,
+	float *sp)
+{
+	switch (align_kw(s, 'f')) {
+	case 'c': *off = free / 2; break;
+	case 'e': *off = free; break;
+	case 'b': *sp = n > 1 ? free / (float)(n - 1) : 0; break;
+	case 'a': *sp = free / (float)n; *off = *sp / 2; break;
+	case 'v': *sp = *off = free / (float)(n + 1); break;
+	}
+}
+
 static float gapv(const struct style *st, int prop, float ref)
 {
 	return st->v[prop].kw ? 0 : len_val(&st->v[prop], ref);
 }
 
 /* Shared by layout and intrinsic sizes. */
-static int place(struct box *gb, float W, struct tracks *cols,
+static int place(struct box *gb, float W, float H, struct tracks *cols,
 	struct tracks *rows, struct gitem **out, float cg, float rg)
 {
 	const struct style *st = gb->style;
@@ -635,7 +678,7 @@ static int place(struct box *gb, float W, struct tracks *cols,
 		NULL;
 
 	parse_tracks(st->v[P_GRID_TEMPLATE_COLUMNS].u.str, st, W, cg, cols);
-	parse_tracks(st->v[P_GRID_TEMPLATE_ROWS].u.str, st, -1, rg, rows);
+	parse_tracks(st->v[P_GRID_TEMPLATE_ROWS].u.str, st, H, rg, rows);
 	nareas = parse_areas(st->v[P_GRID_TEMPLATE_AREAS].u.str, areas, 64,
 		&arows, &acols);
 	extend(cols, acols, st->v[P_GRID_AUTO_COLUMNS].u.str, st);
@@ -754,6 +797,19 @@ static int place(struct box *gb, float W, struct tracks *cols,
 		extend(cols, v[i].c1, st->v[P_GRID_AUTO_COLUMNS].u.str, st);
 		extend(rows, v[i].r1, st->v[P_GRID_AUTO_ROWS].u.str, st);
 	}
+	/* auto-fit tracks no item is in collapse */
+	for (i = 0; i < cols->n; i++)
+		cols->t[i].gone = cols->t[i].fit;
+	for (i = 0; i < rows->n; i++)
+		rows->t[i].gone = rows->t[i].fit;
+	for (i = 0; i < n; i++) {
+		int k;
+
+		for (k = v[i].c0; k < v[i].c1 && k < cols->n; k++)
+			cols->t[k].gone = 0;
+		for (k = v[i].r0; k < v[i].r1 && k < rows->n; k++)
+			rows->t[k].gone = 0;
+	}
 	free(o.cell);
 	*out = v;
 	return n;
@@ -786,7 +842,7 @@ float layout_grid(struct box *gb, float cbh)
 	float total, xoff = 0, yoff = 0, xs = 0, ys = 0;
 	int n, i;
 
-	n = place(gb, W, &cols, &rows, &v, cg, rg);
+	n = place(gb, W, H, &cols, &rows, &v, cg, rg);
 	column_contributions(&cols, v, n);
 	size_tracks(&cols, W, cg);
 	/* items at their column widths give the row contributions */
@@ -817,23 +873,13 @@ float layout_grid(struct box *gb, float cbh)
 	size_tracks(&rows, H, rg);
 	/* content alignment of the whole grid */
 	total = span_size(&cols, 0, cols.n, cg);
-	if (total < W) {
-		switch (align_kw(st->v[P_JUSTIFY_CONTENT].u.str, 'f')) {
-		case 'c': xoff = (W - total) / 2; break;
-		case 'e': xoff = W - total; break;
-		case 'b': xs = cols.n > 1 ? (W - total) / (float)(cols.n - 1) :
-			0; break;
-		}
-	}
+	if (total < W)
+		distribute(st->v[P_JUSTIFY_CONTENT].u.str, W - total, live(&cols),
+			&xoff, &xs);
 	total = span_size(&rows, 0, rows.n, rg);
-	if (H >= 0 && total < H) {
-		switch (align_kw(st->v[P_ALIGN_CONTENT].u.str, 'f')) {
-		case 'c': yoff = (H - total) / 2; break;
-		case 'e': yoff = H - total; break;
-		case 'b': ys = rows.n > 1 ? (H - total) / (float)(rows.n - 1) :
-			0; break;
-		}
-	}
+	if (H >= 0 && total < H)
+		distribute(st->v[P_ALIGN_CONTENT].u.str, H - total, live(&rows),
+			&yoff, &ys);
 	for (i = 0; i < n; i++) {
 		struct box *b = v[i].b;
 		float ax = gb->x + xoff + track_pos(&cols, v[i].c0, cg + xs) ;
@@ -906,7 +952,7 @@ void grid_sizes(struct box *gb, float *mn, float *mx)
 	float cg = gapv(gb->style, P_COLUMN_GAP, 0);
 	int n, i;
 
-	n = place(gb, -1, &cols, &rows, &v, cg, 0);
+	n = place(gb, -1, -1, &cols, &rows, &v, cg, 0);
 	column_contributions(&cols, v, n);
 	*mn = *mx = 0;
 	for (i = 0; i < cols.n; i++) {
