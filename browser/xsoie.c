@@ -35,6 +35,11 @@ static GC gc;
 static XImage *ximg;
 static XShmSegmentInfo shm;
 static int use_shm;		/* the pixels are shared with the server */
+static unsigned char *bgra;	/* Soie's 32-bit pixels when the visual is
+				 * not, converted into ximg by tk_show */
+static unsigned long lut[3][256];	/* B, G, R bytes to pixel bits */
+static unsigned long cube[216];	/* 8-bit colormaps: a 6x6x6 cube */
+static int use_cube;
 static XIM xim;
 static XIC xic;
 static Cursor cursors[3];
@@ -61,10 +66,40 @@ void tk_title(const char *title)
 		(int)strlen(full));
 }
 
+/* Soie's B G R A pixels of a rectangle into the image of the visual:
+ * 16 bits (565, 555) on old cards, 24, anything TrueColor. */
+static void convert(const int *r)
+{
+	int x, y, x1 = r[0] + r[2], y1 = r[1] + r[3];
+	int fast = ximg->bits_per_pixel == 16 && ximg->byte_order == LSBFirst
+		&& *(const unsigned char *)&(const short){ 1 };
+
+	for (y = r[1]; y < y1; y++) {
+		const unsigned char *s = bgra + ((size_t)y * win_w + r[0]) * 4;
+		unsigned short *d = (unsigned short *)(ximg->data +
+			(size_t)y * ximg->bytes_per_line) + r[0];
+
+		for (x = r[0]; x < x1; x++, s += 4) {
+			unsigned long v = lut[0][s[0]] + lut[1][s[1]] +
+				lut[2][s[2]];
+
+			if (use_cube)
+				v = cube[v];
+			if (fast)
+				*d++ = (unsigned short)v;
+			else
+				XPutPixel(ximg, x, y, v);
+		}
+	}
+}
+
 void tk_show(const int (*r)[4], int n)
 {
 	int i;
 
+	for (i = 0; i < n; i++)
+		if (bgra)
+			convert(r[i]);
 	for (i = 0; i < n; i++)
 		if (use_shm)
 			XShmPutImage(dpy, win, gc, ximg, r[i][0], r[i][1],
@@ -325,6 +360,8 @@ static int trap(Display *d, XErrorEvent *e)
 
 static void drop_image(void)
 {
+	free(bgra);
+	bgra = NULL;
 	if (!ximg)
 		return;
 	if (use_shm) {
@@ -379,6 +416,50 @@ static int shm_image(Visual *vis, int depth)
 	return 1;
 }
 
+/* A byte of each colour to its bits in a pixel of the visual's masks */
+static void make_lut(const Visual *vis)
+{
+	unsigned long m[3] = { vis->blue_mask, vis->green_mask,
+		vis->red_mask };
+	int c, v, shift, bits;
+
+	/* a colormap (8 bits): indexes into a cube of 216 colours,
+	 * black or white for those the colormap has no room for */
+	if (vis->class != TrueColor && vis->class != DirectColor) {
+		int scr = DefaultScreen(dpy);
+		Colormap cmap = DefaultColormap(dpy, scr);
+		XColor xc;
+
+		for (v = 0; v < 256; v++) {
+			lut[0][v] = (unsigned long)(v * 6 / 256);
+			lut[1][v] = (unsigned long)(v * 6 / 256) * 6;
+			lut[2][v] = (unsigned long)(v * 6 / 256) * 36;
+		}
+		if (use_cube)
+			return;
+		for (v = 0; v < 216; v++) {
+			xc.red = (unsigned short)(v / 36 * 13107);
+			xc.green = (unsigned short)(v / 6 % 6 * 13107);
+			xc.blue = (unsigned short)(v % 6 * 13107);
+			cube[v] = XAllocColor(dpy, cmap, &xc) ? xc.pixel :
+				v / 36 + v / 6 % 6 + v % 6 > 7 ?
+				WhitePixel(dpy, scr) : BlackPixel(dpy, scr);
+		}
+		use_cube = 1;
+		return;
+	}
+	for (c = 0; c < 3; c++) {
+		for (shift = 0; m[c] && !(m[c] >> shift & 1); shift++)
+			;
+		for (bits = 0; m[c] >> (shift + bits) & 1; bits++)
+			;
+		for (v = 0; v < 256; v++)
+			lut[c][v] = bits > 8 ? m[c] & (unsigned long)v <<
+				(shift + bits - 8) : (unsigned long)(v >>
+				(8 - bits)) << shift;
+	}
+}
+
 static void resize(int w, int h)
 {
 	Visual *vis = DefaultVisual(dpy, DefaultScreen(dpy));
@@ -398,13 +479,23 @@ static void resize(int w, int h)
 		if (!px)
 			abort();
 		ximg = XCreateImage(dpy, vis, (unsigned)depth, ZPixmap, 0, px,
-			(unsigned)win_w, (unsigned)win_h, 32, win_w * 4);
+			(unsigned)win_w, (unsigned)win_h, 32, 0);
 	}
-	/* 32-bit pixels, red the high byte of the low three, sent as they
-	 * are in memory: B G R A bytes, Soie paints them so */
-	front_buffer((unsigned char *)ximg->data, win_w, win_h,
-		ximg->bytes_per_line, vis->red_mask == 0xff0000 &&
-		ximg->byte_order == LSBFirst);
+	/* 32-bit pixels, red the high or the low byte of the low three,
+	 * sent as they are in memory: B G R A or R G B A bytes, Soie
+	 * paints them so. Any other visual (16 bits on old cards) gets
+	 * Soie's B G R A pixels converted. */
+	if (ximg->bits_per_pixel == 32 && ximg->byte_order == LSBFirst &&
+	    vis->green_mask == 0xff00 && (vis->red_mask == 0xff0000 ||
+	    vis->red_mask == 0xff)) {
+		front_buffer((unsigned char *)ximg->data, win_w, win_h,
+			ximg->bytes_per_line, vis->red_mask == 0xff0000);
+		return;
+	}
+	if (!(bgra = malloc((size_t)win_w * (size_t)win_h * 4)))
+		abort();
+	make_lut(vis);
+	front_buffer(bgra, win_w, win_h, win_w * 4, 1);
 }
 
 /* The window icon: the logo, painted by Soie, at 48, 32 and 16 pixels. */
