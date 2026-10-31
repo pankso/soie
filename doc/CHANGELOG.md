@@ -7,12 +7,7 @@ each change are in [DECISIONS.md](DECISIONS.md).
 
 ## [Unreleased]
 
-### Changed
-- Backgrounds and borders are painted on whole pixels, as browsers
-  paint them: sharp table grids, no line of a box showing through
-  another at the same place. Border widths are whole pixels.
-- Connections to a page's server are opened while the page loads, for
-  its resources: Hacker News loads in 1.2 s instead of 1.9.
+## [0.1.2] - 2026-10-31
 
 ### Added
 - Baseline alignment in flex lines and grid rows; inline-flex and
@@ -25,6 +20,13 @@ each change are in [DECISIONS.md](DECISIONS.md).
 - Grid: `space-around` and `space-evenly` content distribution,
   `auto-fit` collapsing its empty tracks, `auto-fill`/`auto-fit` rows
   in a grid of definite height.
+
+### Changed
+- Backgrounds and borders are painted on whole pixels, as browsers
+  paint them: sharp table grids, no line of a box showing through
+  another at the same place. Border widths are whole pixels.
+- Connections to a page's server are opened while the page loads, for
+  its resources: Hacker News loads in 1.2 s instead of 1.9.
 
 ### Fixed
 - Flex items' automatic minimum size: images (through their aspect
@@ -75,5 +77,6 @@ each change are in [DECISIONS.md](DECISIONS.md).
 - Browsers: xsoie (X11), wsoie (Wayland), SoieView (GTK 3 widget).
 - soie-render, a headless renderer for tests and screenshots.
 
+[0.1.2]: https://hg.slitaz.org/soie/rev/0.1.2
 [0.1.1]: https://hg.slitaz.org/soie/rev/0.1.1
 [0.1.0]: https://hg.slitaz.org/soie/rev/0.1.0

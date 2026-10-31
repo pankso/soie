@@ -1984,6 +1984,14 @@ run again):
   smooth at any size; checkboxes and radios as browsers draw them.
   Same soname and extension ABI: one function added
   (soie_url_rewritable()).
+- 0.1.2 (2026-10-31): xsoie on 16-bit, 15-bit, 24-bit and 8-bit
+  colormap X servers (it crashed on the old cards of the xsoie
+  flavor); boxes painted on whole pixels; grid shorthands, content
+  distribution, auto-fit collapsing, absolute children placed in
+  grid areas and by their alignment; baseline alignment, wrap-reverse
+  and the automatic minimum size of flex items. WPT layout subset:
+  flexbox 44 to 61 %, grid 23 to 46 %. Same soname and extension ABI,
+  no public function added.
 
 ## Build
 

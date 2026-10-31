@@ -4,8 +4,15 @@
 	<link href="https://soie.slitaz.org/"/>
 	<link rel="self" href="https://soie.slitaz.org/releases.atom"/>
 	<id>https://soie.slitaz.org/releases.atom</id>
-	<updated>2026-10-29T00:00:00Z</updated>
+	<updated>2026-10-31T00:00:00Z</updated>
 	<author><name>Christophe Lincoln</name></author>
+	<entry>
+		<title>Soie 0.1.2</title>
+		<link href="https://hg.slitaz.org/soie/rev/0.1.2"/>
+		<id>https://soie.slitaz.org/releases/0.1.2</id>
+		<updated>2026-10-31T00:00:00Z</updated>
+		<content type="html">&lt;h3&gt;Added&lt;/h3&gt;&lt;ul&gt;&lt;li&gt;Baseline alignment in flex lines and grid rows; inline-flex and inline-grid sit on their first baseline.&lt;/li&gt;&lt;li&gt;&lt;code&gt;flex-wrap: wrap-reverse&lt;/code&gt;.&lt;/li&gt;&lt;li&gt;The static position of absolute children of flex and grid containers follows their alignment; a positioned grid container is the containing block of its absolute children's grid areas.&lt;/li&gt;&lt;li&gt;The &lt;code&gt;grid&lt;/code&gt; and &lt;code&gt;grid-template&lt;/code&gt; shorthands.&lt;/li&gt;&lt;li&gt;Grid: space-around and space-evenly content distribution, auto-fit collapsing its empty tracks.&lt;/li&gt;&lt;/ul&gt;&lt;h3&gt;Changed&lt;/h3&gt;&lt;ul&gt;&lt;li&gt;Backgrounds and borders are painted on whole pixels, as browsers paint them: sharp table grids. Border widths are whole pixels.&lt;/li&gt;&lt;li&gt;Connections to a page's server are opened while the page loads: Hacker News loads in 1.2 s instead of 1.9.&lt;/li&gt;&lt;/ul&gt;&lt;h3&gt;Fixed&lt;/h3&gt;&lt;ul&gt;&lt;li&gt;xsoie crashed at the first paint on a 16-bit X server (old cards, fbdev, cirrus); it now converts to 16-bit, 15-bit, 24-bit and 8-bit colormap visuals.&lt;/li&gt;&lt;li&gt;Flex items' automatic minimum size: images, overflow: clip, a column item's content height.&lt;/li&gt;&lt;li&gt;A column's item that does not stretch is as wide as its content.&lt;/li&gt;&lt;li&gt;The max-content width of a grid with fr columns.&lt;/li&gt;&lt;li&gt;Grid line names given before the first track were lost.&lt;/li&gt;&lt;/ul&gt;</content>
+	</entry>
 	<entry>
 		<title>Soie 0.1.1</title>
 		<link href="https://hg.slitaz.org/soie/rev/0.1.1"/>
