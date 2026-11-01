@@ -6,7 +6,9 @@
 # by xsoie too. A use after free, a read out of bounds stops the
 # program with a report and makes this fail.
 #
-# Usage: tools/asan.sh [-s] [URL...]   (make asan, make asan-sites)
+# Usage: tools/asan.sh [-m | -s] [URL...]   (make asan, make asan-sites)
+# -m: make the local copies of other people's sites, once (network);
+# -s: our sites live, the others from those copies, served on 127.0.0.1.
 # $ASAN_CC: a gcc with libasan (gcc-83 on SliTaz, gcc 6.3 has none);
 # $QUICKJS_SRC: as for make, to have the script extension.
 #
@@ -16,15 +18,29 @@
 # SPDX-License-Identifier: BSD-2-Clause
 #
 
-SITES="https://www.slitaz.org/en/ https://en.wikipedia.org/wiki/SliTaz
-https://news.ycombinator.com/ https://lwn.net/ https://www.bbc.com/news
-https://old.reddit.com/ https://distrowatch.com/ https://www.youtube.com/
-https://github.com/ https://stackoverflow.com/questions
+# Our own servers: rendered live.
+SITES="https://www.slitaz.org/en/ https://soie.slitaz.org/"
+# Other people's sites: rendered from local copies, not fetched at each
+# run (distrowatch.com blocked "Soie/0.1" after repeated runs).
+COPIES="https://en.wikipedia.org/wiki/SliTaz https://news.ycombinator.com/
+https://lwn.net/ https://www.bbc.com/news https://old.reddit.com/
+https://distrowatch.com/ https://www.youtube.com/ https://github.com/
 https://www.debian.org/ https://archlinux.org/"
+# What the copies' scripts would still ask of those sites is blocked.
+BLOCK="wikipedia.org wikimedia.org ycombinator.com lwn.net bbc.com bbc.co.uk
+bbci.co.uk reddit.com redd.it redditstatic.com redditmedia.com
+distrowatch.com youtube.com ytimg.com googlevideo.com ggpht.com
+github.com githubassets.com githubusercontent.com debian.org archlinux.org"
+PORT=8078
 
 cd "$(dirname "$0")/.." || exit 1
 cc=${ASAN_CC:-gcc-83}
 dir=${ASAN_DIR:-asan-build}
+mirror=$PWD/$dir/mirror
+if [ "$1" = "-m" ]; then
+	rm -rf "$mirror"
+	exec python3 tools/bench-mirror.py "$mirror" $COPIES
+fi
 lib=$($cc -print-file-name=libasan.so 2>/dev/null)
 if [ ! -f "$lib" ]; then
 	echo "asan: $cc has no libasan (on SliTaz: ASAN_CC=gcc-83, package gcc83)"
@@ -32,11 +48,13 @@ if [ ! -f "$lib" ]; then
 fi
 lib=$(dirname "$lib")
 sites=
+copies=
 if [ "$1" = "-s" ]; then
 	shift
 	sites=$SITES
+	copies=yes
 fi
-[ $# -gt 0 ] && sites="$*"
+[ $# -gt 0 ] && sites="$*" && copies=
 case $QUICKJS_SRC in
 	""|/*) ;;
 	*) QUICKJS_SRC=$PWD/$QUICKJS_SRC ;;
@@ -59,16 +77,37 @@ if [ -f "$dir/ext/script.so" ]; then
 else
 	echo "asan: no script extension (QUICKJS_SRC), scripts not checked"
 fi
-for url in $sites; do
+
+render() {
 	if timeout 200 "$dir/browser/xsoie" -w 1024 -H 6000 \
-	    -o "$dir/site.png" "$url" >/dev/null 2>"$dir/site.err" &&
+	    -o "$dir/site.png" "$1" >/dev/null 2>"$dir/site.err" &&
 	    ! grep -q AddressSanitizer "$dir/site.err"; then
-		echo "ok   $url"
+		echo "ok   $1"
 	else
-		echo "FAIL $url"
+		echo "FAIL $1"
 		grep -A12 "ERROR: AddressSanitizer" "$dir/site.err"
 		fail=1
 	fi
+}
+for url in $sites; do
+	render "$url"
 done
+if [ -n "$copies" ] && [ ! -d "$mirror" ]; then
+	echo "asan: no local copies of other sites, make them once: tools/asan.sh -m"
+elif [ -n "$copies" ]; then
+	for host in $BLOCK; do
+		echo "$host"
+	done >"$dir/block.txt"
+	export SOIE_BLOCK="$PWD/$dir/block.txt"
+	python3 -m http.server -b 127.0.0.1 -d "$mirror" $PORT \
+		>/dev/null 2>&1 &
+	server=$!
+	sleep 1
+	for page in "$mirror"/*/; do
+		[ -f "$page/index.html" ] || continue
+		render "http://127.0.0.1:$PORT/$(basename "$page")/"
+	done
+	kill $server
+fi
 [ $fail = 0 ] && echo "asan: all clean"
 exit $fail

@@ -323,7 +323,8 @@ check-css: tests/csstest tests/cssvalue $(CSSTESTS)
 	python3 tests/css-parsing.py $(CSSTESTS)
 
 # The same under AddressSanitizer, in asan-build/ (tools/asan.sh): the
-# tests, and with asan-sites real pages too.
+# tests, and with asan-sites whole pages too: ours live, the others from
+# local copies made once by tools/asan.sh -m.
 asan:
 	QUICKJS_SRC="$(QUICKJS_SRC)" sh tools/asan.sh
 

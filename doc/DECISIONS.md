@@ -1951,6 +1951,15 @@ run again):
   thrown away by the fix-ups, box_drop()), a read before shrunk
   images' pixels (the distrowatch.com crash) and a test passing an int
   as a size_t.
+- Other people's sites are no longer fetched at each `make asan-sites`:
+  distrowatch.com answered 403 to the exact token `Soie/0.1` after our
+  runs (`Soie/0.2`, any browser's UA: 200), likely blocked by hand.
+  Only our servers (slitaz.org, soie.slitaz.org) are rendered live; the
+  others come from local copies made once by `tools/asan.sh -m`
+  (tools/bench-mirror.py, into asan-build/mirror/), served on
+  127.0.0.1:8078, their own domains blocked through SOIE_BLOCK so the
+  copies' scripts do not reach them either. The UA stays as it is:
+  changing it to get past a block would be dodging it.
 
 ## Version and repository
 

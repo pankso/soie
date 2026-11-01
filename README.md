@@ -27,7 +27,7 @@ are welcome, they are read and imported by hand into Mercurial
     make check-html5lib # fetches the html5lib corpus, runs it
     make check-css      # fetches css-parsing-tests, runs it (Python 3)
     make asan           # the tests under AddressSanitizer (gcc-83) in asan-build/
-    make asan-sites     # the same, and real sites rendered whole (network)
+    make asan-sites     # the same, and sites rendered whole (tools/asan.sh -m first)
     make install PREFIX=/usr DESTDIR=...
 
 Needs a C99 compiler, GNU make, pkg-config, FreeType, libpng, libjpeg
