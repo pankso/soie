@@ -1929,6 +1929,20 @@ static void fixups(struct style *s, const struct style *parent, int root)
 	int i, absolute = kw_is(pos, P_POSITION, "absolute") ||
 		kw_is(pos, P_POSITION, "fixed");
 
+	/* the old WebKit box: vertical, a block (the line clamp's, as
+	 * browsers lay it out now), else a flex row */
+	if (kw_is(&s->v[P_DISPLAY], P_DISPLAY, "-webkit-box") ||
+	    kw_is(&s->v[P_DISPLAY], P_DISPLAY, "-webkit-inline-box")) {
+		int v = kw_is(&s->v[P_WEBKIT_BOX_ORIENT], P_WEBKIT_BOX_ORIENT,
+			"vertical") || kw_is(&s->v[P_WEBKIT_BOX_ORIENT],
+			P_WEBKIT_BOX_ORIENT, "block-axis");
+		int in = kw_is(&s->v[P_DISPLAY], P_DISPLAY,
+			"-webkit-inline-box");
+
+		s->v[P_DISPLAY].kw = (unsigned char)display_kw(v ? (in ?
+			"inline-block" : "flow-root") : in ? "inline-flex" :
+			"flex");
+	}
 	if (absolute)
 		s->v[P_FLOAT].kw = 1;	/* none */
 	if (root || absolute || !kw_is(&s->v[P_FLOAT], P_FLOAT, "none") ||

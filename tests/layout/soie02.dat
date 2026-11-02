@@ -200,3 +200,28 @@ width=300
 |       block <span> 140,0 8x40
 |         line 140,0 8x20
 |           text "x" 140,2 8x16
+
+#data
+<!DOCTYPE html><body style="margin:0"><p style="margin:0;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden">a<b>b</b><br>c<br>d</p><div style="display:-webkit-box"><i>e</i>f</div>
+#errors
+#layout
+width=100
+#document
+| block <html> 0,0 100x60
+|   block <body> 0,0 100x60
+|     block <p> 0,0 100x40
+|       line 0,0 100x20
+|         text "a" 0,2 8x16
+|         text "b" 8,2 8x16
+|         inline <b> 8,2 8x16
+|       line 0,20 100x20
+|         text "c" 0,22 8x16
+|       line 0,40 100x20
+|         text "d" 0,42 8x16
+|     block <div> 0,40 100x20
+|       block <i> 0,40 8x20
+|         line 0,40 8x20
+|           text "e" 0,42 8x16
+|       block anonymous 8,40 8x20
+|         line 8,40 8x20
+|           text "f" 8,42 8x16

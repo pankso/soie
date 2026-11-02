@@ -221,11 +221,9 @@ static int parse_display(struct cur *c, struct sval *sv)
 		name = "block";
 	} else if (ascii_ieq(name, "run-in")) {
 		name = "inline";
-	} else if (ascii_ieq(name, "-webkit-box") ||
-		   ascii_ieq(name, "-webkit-flex")) {
+	} else if (ascii_ieq(name, "-webkit-flex")) {
 		name = "flex";
-	} else if (ascii_ieq(name, "-webkit-inline-box") ||
-		   ascii_ieq(name, "-webkit-inline-flex")) {
+	} else if (ascii_ieq(name, "-webkit-inline-flex")) {
 		name = "inline-flex";
 	}
 	i = kw_index(props[P_DISPLAY].keywords, name);

@@ -507,11 +507,24 @@ static float layout_contents(struct box *b, struct bfc *f, float y,
 	}
 	if (b->flags & BF_INLINE_KIDS) {
 		float top = collapse_top ? y + strut_val(s) : y;
+		const struct cval *lc = b->style ?
+			&b->style->v[P_WEBKIT_LINE_CLAMP] : NULL;
 
 		b->y = top;
 		h = layout_inline(b, f, b->x, top, b->w, cbh);
 		if (b->nlines && collapse_top)
 			s->pos = s->neg = 0;
+		/* -webkit-line-clamp: the first lines only (the others
+		 * overflow, clipped by its overflow: hidden) */
+		if (lc && !lc->kw && lc->u.num >= 1 &&
+		    b->nlines > lc->u.num &&
+		    kw(b->style, P_DISPLAY, "flow-root") &&
+		    (kw(b->style, P_WEBKIT_BOX_ORIENT, "vertical") ||
+		    kw(b->style, P_WEBKIT_BOX_ORIENT, "block-axis"))) {
+			const struct line *ln = &b->lines[(int)lc->u.num - 1];
+
+			h = ln->y + ln->h - top;
+		}
 		return h;
 	}
 	if (!collapse_top) {

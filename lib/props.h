@@ -66,7 +66,7 @@ PROP(DISPLAY, "display", 0, K_DISPLAY, 0,
 	"flow-root|list-item|table|inline-table|table-row-group|"
 	"table-header-group|table-footer-group|table-row|table-cell|"
 	"table-column-group|table-column|table-caption|contents|none|"
-	"ruby|ruby-text", "inline")
+	"ruby|ruby-text|-webkit-box|-webkit-inline-box", "inline")
 PROP(POSITION, "position", 0, K_KW, 0,
 	"static|relative|absolute|fixed|sticky", "static")
 PROP(FLOAT, "float", 0, K_KW, 0, "none|left|right|inline-start|inline-end",
@@ -140,6 +140,11 @@ PROP(OVERFLOW_X, "overflow-x", 0, K_KW, 0,
 PROP(OVERFLOW_Y, "overflow-y", 0, K_KW, 0,
 	"visible|hidden|clip|scroll|auto", "visible")
 PROP(TEXT_OVERFLOW, "text-overflow", 0, K_KW, 0, "clip|ellipsis", "clip")
+/* The old WebKit box, for its line clamp: display: -webkit-box;
+ * -webkit-box-orient: vertical; -webkit-line-clamp: 2 (cascade.c) */
+PROP(WEBKIT_BOX_ORIENT, "-webkit-box-orient", 0, K_KW, 0,
+	"horizontal|vertical|inline-axis|block-axis", "horizontal")
+PROP(WEBKIT_LINE_CLAMP, "-webkit-line-clamp", 0, K_INT, 0, "none", "none")
 PROP(Z_INDEX, "z-index", 0, K_INT, 0, "auto", "auto")
 PROP(OPACITY, "opacity", 0, K_ALPHA, 0, "", "1")
 PROP(BACKGROUND_COLOR, "background-color", 0, K_COLOR, 0, "",
