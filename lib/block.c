@@ -1285,6 +1285,46 @@ static void layout_abs(struct box *b)
 	}
 }
 
+/*
+ * The page scrolls to what overflows the root too: html, body
+ * { height: 100% } and a long page (html.duckduckgo.com). Not to what
+ * a box clips (overflow, as paint.c's content_clip()), the root and
+ * the body only for hidden or clip (the viewport's, CSS 2 11.1.1), nor
+ * to what is fixed: it stays in the viewport (a drawer waiting below
+ * it would make the page longer).
+ */
+static float overflow_bottom(const struct box *b, float bottom, int top)
+{
+	const struct box *c;
+	float y;
+	int i, clips;
+
+	if (b->type != B_INLINE && b->style &&
+	    kw(b->style, P_POSITION, "fixed"))
+		return bottom;
+	y = b->y + b->h + b->p[2] + b->b[2];
+	if (y > bottom)
+		bottom = y;
+	for (i = 0; i < b->nlines; i++) {
+		y = b->lines[i].y + b->lines[i].h;
+		if (y > bottom)
+			bottom = y;
+	}
+	if (top)
+		clips = b->style && (kw(b->style, P_OVERFLOW_Y, "hidden") ||
+			kw(b->style, P_OVERFLOW_Y, "clip"));
+	else
+		clips = b->type != B_INLINE && b->style &&
+			(!kw(b->style, P_OVERFLOW_X, "visible") ||
+			!kw(b->style, P_OVERFLOW_Y, "visible"));
+	if (clips)
+		return bottom;
+	for (c = b->first; c; c = c->next)
+		bottom = overflow_bottom(c, bottom, top && c->node &&
+			is_html(c->node, TAG_BODY));
+	return bottom;
+}
+
 void layout_root(struct layout *l)
 {
 	struct box *root = l->root;
@@ -1309,7 +1349,8 @@ void layout_root(struct layout *l)
 		layout_abs(g.abs[i]);
 		b = g.abs[i]->y + g.abs[i]->h + g.abs[i]->p[2] +
 			g.abs[i]->b[2] + g.abs[i]->m[2];
-		if (b > bottom)
+		/* a fixed one stays in the viewport (overflow_bottom()) */
+		if (b > bottom && !kw(g.abs[i]->style, P_POSITION, "fixed"))
 			bottom = b;
 	}
 	free(g.abs);
@@ -1321,5 +1362,6 @@ void layout_root(struct layout *l)
 	free(g.saved);
 	g.saved = NULL;
 	g.nsaved = g.capsaved = 0;
+	bottom = overflow_bottom(root, bottom, 1);
 	l->doc_height = bottom;
 }
