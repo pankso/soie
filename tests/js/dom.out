@@ -8,6 +8,8 @@ log: dataset 42 true
 log: data attr x userId,fooBar
 log: style color: red; margin-top: 4px; --v: 1; red 3
 log: style2 margin-top: 4px; --v: 1;
+log: hex rgb(37, 43, 59) | rgb(255, 255, 255) url("a#b.png") | rgba(255, 0, 0, 0.5) | #abc
+log: hexcss color: rgb(37, 43, 59); background: rgb(255, 255, 255) url("a#b.png"); border-color: rgba(255, 0, 0, 0.5); --c: #abc;
 log: inner <p id="p1">One <b>two</b></p><!-- c --><p id="p2" data-user-id="42" data-foo-bar="x" style="margin-top: 4px; --v: 1;">Three</p>
 log: after 3 <div id="root" class="b c d"><span>new</span> &amp; <i>more</i></div>
 log: adjacent first last

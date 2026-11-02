@@ -23,6 +23,15 @@ p2.style.setProperty('--v', '1');
 log('style', p2.getAttribute('style'), p2.style.color, p2.style.length);
 p2.style.removeProperty('color');
 log('style2', p2.style.cssText);
+/* hex colors come back as rgb() and rgba(), as in browsers */
+const p3 = document.createElement('p');
+p3.style.color = '#252b3b';
+p3.style.background = '#FFF url("a#b.png")';
+p3.style.borderColor = '#ff000080';
+p3.style.setProperty('--c', '#abc');
+log('hex', p3.style.color, '|', p3.style.background, '|',
+	p3.style.borderColor, '|', p3.style.getPropertyValue('--c'));
+log('hexcss', p3.style.cssText);
 log('inner', root.innerHTML);
 root.innerHTML = '<span>new</span> & <i>more</i>';
 log('after', root.childNodes.length, root.outerHTML);

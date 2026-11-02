@@ -1178,6 +1178,28 @@ function parseDecls(s) {
 	return out;
 }
 
+/* Serialized as browsers give them back (CSSOM): a hex color becomes
+ * rgb() or rgba() ("#252b3b": "rgb(37, 43, 59)"; Startpage compares
+ * that string before showing its dark pages); url() and strings are
+ * left alone */
+const HEX_OR_SKIP = /url\([^)]*\)|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|#([0-9a-fA-F]+)\b/g;
+function serializeValue(v) {
+	return v.indexOf('#') < 0 ? v : v.replace(HEX_OR_SKIP, (m, h) => {
+		if (!h || ![3, 4, 6, 8].includes(h.length))
+			return m;
+		if (h.length < 6)
+			h = h.replace(/./g, '$&$&');
+		const n = [0, 2, 4, 6].map((i) => parseInt(h.slice(i, i + 2), 16));
+		if (h.length === 6 || n[3] === 255)
+			return 'rgb(' + n.slice(0, 3).join(', ') + ')';
+		/* the shortest alpha that gives the same byte back */
+		let a = Math.round(n[3] / 255 * 100) / 100;
+		if (Math.round(a * 255) !== n[3])
+			a = Math.round(n[3] / 255 * 1000) / 1000;
+		return 'rgba(' + n.slice(0, 3).join(', ') + ', ' + a + ')';
+	});
+}
+
 class CSSStyleDeclaration {
 	constructor(el) { this._el = el; }
 	_get() { return parseDecls(this._el.getAttribute('style')); }
@@ -1187,7 +1209,11 @@ class CSSStyleDeclaration {
 		if (s || this._el.hasAttribute('style'))
 			this._el.setAttribute('style', s);
 	}
-	get cssText() { return this._el.getAttribute('style') || ''; }
+	get cssText() {
+		return this._get().map(([n, v, p]) => n + ': ' +
+			(n.startsWith('--') ? v : serializeValue(v)) +
+			(p ? ' !important' : '') + ';').join(' ');
+	}
 	set cssText(v) { this._el.setAttribute('style', str(v)); }
 	get length() { return this._get().length; }
 	item(i) {
@@ -1199,7 +1225,10 @@ class CSSStyleDeclaration {
 		if (!name.startsWith('--'))
 			name = name.toLowerCase();
 		const d = this._get().filter((x) => x[0] === name);
-		return d.length ? d[d.length - 1][1] : '';
+		if (!d.length)
+			return '';
+		return name.startsWith('--') ? d[d.length - 1][1] :
+			serializeValue(d[d.length - 1][1]);
 	}
 	getPropertyPriority(name) {
 		const d = this._get().filter((x) => x[0] === name);
