@@ -232,6 +232,26 @@ static void test_cookies(void)
 	SET(u, "old=1; Path=/; Expires=Wed, 21 Oct 2015 07:28:00 GMT");
 	SET(u, "new=1; Path=/; expires=Fri, 31-Dec-2100 23:59:59 GMT");
 	STR(GET("https://www.example.com/", NULL), "b=3; __Host-z=1; new=1");
+	/* the time of an Expires counts, not just its day: one in ten
+	 * minutes stays, one ten minutes ago goes */
+	{
+		char line[128];
+		time_t t = time(NULL) + 600;
+		struct tm tm;
+
+		gmtime_r(&t, &tm);
+		strftime(line, sizeof(line), "soon=1; Path=/; Expires=%a, %d "
+			"%b %Y %H:%M:%S GMT", &tm);
+		SET(u, line);
+		t -= 1200;
+		gmtime_r(&t, &tm);
+		strftime(line, sizeof(line), "gone=1; Path=/; Expires=%a, %d "
+			"%b %Y %H:%M:%S GMT", &tm);
+		SET(u, line);
+		STR(GET("https://www.example.com/", NULL), "b=3; __Host-z=1; "
+			"new=1; soon=1");
+		SET(u, "soon=; Path=/; Max-Age=0");
+	}
 
 	/* control bytes: no cookies.txt line smuggled through a Path */
 	SET(u, "inj=b; Path=/\n.bank.example\tTRUE\t/\tFALSE\t2000000000"

@@ -252,6 +252,7 @@ static int parse_date(const char *s, long long *out)
 {
 	static const char months[] = "janfebmaraprmayjunjulaugsepoctnovdec";
 	int hh = -1, mm = 0, ss = 0, day = -1, mon = -1, year = -1, n, i;
+	int h, m, sec;
 	const char *p;
 	char tok[32];
 
@@ -266,9 +267,15 @@ static int parse_date(const char *s, long long *out)
 			s++;
 		if (!n)
 			continue;
-		if (hh < 0 && sscanf(tok, "%d:%d:%d", &hh, &mm, &ss) == 3)
+		/* into its own: sscanf() fills hh from "02" already,
+		 * and the time would be the day's number (Startpage's
+		 * Anubis cookie, 30 minutes, came expired) */
+		if (hh < 0 && sscanf(tok, "%d:%d:%d", &h, &m, &sec) == 3) {
+			hh = h;
+			mm = m;
+			ss = sec;
 			continue;
-		hh = hh < 0 || mm < 0 ? -1 : hh;
+		}
 		if (day < 0 && n <= 2 && isdigit((unsigned char)tok[0])) {
 			day = atoi(tok);
 			continue;
