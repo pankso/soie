@@ -276,7 +276,7 @@ static void check(struct buf *b, const char *name, const char *label,
 }
 
 /* %XX and + of a urlencoded value, in place */
-static void url_decode(char *s)
+void settings_decode(char *s)
 {
 	char *o = s;
 
@@ -319,8 +319,8 @@ static const char *post_apply(const char *post, int *changed, int *ok)
 			*v++ = '\0';
 		else
 			v = p + strlen(p);
-		url_decode(p);
-		url_decode(v);
+		settings_decode(p);
+		settings_decode(v);
 		if (!strcmp(p, "save"))
 			save = 1;
 		else if (!strcmp(p, "clear"))
@@ -331,9 +331,10 @@ static const char *post_apply(const char *post, int *changed, int *ok)
 	free(body);
 	if (clear) {
 		soie_cookies_clear(0);
-		debug(1, "settings: cookies cleared");
+		net_auth_clear(0);
+		debug(1, "settings: cookies and logins cleared");
 		*ok = 1;
-		return "The cookies are cleared.";
+		return "The cookies and logins are cleared.";
 	}
 	if (!save)
 		return NULL;
@@ -351,7 +352,7 @@ static const char *post_apply(const char *post, int *changed, int *ok)
 		"Saved.";
 }
 
-static const char style[] =
+const char settings_style[] =
 	"<style>"
 	":root{color-scheme:light;--bg:#f4f6f8;--card:#fff;--text:#2c3e50;"
 	"--muted:#7f8c8d;--line:#d5dde3;--accent:#e74c3c}"
@@ -366,7 +367,8 @@ static const char style[] =
 	"border-radius:8px;padding:1em 1.2em;margin:0 0 1em}"
 	"label{display:block;margin:.3em 0}"
 	"label.opt{display:inline-block;margin:.2em 1.2em .2em 0}"
-	"input[type=text]{display:block;width:100%;box-sizing:border-box;"
+	"input[type=text],input[type=password]{display:block;width:100%;"
+	"box-sizing:border-box;"
 	"margin-top:.2em;padding:5px 8px;border:1px solid var(--line);"
 	"border-radius:4px;background:var(--bg);color:var(--text);"
 	"font:14px sans-serif}"
@@ -397,7 +399,7 @@ char *settings_page(const char *post, int *changed)
 		said = post_apply(post, changed, &ok);
 	adds(&b, "<!DOCTYPE html><html><head><meta charset=utf-8>"
 		"<title>Settings</title>");
-	adds(&b, style);
+	adds(&b, settings_style);
 	adds(&b, "</head><body><main><h1>Settings</h1>");
 	if (said) {
 		adds(&b, ok ? "<p class=\"said ok\">" : "<p class=said>");
@@ -440,7 +442,7 @@ char *settings_page(const char *post, int *changed)
 
 	adds(&b, "<p><button class=go type=submit>Save</button></p></form>");
 	adds(&b, "<form method=post action=\"" SETTINGS_URL "\"><p>"
-		"<button type=submit name=clear value=1>Clear the cookies"
+		"<button type=submit name=clear value=1>Clear the cookies and logins"
 		"</button></p></form>");
 	adds(&b, "<p class=hint>Scripts and cookies apply to the next pages; "
 		"other windows take the settings when they open.</p>");

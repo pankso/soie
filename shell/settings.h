@@ -24,5 +24,9 @@ int settings_url(const char *url);
 /* The page, malloc()ed. post: the body of its form, applied and saved
  * first (NULL: only shown); *changed is 1 when a setting changed. */
 char *settings_page(const char *post, int *changed);
+/* The shell's own pages' style sheet, a <style> element */
+extern const char settings_style[];
+/* %XX and + of a urlencoded value, in place */
+void settings_decode(char *s);
 
 #endif

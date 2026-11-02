@@ -143,8 +143,8 @@ typedef enum {
 	SOIE_COOKIE_POLICY_NONE
 } SoieCookiePolicy;
 void soie_view_set_cookie_policy(SoieCookiePolicy policy);
-/* Forget all cookies: the private views' ones with private_ones, else
- * the others (and their file). */
+/* Forget all cookies and HTTP logins: the private views' ones with
+ * private_ones, else the others (and their cookie file). */
 void soie_view_clear_cookies(gboolean private_ones);
 
 /* Find text in the page: a new text shows its first match, the same

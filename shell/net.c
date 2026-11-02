@@ -1027,6 +1027,197 @@ static void keep_headers(const char *raw, const char *end, const char *url,
 	r->headers = h.body;
 }
 
+/*
+ * HTTP authentication, Basic only: what the user typed on about:auth,
+ * by origin (scheme://host:port, a single realm each), in memory only.
+ * Sent with that origin's pages and what they load, never with another
+ * site's requests to it (no ambient login for a page that is not the
+ * server's), nor with credentials omitted.
+ */
+#define AUTHS 16
+
+static struct auth {
+	char origin[300];
+	char *cred;		/* base64 of user:password */
+	int priv;		/* a private window's */
+} auths[AUTHS];
+static pthread_mutex_t auth_lock = PTHREAD_MUTEX_INITIALIZER;
+
+static int same_origin(const char *a, const char *b);
+
+static int origin_of(const char *url, char *out, size_t size)
+{
+	struct url u;
+	char *p;
+
+	if (parse_url(url, &u))
+		return -1;
+	snprintf(out, size, "%s://%s:%s", u.scheme, u.host, u.port);
+	for (p = out; *p; p++)
+		*p = (char)tolower((unsigned char)*p);
+	free(u.path);
+	return 0;
+}
+
+static char *base64(const char *s, size_t n)
+{
+	static const char t[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
+		"0123456789+/";
+	const unsigned char *u = (const unsigned char *)s;
+	char *out = malloc((n + 2) / 3 * 4 + 1), *o = out;
+	size_t i;
+
+	if (!out)
+		abort();
+	for (i = 0; i < n; i += 3) {
+		unsigned v = (unsigned)u[i] << 16 |
+			(i + 1 < n ? (unsigned)u[i + 1] << 8 : 0) |
+			(i + 2 < n ? u[i + 2] : 0);
+
+		*o++ = t[v >> 18 & 63];
+		*o++ = t[v >> 12 & 63];
+		*o++ = i + 1 < n ? t[v >> 6 & 63] : '=';
+		*o++ = i + 2 < n ? t[v & 63] : '=';
+	}
+	*o = '\0';
+	return out;
+}
+
+static void auth_drop(struct auth *a)
+{
+	if (a->cred) {
+		memset(a->cred, 0, strlen(a->cred));
+		free(a->cred);
+	}
+	memset(a, 0, sizeof(*a));
+}
+
+static struct auth *auth_find(const char *origin, int priv)
+{
+	int i;
+
+	for (i = 0; i < AUTHS; i++)
+		if (auths[i].cred && auths[i].priv == priv &&
+		    !strcmp(auths[i].origin, origin))
+			return &auths[i];
+	return NULL;
+}
+
+int net_auth_set(const char *url, const char *user, const char *password,
+	int priv)
+{
+	char origin[300], *pair;
+	size_t n = strlen(user) + strlen(password) + 2;
+	struct auth *a;
+
+	if (strchr(user, ':') || origin_of(url, origin, sizeof(origin)))
+		return -1;
+	if (!(pair = malloc(n)))
+		abort();
+	snprintf(pair, n, "%s:%s", user, password);
+	pthread_mutex_lock(&auth_lock);
+	if (!(a = auth_find(origin, !!priv))) {
+		/* the oldest goes when all are taken */
+		auth_drop(&auths[AUTHS - 1]);
+		memmove(&auths[1], &auths[0], sizeof(auths[0]) * (AUTHS - 1));
+		memset(&auths[0], 0, sizeof(auths[0]));
+		a = &auths[0];
+	}
+	auth_drop(a);
+	snprintf(a->origin, sizeof(a->origin), "%s", origin);
+	a->cred = base64(pair, n - 1);
+	a->priv = !!priv;
+	pthread_mutex_unlock(&auth_lock);
+	memset(pair, 0, n);
+	free(pair);
+	return 0;
+}
+
+void net_auth_forget(const char *url, int priv)
+{
+	char origin[300];
+	struct auth *a;
+
+	if (origin_of(url, origin, sizeof(origin)))
+		return;
+	pthread_mutex_lock(&auth_lock);
+	if ((a = auth_find(origin, !!priv)))
+		auth_drop(a);
+	pthread_mutex_unlock(&auth_lock);
+}
+
+void net_auth_clear(int priv)
+{
+	int i;
+
+	pthread_mutex_lock(&auth_lock);
+	for (i = 0; i < AUTHS; i++)
+		if (auths[i].cred && auths[i].priv == !!priv)
+			auth_drop(&auths[i]);
+	pthread_mutex_unlock(&auth_lock);
+}
+
+/* "Authorization: Basic ...\r\n" for a request, malloc()ed, or NULL */
+static char *auth_header(const char *url, const soie_request *rq)
+{
+	char origin[300], *h = NULL;
+	struct auth *a;
+
+	if ((rq->flags & SOIE_REQ_NO_COOKIES) ||
+	    (rq->first_party && !same_origin(rq->first_party, url)) ||
+	    origin_of(url, origin, sizeof(origin)))
+		return NULL;
+	pthread_mutex_lock(&auth_lock);
+	if ((a = auth_find(origin, !!(rq->flags & SOIE_REQ_PRIVATE)))) {
+		size_t n = strlen(a->cred) + 32;
+
+		if (!(h = malloc(n)))
+			abort();
+		snprintf(h, n, "Authorization: Basic %s\r\n", a->cred);
+	}
+	pthread_mutex_unlock(&auth_lock);
+	return h;
+}
+
+int net_auth_basic(const char *headers, char *realm, size_t size)
+{
+	const char *p, *v, *e, *b, *q;
+	size_t n;
+
+	*realm = '\0';
+	for (p = headers; (p = strstr(p, "www-authenticate:")); p = e) {
+		v = p + 17;
+		e = v + strcspn(v, "\r\n");
+		if (p != headers && p[-1] != '\n')
+			continue;
+		for (b = v; b + 5 <= e; b++) {
+			if (strncasecmp(b, "basic", 5) || (b > v &&
+			    !strchr(" \t,", b[-1])) || (b + 5 < e &&
+			    !strchr(" \t,", b[5])))
+				continue;
+			for (q = b + 5; q + 6 <= e &&
+			     strncasecmp(q, "realm=", 6); q++)
+				;
+			if (q + 6 > e)
+				return 1;
+			q += 6;
+			if (*q == '"')
+				n = strcspn(++q, "\"\r\n");
+			else
+				n = strcspn(q, ", \t\r\n");
+			if (n >= size)
+				n = size - 1;
+			memcpy(realm, q, n);
+			realm[n] = '\0';
+			for (; *realm; realm++)
+				if ((unsigned char)*realm < 0x20)
+					*realm = ' ';
+			return 1;
+		}
+	}
+	return 0;
+}
+
 /* One request; redirects are followed by net_fetch(). */
 static int request(const char *url, const soie_request *rq,
 	const char *method, const char *headers, const char *body_in,
@@ -1074,6 +1265,13 @@ static int request(const char *url, const soie_request *rq,
 		adds(&req, cookie);
 		adds(&req, "\r\n");
 		free(cookie);
+	}
+	r->auth = 0;
+	if (!has_header(headers, "Authorization") &&
+	    (cookie = auth_header(url, rq))) {
+		adds(&req, cookie);
+		free(cookie);
+		r->auth = 1;
 	}
 	add_headers(&req, headers);
 	if (body_in) {

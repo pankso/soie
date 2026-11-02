@@ -40,6 +40,7 @@ struct response {
 	char url[4096];		/* after redirects */
 	char *headers;		/* "name: value\r\n", names lower case */
 	char error[256];
+	int auth;		/* sent with the user's login (net_auth_set) */
 	struct download *dl;	/* the caller's, or NULL: all in memory */
 };
 
@@ -56,6 +57,17 @@ int net_request(void *data, const soie_request *req, soie_response *res);
  * first; any thread. */
 void net_blocking(int on);
 void response_free(struct response *r);
+/* HTTP Basic logins, by origin, in memory: the user's for url's origin
+ * (-1: a ':' in user, a bad URL), forget it, forget all of the private
+ * windows (priv 1) or the others (0). Sent with that origin's own
+ * requests only. */
+int net_auth_set(const char *url, const char *user, const char *password,
+	int priv);
+void net_auth_forget(const char *url, int priv);
+void net_auth_clear(int priv);
+/* Does a response with these headers ask for a Basic login? Its realm
+ * (or "") in realm. */
+int net_auth_basic(const char *headers, char *realm, size_t size);
 /* Is a response with these headers (a header block, or "name: value"
  * lines) shown as a page, or downloaded? */
 int net_shown(const char *headers);

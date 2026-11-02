@@ -101,6 +101,7 @@ a little tabbed browser on it.
   SpiderMonkey or V8.
 - No JavaScript in iframes (no realm of their own yet).
 - No HSTS, and an https page may be redirected to http.
+- HTTP logins are Basic only (about:auth), no Digest or Kerberos.
 - No `:hover`, `:focus` and other user states in style sheets.
 - No tabs in xsoie and wsoie, windows (Ctrl+N): Toile has tabs, on
   SoieView.

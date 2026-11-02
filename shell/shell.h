@@ -90,6 +90,9 @@ void shell_free(shell *s);
  * scripts use the private cookie jar (in memory only, shared by the
  * private views, empty at start). */
 void shell_private(shell *s);
+/* Forget the HTTP logins typed on about:auth: the private windows'
+ * (private 1) or the others' (0). */
+void shell_forget_logins(int private);
 /* The size of the page view. */
 void shell_resize(shell *s, int w, int h);
 /* The page's zoom: device px a CSS px, 1 by default, 0.1 to 10; a

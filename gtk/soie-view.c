@@ -1587,6 +1587,7 @@ void soie_view_clear_cookies(gboolean private_ones)
 {
 	shell_init();
 	soie_cookies_clear(private_ones ? SOIE_COOKIE_PRIVATE : 0);
+	shell_forget_logins(private_ones);
 }
 
 int soie_view_find(SoieView *v, const char *text, int dir, int *current)

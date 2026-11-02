@@ -28,6 +28,7 @@
 #include "fetch.h"
 #include "shell.h"
 #include "settings.h"
+#include "auth.h"
 #include "debug.h"
 
 #define HOME SHELL_HOME
@@ -119,6 +120,13 @@ struct shell {
 	int pending_replace;
 	char *refresh_url;	/* <meta http-equiv=refresh> */
 	double refresh_at;
+	/* The page that asked for a login (about:auth): its URL, its form
+	 * body, the server's realm, its own 401 page for Cancel */
+	struct {
+		char *url, *post, *realm, *body;
+		size_t len;
+		char type[128], charset[64];
+	} auth;
 	/* Find in the page: the text, the current match (from 1), its
 	 * rect */
 	struct {
@@ -229,6 +237,8 @@ static int scheme_allowed(const char *from, const char *url)
 		return 1;
 	if (settings_url(url))
 		return settings_url(from);
+	if (auth_url(url))
+		return auth_url(from);
 	if (!strncasecmp(url, "file:", 5))
 		return !strncasecmp(from, "file:", 5);
 	return k < 0 || scheme_of(from) == k;
@@ -1079,7 +1089,7 @@ static void first_render(struct shell *s)
 	/* none on the shell's own pages: nothing to run, nothing to
 	 * reach about:settings from inside it */
 	s->page.loading = scripts_on(s) && strcmp(s->page.url, HOME) &&
-		!settings_url(s->page.url) ?
+		!settings_url(s->page.url) && !auth_url(s->page.url) ?
 		L_SCRIPTS : L_NONE;
 	if (s->page.loading == L_SCRIPTS && !res_pending(s, K_SCRIPT))
 		start_scripts(s);
@@ -1142,6 +1152,104 @@ static void load_here(struct shell *s, const char *url, const char *html)
 	free(j.r.body);
 }
 
+/*
+ * HTTP logins: a page that answers 401 with a Basic challenge is shown
+ * as about:auth, a form; what the user types goes to net_auth_set() and
+ * the page is asked again (its form body too), Cancel shows the
+ * server's own 401 page. A login the server refused is forgotten.
+ */
+static void auth_forget(struct shell *s)
+{
+	free(s->auth.url);
+	free(s->auth.post);
+	free(s->auth.realm);
+	free(s->auth.body);
+	memset(&s->auth, 0, sizeof(s->auth));
+}
+
+static int auth_ask(struct shell *s, struct job *j)
+{
+	const char *url = *j->r.url ? j->r.url : j->url;
+	char realm[256], *html;
+
+	if (!j->ok || j->r.status != 401 || !j->r.headers ||
+	    (strncmp(url, "http://", 7) && strncmp(url, "https://", 8)) ||
+	    !net_auth_basic(j->r.headers, realm, sizeof(realm)))
+		return 0;
+	auth_forget(s);
+	s->auth.url = strdup(url);
+	s->auth.post = j->post ? strdup(j->post) : NULL;
+	s->auth.realm = strdup(realm);
+	if (!s->auth.url || (j->post && !s->auth.post) || !s->auth.realm)
+		abort();
+	s->auth.body = j->r.body;
+	s->auth.len = j->r.len;
+	j->r.body = NULL;
+	snprintf(s->auth.type, sizeof(s->auth.type), "%s", j->r.type);
+	snprintf(s->auth.charset, sizeof(s->auth.charset), "%s",
+		j->r.charset);
+	if (j->r.auth)
+		net_auth_forget(url, s->private);
+	debug(1, "login asked%s: %s", j->r.auth ? " again" : "", url);
+	html = auth_page(url, realm, j->r.auth ?
+		"Wrong user name or password." : NULL);
+	load_here(s, AUTH_URL, html);
+	free(html);
+	return 1;
+}
+
+static void load(struct shell *s, const char *url, const char *post,
+	int push);
+
+/* about:auth asked for, its form posted or not */
+static void auth_answer(struct shell *s, const char *post)
+{
+	char *user, *password, *html;
+	int r = post && s->auth.url ? auth_form(post, &user, &password) : -1;
+
+	if (r == 1) {
+		char *url = s->auth.url, *body = s->auth.post;
+		int bad = net_auth_set(url, user, password, s->private);
+
+		memset(password, 0, strlen(password));
+		free(user);
+		free(password);
+		if (!bad) {
+			s->auth.url = s->auth.post = NULL;
+			load(s, url, body, 2);
+			free(url);
+			free(body);
+			return;
+		}
+		html = auth_page(s->auth.url, s->auth.realm,
+			"A user name cannot hold a colon.");
+	} else if (r == 0) {
+		/* the server's page, at its address, in place of the form */
+		struct job j;
+
+		memset(&j, 0, sizeof(j));
+		j.url = s->auth.url;
+		j.ok = 1;
+		j.r.status = 401;
+		snprintf(j.r.url, sizeof(j.r.url), "%s", s->auth.url);
+		strcpy(j.r.type, *s->auth.type ? s->auth.type : "text/html");
+		strcpy(j.r.charset, s->auth.charset);
+		j.r.body = s->auth.body;
+		j.r.len = s->auth.len;
+		s->auth.body = NULL;
+		s->page.push = 2;
+		doc_arrived(s, &j);
+		free(j.r.body);
+		auth_forget(s);
+		return;
+	} else {
+		html = auth_page(s->auth.url, s->auth.realm ? s->auth.realm :
+			"", NULL);
+	}
+	load_here(s, AUTH_URL, html);
+	free(html);
+}
+
 static void load(struct shell *s, const char *url, const char *post, int push)
 {
 	int k;
@@ -1160,6 +1268,10 @@ static void load(struct shell *s, const char *url, const char *post, int push)
 		free(html);
 		if (changed && s->ui.settings)
 			s->ui.settings(s->ui_data);
+		return;
+	}
+	if (auth_url(url)) {
+		auth_answer(s, post);
 		return;
 	}
 	if ((k = scheme_of(url)) >= 0) {
@@ -1469,6 +1581,8 @@ static void doc_or_download(struct shell *s, struct job *j)
 
 	if (d && d == s->page_dl)
 		s->page_dl = NULL;
+	if (auth_ask(s, j))
+		return;
 	if ((d && d->state != DL_NONE) || (j->ok && j->r.status / 100 == 2 &&
 	    j->r.headers && !net_shown(j->r.headers))) {
 		const char *url = j->ok && *j->r.url ? j->r.url : j->url;
@@ -2909,6 +3023,7 @@ void shell_free(struct shell *s)
 	free(s->pending_nav);
 	free(s->pending_open);
 	free(s->refresh_url);
+	auth_forget(s);
 	free(s->found.text);
 	free(s->sel.r);
 	free(s);
@@ -3035,6 +3150,11 @@ void shell_private(struct shell *s)
 {
 	s->private = SOIE_REQ_PRIVATE;
 	s->host.flags = SOIE_REQ_PRIVATE;
+}
+
+void shell_forget_logins(int private)
+{
+	net_auth_clear(private);
 }
 
 void shell_load(struct shell *s, const char *url)

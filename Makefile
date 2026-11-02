@@ -166,9 +166,9 @@ tests/unit: tests/unit.o lib/libsoie.a
 # toolkits: xsoie on Xlib (MIT-SHM).
 SHELL_PKGS = gnutls zlib libpng
 SHELL_OBJS = shell/shell.o shell/net.o shell/fetch.o shell/debug.o \
-	shell/settings.o
+	shell/settings.o shell/auth.o
 SHELL_HEADERS = shell/shell.h shell/net.h shell/fetch.h shell/debug.h \
-	shell/settings.h
+	shell/settings.h shell/auth.h
 FRONT_OBJS = browser/front.o $(SHELL_OBJS)
 browser/xsoie: browser/xsoie.o $(FRONT_OBJS) lib/libsoie.so.$(SOVERSION)
 	$(CC) $(LDFLAGS) $(RPATH) -o $@ browser/xsoie.o $(FRONT_OBJS) \

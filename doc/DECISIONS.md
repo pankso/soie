@@ -742,6 +742,38 @@ reversed, edit the entry and say why; do not leave stale rules here.
   sheet gives them browsers' margins and no field border; placeholders
   are the text colour at 55 %.
 
+## about:auth, HTTP logins
+
+- The CUPS administration pages (localhost:631) were unusable: they
+  answer 401 with a Basic challenge, Soie had no login and showed the
+  401 page (Filature bug 1025, HGT). Basic only: CUPS, routers, most
+  private pages; Digest and Negotiate are not done.
+- A page of the shell's (shell/auth.c), not a dialog in each front:
+  the same in xsoie, wsoie and SoieView/Toile at once, as
+  about:settings. A page load (never a resource) answered 401 with
+  Basic shows about:auth: the host in bold, the server's realm quoted
+  as its words, a warning on plain http except localhost/127.x, user
+  name, password, Log in, Cancel. The shell keeps which URL asked, its
+  form body (a POST is sent again after the login) and the server's
+  own 401 page, which Cancel shows at its address.
+- The login lives in net.c, by origin (one realm each, 16 at most), in
+  memory only, never written; a private window's apart, forgotten with
+  the private cookies (soie_view_clear_cookies), the others with the
+  cookies on about:settings (shell_forget_logins()). Sent with that
+  origin's page loads and what its own pages load; never when the
+  request comes from another site's page (no ambient login for a page
+  that is not the server's, which browsers allow) nor with credentials
+  omitted. A login the server answers 401 to is forgotten, the form
+  comes back saying so.
+- Only about:auth may post to about:auth (scheme_allowed(), as
+  about:settings): otherwise a page could log the user in to the
+  waiting server as someone else. Tested through form, link, location,
+  meta refresh, script form.submit(); with the check removed the
+  hostile form does reach the server, the test bites. No script runs
+  on it.
+- A password field's caret was placed in the bullets by the value's
+  byte offset (3 bytes a bullet): now one bullet a character.
+
 ## The shell on its own, many page views
 
 - The shell left browser/ for shell/ (shell.c, net.c, fetch.c,
