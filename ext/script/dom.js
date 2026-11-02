@@ -3298,6 +3298,12 @@ class Range {
 
 /* Location */
 let href = api.url;
+
+/* Where relative URLs start: the document's base, or a worker's URL */
+function startURL() {
+	return document ? document.baseURI : href;
+}
+
 const location = {
 	get href() { return href; },
 	set href(v) { navigate(String(v), false); },
@@ -4035,7 +4041,7 @@ class Request {
 	constructor(input, init = {}) {
 		const r = input instanceof Request ? input[REQ] : null;
 		this[REQ] = {
-			url: r ? r.url : new URL(String(input), document.baseURI).href,
+			url: r ? r.url : new URL(String(input), startURL()).href,
 			method: method(init.method || (r && r.method) || 'GET'),
 			headers: new Headers(init.headers || (r && r.headers)),
 			body: bodyString(init.body !== undefined ? init.body :
@@ -4311,7 +4317,7 @@ class XMLHttpRequest extends EventTarget {
 	}
 	open(m, url, async = true) {
 		this._method = method(m);
-		this._url = new URL(String(url), document.baseURI).href;
+		this._url = new URL(String(url), startURL()).href;
 		this._async = async !== false;
 		this._headers = new Headers();
 		this._aborted = false;
