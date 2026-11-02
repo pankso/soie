@@ -11,7 +11,8 @@ var i = 0, iv = setInterval(() => { log('interval', ++i); if (i === 3) clearInte
 Promise.resolve().then(() => log('microtask 1')).then(() => log('microtask 2'));
 queueMicrotask(() => log('queueMicrotask'));
 requestAnimationFrame(ts => log('frame', typeof ts));
-(async () => { await null; log('async'); await new Promise(r => setTimeout(r, 180)); log('async after 180'); })();
+(async () => { await null; log('async'); await new Promise(r => setTimeout(r, 180)); log('async after 180');
+	await null; setTimeout(() => log('timer set by a microtask, nothing else due'), 0); })();
 setTimeout("log('string handler')", 70);
 log('sync 2');
 </script>

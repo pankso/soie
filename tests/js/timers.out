@@ -13,3 +13,4 @@ log: interval 2
 log: timeout 120
 log: interval 3
 log: async after 180
+log: timer set by a microtask, nothing else due

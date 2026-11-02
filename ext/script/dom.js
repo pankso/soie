@@ -585,6 +585,11 @@ api.tick = function () {
 			report(e);
 		}
 	}
+};
+
+/* ms until the next timer, -1 for none: asked after the microtasks,
+ * which may set some (a fetch() answered sets the one of the next) */
+api.nextTimer = function () {
 	let next = -1;
 	const later = api.now();
 	for (const t of timers.values()) {

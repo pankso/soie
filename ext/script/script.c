@@ -65,7 +65,7 @@ struct sctx {
 	const soie_script_host *host;
 	char *url;
 	JSValue api;
-	JSValue proto_for, dispatch, tick, frame;
+	JSValue proto_for, dispatch, tick, frame, next_timer;
 	/* nodes with a wrapper (struct wref their user pointer) */
 	soie_node **wrapped;
 	size_t nwrapped, capwrapped;
@@ -2712,6 +2712,7 @@ static struct sctx *ctx_new(soie_node *doc, const char *url,
 	c->dispatch = JS_GetPropertyStr(c->js, c->api, "dispatch");
 	c->tick = JS_GetPropertyStr(c->js, c->api, "tick");
 	c->frame = JS_GetPropertyStr(c->js, c->api, "frame");
+	c->next_timer = JS_GetPropertyStr(c->js, c->api, "nextTimer");
 	c->received = JS_GetPropertyStr(c->js, c->api, "received");
 	c->wevent = JS_GetPropertyStr(c->js, c->api, "workerEvent");
 	/* the document object */
@@ -2773,6 +2774,7 @@ static void stop(void *ctx)
 	JS_FreeValue(c->js, c->dispatch);
 	JS_FreeValue(c->js, c->tick);
 	JS_FreeValue(c->js, c->frame);
+	JS_FreeValue(c->js, c->next_timer);
 	JS_FreeValue(c->js, c->received);
 	JS_FreeValue(c->js, c->wevent);
 	JS_FreeValue(c->js, c->api);
@@ -2946,15 +2948,17 @@ static int tick(void *ctx)
 	sweep(c);
 	deliver(c);
 	deliver_workers(c);
-	v = JS_Call(c->js, c->tick, JS_UNDEFINED, 0, NULL);
-	if (!JS_IsException(v))
-		JS_ToFloat64(c->js, &d, v);
-	settle(c, v);
+	settle(c, JS_Call(c->js, c->tick, JS_UNDEFINED, 0, NULL));
 	/* then the rendering step, its own microtasks after it */
 	c->deadline = now_ms() + RUN_MS;
 	v = JS_Call(c->js, c->frame, JS_UNDEFINED, 0, NULL);
 	if (!JS_IsException(v))
 		JS_ToFloat64(c->js, &f, v);
+	settle(c, v);
+	/* the next timer once all microtasks ran: they may set some */
+	v = JS_Call(c->js, c->next_timer, JS_UNDEFINED, 0, NULL);
+	if (!JS_IsException(v))
+		JS_ToFloat64(c->js, &d, v);
 	settle(c, v);
 	if (f >= 0 && (d < 0 || f < d))
 		d = f;
