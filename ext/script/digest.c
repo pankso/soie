@@ -1,6 +1,7 @@
 /*
- * Digests for crypto.subtle.digest(): SHA-1, SHA-256, SHA-384 and
- * SHA-512 (FIPS 180-4), whole messages in memory.
+ * Digests for crypto.subtle: SHA-1, SHA-256, SHA-384 and SHA-512
+ * (FIPS 180-4), whole messages in memory, HMAC (RFC 2104) and PBKDF2
+ * (RFC 8018) on them.
  *
  * Copyright (C) 2026 Christophe Lincoln <pankso@slitaz.org>
  * Written with the assistance of Claude (Anthropic) and Opencode.
@@ -8,6 +9,7 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 #include <stdint.h>
+#include <stdlib.h>
 #include <string.h>
 #include "digest.h"
 
@@ -43,10 +45,11 @@ static void put64(uint8_t *p, uint64_t v)
 /*
  * The message padded in blocks of bs bytes (64 or 128): the data, 0x80,
  * zeros, its length in bits (big endian, at the end); block()
- * runs on each.
+ * runs on each. pre bytes of the message went through st already
+ * (HMAC's padded key).
  */
-static void blocks(const uint8_t *data, size_t len, size_t bs, void *st,
-	void (*block)(void *st, const uint8_t *b))
+static void blocks(const uint8_t *data, size_t len, size_t bs, uint64_t pre,
+	void *st, void (*block)(void *st, const uint8_t *b))
 {
 	uint8_t last[256];
 	size_t i, n = len / bs * bs, rest = len - n, total;
@@ -58,7 +61,7 @@ static void blocks(const uint8_t *data, size_t len, size_t bs, void *st,
 	memset(last, 0, total);
 	memcpy(last, data + n, rest);
 	last[rest] = 0x80;
-	put64(last + total - 8, (uint64_t)len << 3);
+	put64(last + total - 8, (pre + len) << 3);
 	for (i = 0; i < total; i += bs)
 		block(st, last + i);
 }
@@ -203,48 +206,147 @@ static void sha512_block(void *st, const uint8_t *b)
 		h[i] += s[i];
 }
 
+static const uint32_t iv1[5] = { 0x67452301, 0xefcdab89, 0x98badcfe,
+	0x10325476, 0xc3d2e1f0 };
+static const uint32_t iv256[8] = { 0x6a09e667, 0xbb67ae85, 0x3c6ef372,
+	0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19 };
+static const uint64_t iv384[8] = { 0xcbbb9d5dc1059ed8ULL,
+	0x629a292a367cd507ULL, 0x9159015a3070dd17ULL, 0x152fecd8f70e5939ULL,
+	0x67332667ffc00b31ULL, 0x8eb44a8768581511ULL, 0xdb0c2e0d64f98fa7ULL,
+	0x47b5481dbefa4fa4ULL };
+static const uint64_t iv512[8] = { 0x6a09e667f3bcc908ULL,
+	0xbb67ae8584caa73bULL, 0x3c6ef372fe94f82bULL, 0xa54ff53a5f1d36f1ULL,
+	0x510e527fade682d1ULL, 0x9b05688c2b3e6c1fULL, 0x1f83d9abfb41bd6bULL,
+	0x5be0cd19137e2179ULL };
+
+/* An algorithm: its block and digest sizes, its state (stlen bytes, in
+ * words of wsize bytes) as it starts, its block function */
+static const struct alg {
+	const char *name;
+	size_t bs, len, stlen, wsize;
+	const void *iv;
+	void (*block)(void *st, const uint8_t *b);
+} algs[] = {
+	{ "SHA-1", 64, 20, 20, 4, iv1, sha1_block },
+	{ "SHA-256", 64, 32, 32, 4, iv256, sha256_block },
+	{ "SHA-384", 128, 48, 64, 8, iv384, sha512_block },
+	{ "SHA-512", 128, 64, 64, 8, iv512, sha512_block },
+};
+
+static const struct alg *find(const char *name)
+{
+	size_t i;
+
+	for (i = 0; i < sizeof(algs) / sizeof(*algs); i++)
+		if (!strcmp(name, algs[i].name))
+			return &algs[i];
+	return NULL;
+}
+
+/* The digest of data from state st0, pre bytes already in it */
+static void hash(const struct alg *a, const void *st0, uint64_t pre,
+	const uint8_t *data, size_t len, uint8_t *out)
+{
+	uint64_t st[8];
+	size_t i;
+
+	memcpy(st, st0, a->stlen);
+	blocks(data, len, a->bs, pre, st, a->block);
+	for (i = 0; i < a->len / a->wsize; i++)
+		if (a->wsize == 4)
+			put32(out + 4 * i, ((uint32_t *)st)[i]);
+		else
+			put64(out + 8 * i, st[i]);
+}
+
 int digest(const char *alg, const void *data, size_t len, uint8_t *out)
 {
-	int i;
+	const struct alg *a = find(alg);
 
-	if (!strcmp(alg, "SHA-1")) {
-		uint32_t h[5] = { 0x67452301, 0xefcdab89, 0x98badcfe,
-			0x10325476, 0xc3d2e1f0 };
+	if (!a)
+		return -1;
+	hash(a, a->iv, 0, data, len, out);
+	return (int)a->len;
+}
 
-		blocks(data, len, 64, h, sha1_block);
-		for (i = 0; i < 5; i++)
-			put32(out + 4 * i, h[i]);
-		return 20;
+/* HMAC with a key: the states after its inner and outer padded blocks,
+ * so that each message costs only its own blocks (PBKDF2 runs
+ * thousands) */
+struct hmac {
+	const struct alg *a;
+	uint64_t in[8], out[8];
+};
+
+static int hmac_key(struct hmac *h, const char *alg, const uint8_t *key,
+	size_t klen)
+{
+	const struct alg *a = find(alg);
+	uint8_t k[128], pad[128];
+	size_t i;
+
+	if (!(h->a = a))
+		return -1;
+	memset(k, 0, sizeof(k));
+	if (klen > a->bs)
+		hash(a, a->iv, 0, key, klen, k);
+	else if (klen)
+		memcpy(k, key, klen);
+	memcpy(h->in, a->iv, a->stlen);
+	memcpy(h->out, a->iv, a->stlen);
+	for (i = 0; i < a->bs; i++)
+		pad[i] = k[i] ^ 0x36;
+	a->block(h->in, pad);
+	for (i = 0; i < a->bs; i++)
+		pad[i] = k[i] ^ 0x5c;
+	a->block(h->out, pad);
+	return 0;
+}
+
+static void hmac_run(const struct hmac *h, const uint8_t *data, size_t len,
+	uint8_t *out)
+{
+	uint8_t in[64];
+
+	hash(h->a, h->in, h->a->bs, data, len, in);
+	hash(h->a, h->out, h->a->bs, in, h->a->len, out);
+}
+
+int hmac(const char *alg, const void *key, size_t klen, const void *data,
+	size_t len, uint8_t *out)
+{
+	struct hmac h;
+
+	if (hmac_key(&h, alg, key, klen))
+		return -1;
+	hmac_run(&h, data, len, out);
+	return (int)h.a->len;
+}
+
+int pbkdf2(const char *alg, const void *pass, size_t plen, const void *salt,
+	size_t slen, unsigned long iter, uint8_t *out, size_t dklen)
+{
+	struct hmac h;
+	uint8_t *s, u[64], t[64];
+	size_t done, i, n;
+	unsigned long j;
+	uint32_t block;
+
+	if (!iter || hmac_key(&h, alg, pass, plen) || !(s = malloc(slen + 4)))
+		return -1;
+	if (slen)
+		memcpy(s, salt, slen);
+	for (block = 1, done = 0; done < dklen; block++, done += n) {
+		put32(s + slen, block);
+		hmac_run(&h, s, slen + 4, u);
+		memcpy(t, u, h.a->len);
+		for (j = 1; j < iter; j++) {
+			hmac_run(&h, u, h.a->len, u);
+			for (i = 0; i < h.a->len; i++)
+				t[i] ^= u[i];
+		}
+		n = dklen - done < h.a->len ? dklen - done : h.a->len;
+		memcpy(out + done, t, n);
 	}
-	if (!strcmp(alg, "SHA-256")) {
-		uint32_t h[8] = { 0x6a09e667, 0xbb67ae85, 0x3c6ef372,
-			0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab,
-			0x5be0cd19 };
-
-		blocks(data, len, 64, h, sha256_block);
-		for (i = 0; i < 8; i++)
-			put32(out + 4 * i, h[i]);
-		return 32;
-	}
-	if (!strcmp(alg, "SHA-384") || !strcmp(alg, "SHA-512")) {
-		static const uint64_t h384[8] = { 0xcbbb9d5dc1059ed8ULL,
-			0x629a292a367cd507ULL, 0x9159015a3070dd17ULL,
-			0x152fecd8f70e5939ULL, 0x67332667ffc00b31ULL,
-			0x8eb44a8768581511ULL, 0xdb0c2e0d64f98fa7ULL,
-			0x47b5481dbefa4fa4ULL };
-		static const uint64_t h512[8] = { 0x6a09e667f3bcc908ULL,
-			0xbb67ae8584caa73bULL, 0x3c6ef372fe94f82bULL,
-			0xa54ff53a5f1d36f1ULL, 0x510e527fade682d1ULL,
-			0x9b05688c2b3e6c1fULL, 0x1f83d9abfb41bd6bULL,
-			0x5be0cd19137e2179ULL };
-		int n = alg[4] == '3' ? 6 : 8;
-		uint64_t h[8];
-
-		memcpy(h, n == 6 ? h384 : h512, sizeof(h));
-		blocks(data, len, 128, h, sha512_block);
-		for (i = 0; i < n; i++)
-			put64(out + 8 * i, h[i]);
-		return 8 * n;
-	}
-	return -1;
+	free(s);
+	return 0;
 }

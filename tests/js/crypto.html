@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<p>crypto.subtle: HMAC, PBKDF2 (RFC 4231, RFC 6070), raw keys</p>
+<script>
+var log = (...a) => console.log(a.map(String).join(' '));
+var hex = (b) => [...new Uint8Array(b)].map((x) => x.toString(16).padStart(2, '0')).join('');
+var te = (s) => new TextEncoder().encode(s);
+var s = crypto.subtle;
+var hmac = (hash, key, data) => s.importKey('raw', key, { name: 'HMAC', hash }, false, ['sign'])
+	.then((k) => s.sign('HMAC', k, te(data)));
+var pbkdf2 = (hash, p, salt, iterations, bits) => s.importKey('raw', te(p), 'PBKDF2', false, ['deriveBits'])
+	.then((k) => s.deriveBits({ name: 'PBKDF2', hash, salt: te(salt), iterations }, k, bits));
+var err = (p) => p.then(() => 'never: resolved', (e) => e.name);
+(async () => {
+	log('CryptoKey', typeof CryptoKey);
+	log('hmac sha1', hex(await hmac('SHA-1', te('Jefe'), 'what do ya want for nothing?')));
+	log('hmac sha256', hex(await hmac('SHA-256', te('Jefe'), 'what do ya want for nothing?')));
+	log('hmac sha512', hex(await hmac({ name: 'SHA-512' }, te('Jefe'), 'what do ya want for nothing?')).slice(0, 32));
+	log('hmac long key', hex(await hmac('SHA-256', new Uint8Array(131).fill(0xaa),
+		'Test Using Larger Than Block-Size Key - Hash Key First')));
+	log('pbkdf2 sha1 1', hex(await pbkdf2('SHA-1', 'password', 'salt', 1, 160)));
+	log('pbkdf2 sha1 4096', hex(await pbkdf2('SHA-1', 'password', 'salt', 4096, 160)));
+	log('pbkdf2 two blocks', hex(await pbkdf2('SHA-1', 'passwordPASSWORDpassword',
+		'saltSALTsaltSALTsaltSALTsaltSALTsalt', 4096, 200)));
+	log('pbkdf2 sha256', hex(await pbkdf2('SHA-256', 'password', 'salt', 1, 256)));
+	var base = await s.importKey('raw', te('password'), { name: 'PBKDF2' }, false, ['deriveKey']);
+	var aes = await s.deriveKey({ name: 'PBKDF2', hash: 'SHA-256', salt: te('salt'), iterations: 1 },
+		base, { name: 'AES-GCM', length: 256 }, true, ['encrypt']);
+	log('derived', aes instanceof CryptoKey, aes.type, aes.extractable, JSON.stringify(aes.algorithm), aes.usages);
+	log('exported', hex(await s.exportKey('raw', aes)));
+	var hk = await s.importKey('raw', te('Jefe'), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign', 'verify']);
+	var sig = await s.sign('HMAC', hk, te('what do ya want for nothing?'));
+	log('verify', await s.verify('HMAC', hk, sig, te('what do ya want for nothing?')),
+		await s.verify('HMAC', hk, sig, te('what do ya want for something?')));
+	log('export not extractable', await err(s.exportKey('raw', hk)));
+	log('pbkdf2 extractable', await err(s.importKey('raw', te('p'), 'PBKDF2', true, ['deriveBits'])));
+	log('no usage', await err(s.deriveBits({ name: 'PBKDF2', hash: 'SHA-256', salt: te('s'), iterations: 1 }, base, 256)));
+	log('bad length', await err(s.deriveKey({ name: 'PBKDF2', hash: 'SHA-256', salt: te('s'), iterations: 1 },
+		base, { name: 'AES-GCM', length: 100 }, true, ['encrypt'])));
+	log('md5 hmac', await err(s.importKey('raw', te('k'), { name: 'HMAC', hash: 'MD5' }, false, ['sign'])));
+	log('encrypt', await err(s.encrypt({ name: 'AES-GCM', iv: new Uint8Array(12) }, aes, te('x'))));
+	log('new CryptoKey', (() => { try { new CryptoKey(); } catch (e) { return e.name; } })());
+	/* in a worker, as ALTCHA does it */
+	var w = new Worker(URL.createObjectURL(new Blob([
+		'onmessage = async (e) => {' +
+		' const k = await crypto.subtle.importKey("raw", e.data, "PBKDF2", false, ["deriveBits"]);' +
+		' const b = await crypto.subtle.deriveBits({ name: "PBKDF2", hash: "SHA-256", salt: new Uint8Array(4), iterations: 8000 }, k, 128);' +
+		' postMessage([...new Uint8Array(b)].map((x) => x.toString(16).padStart(2, "0")).join(""));' +
+		'};'])));
+	w.onmessage = (e) => log('worker', e.data);
+	w.postMessage(te('pass'));
+})();
+</script>

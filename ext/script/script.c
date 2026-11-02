@@ -2436,6 +2436,53 @@ static JSValue n_digest(JSContext *js, JSValueConst this, int argc,
 	return k < 0 ? JS_NULL : JS_NewArrayBufferCopy(js, out, (size_t)k);
 }
 
+/* hmac(algorithm, key, bytes): an ArrayBuffer, null for an algorithm
+ * we do not have */
+static JSValue n_hmac(JSContext *js, JSValueConst this, int argc,
+	JSValueConst *argv)
+{
+	uint8_t out[64];
+	const uint8_t *k, *b;
+	size_t kn = 0, n = 0;
+	int r;
+	STR(0, alg);
+
+	(void)this;
+	k = argc > 1 ? bytes_of(js, argv[1], &kn) : NULL;
+	b = argc > 2 ? bytes_of(js, argv[2], &n) : NULL;
+	r = hmac(alg, k ? k : (const uint8_t *)"", kn,
+		b ? b : (const uint8_t *)"", n, out);
+	JS_FreeCString(js, alg);
+	return r < 0 ? JS_NULL : JS_NewArrayBufferCopy(js, out, (size_t)r);
+}
+
+/* pbkdf2(hash, password, salt, iterations, bytes): an ArrayBuffer of
+ * that many bytes (64 KB at most), null for a hash we do not have */
+static JSValue n_pbkdf2(JSContext *js, JSValueConst this, int argc,
+	JSValueConst *argv)
+{
+	const uint8_t *p, *s;
+	size_t pn = 0, sn = 0;
+	uint32_t iter = 0, len = 0;
+	uint8_t *out;
+	JSValue v = JS_NULL;
+	STR(0, alg);
+
+	(void)this;
+	p = argc > 1 ? bytes_of(js, argv[1], &pn) : NULL;
+	s = argc > 2 ? bytes_of(js, argv[2], &sn) : NULL;
+	if (argc > 4 && !JS_ToUint32(js, &iter, argv[3]) &&
+	    !JS_ToUint32(js, &len, argv[4]) && len && len <= 65536 &&
+	    (out = malloc(len))) {
+		if (!pbkdf2(alg, p ? p : (const uint8_t *)"", pn,
+		    s ? s : (const uint8_t *)"", sn, iter, out, len))
+			v = JS_NewArrayBufferCopy(js, out, len);
+		free(out);
+	}
+	JS_FreeCString(js, alg);
+	return v;
+}
+
 /* What a worker tells its page: a log line, or an uncaught error
  * (error) for its error event */
 static void wk_log(struct wk *w, int kind, const char *text, int error)
@@ -2522,6 +2569,8 @@ static const JSCFunctionListEntry natives[] = {
 	JS_CFUNC_DEF("workerError", 1, n_worker_error),
 	JS_CFUNC_DEF("cloneValue", 1, n_clone_value),
 	JS_CFUNC_DEF("digest", 2, n_digest),
+	JS_CFUNC_DEF("hmac", 3, n_hmac),
+	JS_CFUNC_DEF("pbkdf2", 5, n_pbkdf2),
 };
 
 /* Modules: specifiers are URLs, fetched through the host. */

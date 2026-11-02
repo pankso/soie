@@ -5127,28 +5127,183 @@ const crypto = {
 	},
 };
 
-/* crypto.subtle: digests only (SHA-1, SHA-256, SHA-384, SHA-512) */
-const subtle = {
-	digest(alg, data) {
-		try {
-			const name = String(alg && typeof alg === 'object' ?
-				alg.name : alg).toUpperCase();
-			const b = asBytes(data);
-			if (!b)
-				throw new TypeError('digest: not a BufferSource');
-			const r = api.digest(name, b);
-			return r ? Promise.resolve(r) : Promise.reject(
-				new DOMException('digest: ' + name + ' is not ' +
-				'supported', 'NotSupportedError'));
-		} catch (e) {
-			return Promise.reject(e);
-		}
-	},
+/*
+ * crypto.subtle: digests (SHA-1, SHA-256, SHA-384, SHA-512), HMAC
+ * (sign, verify) and PBKDF2 (deriveBits, deriveKey: ALTCHA's proof of
+ * work), raw keys. No cipher: an AES key can be derived, imported and
+ * exported, not used.
+ */
+const keys = new WeakMap();
+class CryptoKey {
+	constructor() {
+		throw new TypeError('Illegal constructor');
+	}
+	get type() { return 'secret'; }
+	get extractable() { return keys.get(this).extractable; }
+	get algorithm() { return keys.get(this).algorithm; }
+	get usages() { return keys.get(this).usages; }
+}
+
+function algName(a) {
+	return String(a && typeof a === 'object' ? a.name : a).toUpperCase();
+}
+
+function cryptoError(what, name) {
+	return new DOMException(what, name);
+}
+
+function hashOf(a) {
+	const h = algName(a);
+	if (!/^SHA-(1|256|384|512)$/.test(h))
+		throw cryptoError(h + ' is not a supported hash',
+			'NotSupportedError');
+	return h;
+}
+
+function bytesOf(b, what) {
+	const a = asBytes(b);
+	if (!a)
+		throw new TypeError(what + ': not a BufferSource');
+	return a;
+}
+
+/* A secret key of algorithm alg (name, its parameters) on bytes */
+function newKey(alg, bytes, extractable, usages) {
+	const name = algName(alg);
+	let algorithm, can;
+	usages = [...usages].map(String);
+	if (name === 'PBKDF2') {
+		if (extractable)
+			throw cryptoError('PBKDF2 keys are not extractable',
+				'SyntaxError');
+		algorithm = { name };
+		can = ['deriveKey', 'deriveBits'];
+	} else if (name === 'HMAC') {
+		if (!alg.hash)
+			throw new TypeError('HMAC: a hash is required');
+		if (!bytes.length)
+			throw cryptoError('empty HMAC key', 'DataError');
+		algorithm = { name, hash: { name: hashOf(alg.hash) },
+			length: bytes.length * 8 };
+		can = ['sign', 'verify'];
+	} else if (/^AES-(GCM|CBC|CTR|KW)$/.test(name)) {
+		if (![16, 24, 32].includes(bytes.length))
+			throw cryptoError('AES keys are 128, 192 or 256 bits',
+				'DataError');
+		algorithm = { name, length: bytes.length * 8 };
+		can = name === 'AES-KW' ? ['wrapKey', 'unwrapKey'] :
+			['encrypt', 'decrypt', 'wrapKey', 'unwrapKey'];
+	} else {
+		throw cryptoError(name + ' is not supported',
+			'NotSupportedError');
+	}
+	if (!usages.length || usages.some((u) => !can.includes(u)))
+		throw cryptoError('bad key usages for ' + name, 'SyntaxError');
+	const k = Object.create(CryptoKey.prototype);
+	keys.set(k, { extractable: !!extractable, algorithm,
+		usages: [...new Set(usages)], bytes: bytes.slice() });
+	return k;
+}
+
+/* key's record, if it is of algorithm name and allowed usage */
+function keyFor(key, name, usage) {
+	const k = keys.get(key);
+	if (!k)
+		throw new TypeError('not a CryptoKey');
+	if (k.algorithm.name !== name || !k.usages.includes(usage))
+		throw cryptoError('key not for ' + name + ' ' + usage,
+			'InvalidAccessError');
+	return k;
+}
+
+function pbkdf2Bits(alg, key, length, usage) {
+	if (algName(alg) !== 'PBKDF2')
+		throw cryptoError(algName(alg) + ' is not supported',
+			'NotSupportedError');
+	const k = keyFor(key, 'PBKDF2', usage);
+	const iter = +alg.iterations;
+	if (!length || length % 8 || !(iter >= 1))
+		throw cryptoError('PBKDF2: bad length or iterations',
+			'OperationError');
+	const r = api.pbkdf2(hashOf(alg.hash), k.bytes,
+		bytesOf(alg.salt, 'PBKDF2 salt'), iter, length / 8);
+	if (!r)
+		throw cryptoError('PBKDF2: cannot derive that', 'OperationError');
+	return r;
+}
+
+/* each method answers a promise, its errors rejections */
+const promised = (f) => function (...a) {
+	try {
+		return Promise.resolve(f(...a));
+	} catch (e) {
+		return Promise.reject(e);
+	}
 };
-for (const k of ['encrypt', 'decrypt', 'sign', 'verify', 'generateKey',
-	'deriveKey', 'deriveBits', 'importKey', 'exportKey', 'wrapKey',
+
+const subtle = {
+	digest: promised((alg, data) => {
+		const name = algName(alg);
+		const r = api.digest(name, bytesOf(data, 'digest'));
+		if (!r)
+			throw cryptoError('digest: ' + name + ' is not supported',
+				'NotSupportedError');
+		return r;
+	}),
+	importKey: promised((format, data, alg, extractable, usages) => {
+		if (format !== 'raw')
+			throw cryptoError(format + ' keys are not supported',
+				'NotSupportedError');
+		return newKey(alg, bytesOf(data, 'importKey'), extractable,
+			usages);
+	}),
+	exportKey: promised((format, key) => {
+		const k = keys.get(key);
+		if (!k)
+			throw new TypeError('not a CryptoKey');
+		if (format !== 'raw' || k.algorithm.name === 'PBKDF2')
+			throw cryptoError(format + ' export is not supported',
+				'NotSupportedError');
+		if (!k.extractable)
+			throw cryptoError('key not extractable',
+				'InvalidAccessError');
+		return bufferOf(k.bytes);
+	}),
+	sign: promised((alg, key, data) => {
+		const k = keyFor(key, algName(alg), 'sign');
+		if (k.algorithm.name !== 'HMAC')
+			throw cryptoError('sign: not supported', 'NotSupportedError');
+		return api.hmac(k.algorithm.hash.name, k.bytes,
+			bytesOf(data, 'sign'));
+	}),
+	verify: promised((alg, key, sig, data) => {
+		const k = keyFor(key, algName(alg), 'verify');
+		if (k.algorithm.name !== 'HMAC')
+			throw cryptoError('verify: not supported',
+				'NotSupportedError');
+		const a = new Uint8Array(api.hmac(k.algorithm.hash.name, k.bytes,
+			bytesOf(data, 'verify')));
+		const b = bytesOf(sig, 'verify');
+		let d = a.length ^ b.length;
+		for (let i = 0; i < a.length && i < b.length; i++)
+			d |= a[i] ^ b[i];
+		return d === 0;
+	}),
+	deriveBits: promised((alg, key, length) =>
+		pbkdf2Bits(alg, key, length, 'deriveBits')),
+	deriveKey: promised((alg, key, type, extractable, usages) => {
+		const name = algName(type);
+		let length = type && +type.length;
+		if (name === 'HMAC' && !length)
+			length = /^SHA-(384|512)$/.test(hashOf(type.hash)) ?
+				1024 : 512;
+		const r = pbkdf2Bits(alg, key, length, 'deriveKey');
+		return newKey(type, new Uint8Array(r), extractable, usages);
+	}),
+};
+for (const k of ['encrypt', 'decrypt', 'generateKey', 'wrapKey',
 	'unwrapKey'])
-	subtle[k] = () => Promise.reject(new DOMException(k + ' is not ' +
+	subtle[k] = () => Promise.reject(cryptoError(k + ' is not ' +
 		'supported', 'NotSupportedError'));
 crypto.subtle = subtle;
 
@@ -5255,7 +5410,7 @@ const globals = {
 	frameElement: null, closed: false, length: 0, name: '',
 	status: '', origin: '', isSecureContext: true, crossOriginIsolated: false,
 	location, history, navigator, screen, performance, console, CSS,
-	crypto,
+	crypto, CryptoKey,
 	customElements, NodeFilter,
 	localStorage: new Proxy(new Storage(), storageHandler),
 	sessionStorage: new Proxy(new Storage(), storageHandler),
@@ -5392,6 +5547,7 @@ if (api.worker) {
 		},
 	};
 	for (const k of ['navigator', 'performance', 'console', 'crypto',
+		'CryptoKey',
 		'isSecureContext', 'crossOriginIsolated', 'origin',
 		'EventTarget', 'Event', 'CustomEvent', 'ErrorEvent',
 		'MessageEvent', 'ProgressEvent', 'DOMException',
