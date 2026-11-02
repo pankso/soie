@@ -806,6 +806,49 @@ reversed, edit the entry and say why; do not leave stale rules here.
   0.40 s (20 of its 30 resources from the cache); the second article
   took 11 from the first's.
 
+## The private network guard
+
+- A web page could make Soie ask anything of the user's own network:
+  an image, a fetch() or a form to the router (its DNS, its ports),
+  the printer, CUPS on :631, a model server on localhost (Ollama,
+  llama.cpp: no password), a dev server; or time the errors to map
+  the machines there. Browsers block it now (Chrome's Local Network
+  Access, with a prompt); Lightpanda has it as an option for agents.
+- Three levels of address, from the most public: public, the local
+  network (10/8, 172.16/12, 192.168/16, 169.254/16, 100.64/10 for the
+  operators' NAT and VPNs like Tailscale, fc00::/7, fe80::/10), this
+  machine (127/8, 0/8: 0.0.0.0 reaches it on Linux, ::1, ::). IPv4 in
+  IPv6 (::ffff:a.b.c.d) counts as IPv4. A page asks for nothing more
+  private than itself: a public page nothing of the local network or
+  of the machine, a local network page nothing of the machine.
+- A page's level is where it came from: the address its response came
+  from (struct response.level, kept in the cache entry for Back),
+  file:// the machine, the others (about:, a front's scheme, data:,
+  an error) public. The shell gives it to every request of the page as
+  SOIE_REQ_NO_LAN or SOIE_REQ_NO_LOOPBACK (ext.h: the script engine
+  passes its host's flags through, SOIE_REQ_PAGE), so its resources,
+  frames, scripts' fetch/XHR, modules, workers and players all carry
+  it; flags are taken when the request is made, a request still out
+  after the next page keeps its own.
+- Checked in dial(), on each address the name gives, after every
+  redirection: a name that said public may say 127.0.0.1 a minute
+  later (DNS rebinding), it is the address that counts. A pooled
+  connection is only reused at its level or under; a cache entry from
+  further than the request may go is a miss.
+- What the user does is not guarded: an address typed, a bookmark, a
+  link followed, a GET form (the user sees where they land). A POST
+  form of a public page to the local network is (the routers' attack:
+  a form that changes their settings); scripts cannot send a POST form
+  (form.submit() refuses it). Nothing to set: no page found yet that
+  needs an exception; a settings switch if one shows up.
+- Tested in network namespaces (unshare -n, addresses 203.0.113.5 and
+  192.168.250.1 on lo, a hosts file naming 127.0.0.1): from a public
+  page no path reached the local network or the machine (style sheet,
+  image, redirect, 0.0.0.0, a name, frame, video, fetch, sync XHR,
+  module, worker and its fetch, POST form), from a local
+  network page only the machine was refused, and from a page on the
+  machine all went through (the control).
+
 ## The shell on its own, many page views
 
 - The shell left browser/ for shell/ (shell.c, net.c, fetch.c,

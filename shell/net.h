@@ -31,6 +31,11 @@ struct download {
 	volatile int cancel;	/* the caller's: stop */
 };
 
+/* Where an address is, from the most public: the private network guard
+ * (SOIE_REQ_NO_LAN, SOIE_REQ_NO_LOOPBACK) keeps a page's requests at
+ * its own level or more public */
+enum { NET_PUBLIC, NET_LAN, NET_LOOPBACK };
+
 struct response {
 	int status;
 	char *body;
@@ -41,6 +46,8 @@ struct response {
 	char *headers;		/* "name: value\r\n", names lower case */
 	char error[256];
 	int auth;		/* sent with the user's login (net_auth_set) */
+	int level;		/* NET_*: the address it came from (file://:
+				 * NET_LOOPBACK, the others NET_PUBLIC) */
 	struct download *dl;	/* the caller's, or NULL: all in memory */
 };
 
@@ -50,7 +57,9 @@ struct response {
 
 /* A request through the extensions (blocking, cookies, schemes), the
  * HTTP cache (cache.c) and the network. A body without a Content-Type
- * header is sent as a urlencoded form. */
+ * header is sent as a urlencoded form. SOIE_REQ_NO_LAN and
+ * SOIE_REQ_NO_LOOPBACK are checked on the address connected to, after
+ * each redirection (no DNS rebinding around them). */
 int net_fetch(const soie_request *req, struct response *r);
 /* Open a connection to url's server and leave it in the pool for the
  * requests to come, unless n are there already. */

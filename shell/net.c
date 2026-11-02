@@ -24,10 +24,12 @@
 #include <unistd.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
+#include <netinet/in.h>
 #include <gnutls/gnutls.h>
 #include <zlib.h>
 #include "net.h"
 #include "cache.h"
+#include "debug.h"
 
 #define TIMEOUT_MS 20000
 #define NEXT_MS 3000		/* connecting, with other addresses left */
@@ -62,6 +64,7 @@ static int tls_init(void)
 struct conn {
 	int fd;
 	gnutls_session_t tls;
+	int level;		/* NET_*: the address it went to */
 };
 
 static void set_error(struct response *r, const char *msg)
@@ -69,11 +72,63 @@ static void set_error(struct response *r, const char *msg)
 	snprintf(r->error, sizeof(r->error), "%s", msg);
 }
 
-/* Connect with a timeout. */
-static int dial(const char *host, const char *port, struct response *r)
+/*
+ * The private network guard: where an address is. 0.0.0.0 reaches this
+ * machine on Linux; 100.64/10 is the operators' NAT and the VPNs'
+ * (Tailscale): their machines are a local network too.
+ */
+static int address_level(const struct sockaddr *sa)
+{
+	static const unsigned char mapped[12] = { 0, 0, 0, 0, 0, 0, 0, 0,
+		0, 0, 0xff, 0xff };
+	const unsigned char *b;
+
+	if (sa->sa_family == AF_INET) {
+		b = (const unsigned char *)
+			&((const struct sockaddr_in *)sa)->sin_addr;
+	} else if (sa->sa_family == AF_INET6) {
+		int i, zero = 1;
+
+		b = ((const struct sockaddr_in6 *)sa)->sin6_addr.s6_addr;
+		if (memcmp(b, mapped, 12)) {
+			for (i = 0; i < 15; i++)
+				zero &= !b[i];
+			if (zero && b[15] <= 1)
+				return NET_LOOPBACK;	/* ::1, :: */
+			/* fc00::/7 unique local, fe80::/10 link local,
+			 * fec0::/10 the old site local */
+			if ((b[0] & 0xfe) == 0xfc ||
+			    (b[0] == 0xfe && (b[1] & 0x80)))
+				return NET_LAN;
+			return NET_PUBLIC;
+		}
+		b += 12;	/* ::ffff:a.b.c.d is IPv4 */
+	} else {
+		return NET_LOOPBACK;
+	}
+	if (b[0] == 127 || b[0] == 0)
+		return NET_LOOPBACK;
+	if (b[0] == 10 || (b[0] == 172 && (b[1] & 0xf0) == 16) ||
+	    (b[0] == 192 && b[1] == 168) || (b[0] == 169 && b[1] == 254) ||
+	    (b[0] == 100 && (b[1] & 0xc0) == 64))
+		return NET_LAN;
+	return NET_PUBLIC;
+}
+
+/* The most private level a request may reach */
+static int level_max(int flags)
+{
+	return flags & SOIE_REQ_NO_LAN ? NET_PUBLIC :
+		flags & SOIE_REQ_NO_LOOPBACK ? NET_LAN : NET_LOOPBACK;
+}
+
+/* Connect with a timeout, to an address no more private than max; the
+ * level of the one connected to in *level. */
+static int dial(const char *host, const char *port, int max, int *level,
+	struct response *r)
 {
 	struct addrinfo hints, *res, *a;
-	int fd = -1, err;
+	int fd = -1, err, refused = 0, tried = 0;
 
 	memset(&hints, 0, sizeof(hints));
 	hints.ai_family = AF_UNSPEC;
@@ -84,9 +139,16 @@ static int dial(const char *host, const char *port, struct response *r)
 	}
 	for (a = res; a; a = a->ai_next) {
 		struct pollfd p;
-		int flags, soerr = 0;
+		int flags, soerr = 0, l = address_level(a->ai_addr);
 		socklen_t len = sizeof(soerr);
 
+		/* checked here, on the address itself: a name that said
+		 * public a minute ago may say 127.0.0.1 now */
+		if (l > max) {
+			refused = 1;
+			continue;
+		}
+		tried = 1;
 		fd = socket(a->ai_family, a->ai_socktype, a->ai_protocol);
 		if (fd < 0)
 			continue;
@@ -106,14 +168,21 @@ static int dial(const char *host, const char *port, struct response *r)
 		    !getsockopt(fd, SOL_SOCKET, SO_ERROR, &soerr, &len) &&
 		    !soerr) {
 			fcntl(fd, F_SETFL, flags);
+			*level = l;
 			break;
 		}
 		close(fd);
 		fd = -1;
 	}
 	freeaddrinfo(res);
-	if (fd < 0)
+	if (fd < 0 && refused && !tried) {
+		debug(1, "private network guard: %s refused", host);
+		set_error(r, max == NET_PUBLIC ? "a public page may not reach "
+			"the local network" : "a local network page may not "
+			"reach this machine");
+	} else if (fd < 0) {
 		set_error(r, "could not connect");
+	}
 	return fd;
 }
 
@@ -586,8 +655,9 @@ static struct {
 static int npool;
 static pthread_mutex_t pool_lock = PTHREAD_MUTEX_INITIALIZER;
 
-/* A pooled connection to key, still open, or -1. */
-static int pool_take(const char *key, struct conn *c)
+/* A pooled connection to key, no more private than max (the guard: it
+ * may have been opened for another page), still open, or -1. */
+static int pool_take(const char *key, int max, struct conn *c)
 {
 	struct pollfd p;
 	time_t now = time(NULL);
@@ -602,7 +672,7 @@ static int pool_take(const char *key, struct conn *c)
 			pool[i] = pool[--npool];
 		}
 	for (i = npool - 1; i >= 0 && found < 0; i--)
-		if (!strcmp(pool[i].key, key))
+		if (!strcmp(pool[i].key, key) && pool[i].c.level <= max)
 			found = i;
 	if (found >= 0) {
 		*c = pool[found].c;
@@ -668,7 +738,7 @@ static void pool_put(const char *key, struct conn *c)
 
 int net_preconnect(const char *url, int n)
 {
-	struct conn c = { -1, NULL };
+	struct conn c = { -1, NULL, 0 };
 	struct response r;
 	struct url u;
 	char key[300];
@@ -679,7 +749,7 @@ int net_preconnect(const char *url, int n)
 	if (pool_count(key) >= n)
 		return 0;
 	memset(&r, 0, sizeof(r));
-	c.fd = dial(u.host, u.port, &r);
+	c.fd = dial(u.host, u.port, NET_LOOPBACK, &c.level, &r);
 	if (c.fd < 0)
 		return -1;
 	if (!strcmp(u.scheme, "https") && tls_start(&c, u.host, &r)) {
@@ -1225,11 +1295,11 @@ static int request(const char *url, const soie_request *rq,
 	size_t body_len, struct response *r, char **location)
 {
 	struct url u;
-	struct conn c = { -1, NULL };
+	struct conn c = { -1, NULL, 0 };
 	struct response raw, req;
 	const char *body, *v, *fp = rq->first_party ? rq->first_party : url;
 	char *cookie, *hend, *hb = NULL, key[300];
-	int ret = -1, reused, reuse = 0, tries;
+	int ret = -1, reused, reuse = 0, tries, max = level_max(rq->flags);
 
 	*location = NULL;
 	if (!is_token(method, strlen(method))) {
@@ -1295,15 +1365,16 @@ static int request(const char *url, const soie_request *rq,
 	/* a pooled connection the server dropped gets one more try, on
 	 * a new connection */
 	for (tries = 0; tries < 2; tries++) {
-		reused = pool_take(key, &c) == 0;
+		reused = pool_take(key, max, &c) == 0;
 		if (!reused) {
-			c.fd = dial(u.host, u.port, r);
+			c.fd = dial(u.host, u.port, max, &c.level, r);
 			if (c.fd < 0)
 				goto out;
 			if (!strcmp(u.scheme, "https") &&
 			    tls_start(&c, u.host, r))
 				goto out;
 		}
+		r->level = c.level;
 		raw.len = 0;
 		raw.dl = r->dl;
 		if (!conn_write(&c, req.body, req.len) &&
@@ -1466,6 +1537,7 @@ int net_fetch(const soie_request *rq, struct response *r)
 			return -1;
 		}
 		snprintf(r->url, sizeof(r->url), "%s", url);
+		r->level = NET_LOOPBACK;
 		return fetch_file(url, r);
 	}
 	if (!strncasecmp(url, "data:", 5)) {
@@ -1496,7 +1568,8 @@ int net_fetch(const soie_request *rq, struct response *r)
 			strcat(key, " ");
 			strcat(key, cur);
 			st = cache_get(key, (rq->flags & NET_RELOAD) &&
-				!rq->first_party, r, cond, sizeof(cond));
+				!rq->first_party, level_max(rq->flags), r, cond,
+				sizeof(cond));
 			if (st == CACHE_FRESH) {
 				loc = NULL;
 				break;

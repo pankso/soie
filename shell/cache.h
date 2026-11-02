@@ -19,8 +19,9 @@ enum { CACHE_MISS, CACHE_FRESH, CACHE_STALE };
 /* key: "partition url". CACHE_FRESH: r is filled (its body and headers
  * replaced), CACHE_STALE: cond holds the If-None-Match and
  * If-Modified-Since lines to ask with; revalidate: never fresh (the
- * user's reload). */
-int cache_get(const char *key, int revalidate, struct response *r,
+ * user's reload); max: the most private level (NET_*) the request may
+ * reach, an entry from further is a miss. */
+int cache_get(const char *key, int revalidate, int max, struct response *r,
 	char *cond, size_t size);
 /* Keep r (asked at t, before the request went) if it may be kept. */
 void cache_put(const char *key, const struct response *r, time_t t);

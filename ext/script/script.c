@@ -1520,7 +1520,7 @@ static JSValue n_request_async(JSContext *js, JSValueConst this, int argc,
 		j->body = body_arg(js, argv[3], &j->blen);
 	if (argc > 4)
 		JS_ToInt32(js, &flags, argv[4]);
-	j->flags = flags | (c->host->flags & SOIE_REQ_PRIVATE);
+	j->flags = flags | (c->host->flags & SOIE_REQ_PAGE);
 	pthread_mutex_lock(&jobs_lock);
 	job_queue(j);
 	c->inflight++;
@@ -1649,7 +1649,7 @@ static JSValue n_request(JSContext *js, JSValueConst this, int argc,
 	rq.first_party = c->url;
 	if (argc > 4)
 		JS_ToInt32(js, &rq.flags, argv[4]);
-	rq.flags |= c->host->flags & SOIE_REQ_PRIVATE;
+	rq.flags |= c->host->flags & SOIE_REQ_PAGE;
 	{
 		/* waiting for the network is not running: the script's
 		 * time limit stops while the request is out */
@@ -2573,6 +2573,7 @@ static JSModuleDef *mod_load(JSContext *js, const char *name, void *opaque)
 	memset(&rq, 0, sizeof(rq));
 	rq.url = name;
 	rq.first_party = c->url;
+	rq.flags = c->host->flags & SOIE_REQ_PAGE;
 	if (request_blocking(c, &rq, &res)) {
 		JS_ThrowReferenceError(js, "cannot load module %s", name);
 		return NULL;

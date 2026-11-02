@@ -35,6 +35,7 @@ struct entry {
 	char type[128], charset[64];
 	char *etag, *lastmod;	/* the validators, or NULL */
 	time_t expires;		/* fresh until */
+	int level;		/* NET_*: the address it came from */
 	unsigned long used;	/* LRU stamp */
 	struct entry *next;
 };
@@ -287,10 +288,11 @@ static void fill(struct response *r, struct entry *e)
 	memcpy(r->type, e->type, sizeof(r->type));
 	memcpy(r->charset, e->charset, sizeof(r->charset));
 	r->auth = 0;
+	r->level = e->level;
 	e->used = ++stamp;
 }
 
-int cache_get(const char *key, int revalidate, struct response *r,
+int cache_get(const char *key, int revalidate, int max, struct response *r,
 	char *cond, size_t size)
 {
 	struct entry **p, *e;
@@ -299,7 +301,8 @@ int cache_get(const char *key, int revalidate, struct response *r,
 	*cond = '\0';
 	pthread_mutex_lock(&lock);
 	p = find(key);
-	if ((e = *p)) {
+	/* not for a page that may not reach where it came from */
+	if ((e = *p) && e->level <= max) {
 		if (!revalidate && time(NULL) < e->expires) {
 			fill(r, e);
 			hits++;
@@ -357,6 +360,7 @@ void cache_put(const char *key, const struct response *r, time_t t)
 	e->len = r->len;
 	memcpy(e->type, r->type, sizeof(e->type));
 	memcpy(e->charset, r->charset, sizeof(e->charset));
+	e->level = r->level;
 	e->expires = now + life;
 	pthread_mutex_lock(&lock);
 	if (*(p = find(key)))
@@ -402,6 +406,7 @@ int cache_revalidated(const char *key, struct response *r, time_t t)
 		free(e->lastmod);
 		e->lastmod = v;
 	}
+	e->level = r->level;
 	fill(r, e);
 	revalidated++;
 	pthread_mutex_unlock(&lock);

@@ -21,6 +21,7 @@
 #include <pthread.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <stdint.h>
 #include <sys/stat.h>
 #include <png.h>
 #include <soie/soie.h>
@@ -86,6 +87,7 @@ struct shell {
 		int done;		/* everything in: told once */
 		float dirty[4];		/* page rectangle of the players'
 					 * frames */
+		int level;		/* NET_*: where the page came from */
 	} page;
 	struct shell_ui ui;
 	void *ui_data;
@@ -106,6 +108,8 @@ struct shell {
 	int dark;		/* prefers-color-scheme: dark */
 	int private;		/* SOIE_REQ_PRIVATE: a private window */
 	int reload;		/* the next load is the user's reload */
+	int nav_guard;		/* the next load is a form the page sends:
+				 * its guard (SOIE_REQ_NO_LAN...) */
 	/* The front's pixels are B G R A (shell_bgra()); what shell_paint()
 	 * showed last, at which scroll and document generation */
 	int bgra, painted_scroll;
@@ -224,6 +228,19 @@ static int scheme_of(const char *url)
 }
 
 /*
+ * The flags of the page's requests: its window's jar, and the private
+ * network guard: a page asks for nothing more private than itself, a
+ * public page nothing of the local network or of this machine (its
+ * router, printer, a model server on localhost), a local network page
+ * nothing of this machine. What the user types is not guarded.
+ */
+static int page_flags(struct shell *s)
+{
+	return s->private | (s->page.level == NET_PUBLIC ? SOIE_REQ_NO_LAN :
+		s->page.level == NET_LAN ? SOIE_REQ_NO_LOOPBACK : 0);
+}
+
+/*
  * May the page at from have url? A front's scheme is for the front and
  * its own pages (what the user types, a toile:// page's links), never
  * for the web's (WebKit's display isolated schemes). file:// alike: a
@@ -291,7 +308,7 @@ static void res_fetch(struct shell *s, struct res *r, int urgent)
 
 	if (k < 0) {
 		fetch_add(r->url, NULL, s->page.url, r->kind, s->page.gen,
-			urgent, s->private, NULL);
+			urgent, page_flags(s), NULL);
 		return;
 	}
 	if (!scheme_allowed(s->page.url, r->url)) {
@@ -616,7 +633,7 @@ static int page_request(void *data, const soie_request *req,
 	if (!r || r->state == R_GIVEN) {
 		soie_request q = *req;
 
-		q.flags |= s->private;
+		q.flags |= page_flags(s);
 		return net_request(NULL, &q, res);
 	}
 	while (r->state == R_PENDING) {
@@ -733,14 +750,14 @@ static int after_scripts(struct shell *s)
 
 static int scripts_on(struct shell *s);
 
-/* A private window's players: their requests use its jar */
-static int private_request(void *data, const soie_request *req,
+/* The players' requests, from their threads: data holds the page's
+ * flags (page_flags()) */
+static int player_request(void *data, const soie_request *req,
 	soie_response *res)
 {
 	soie_request q = *req;
 
-	(void)data;
-	q.flags |= SOIE_REQ_PRIVATE;
+	q.flags |= (int)(intptr_t)data;
 	return net_request(NULL, &q, res);
 }
 
@@ -759,7 +776,8 @@ static void relayout(struct shell *s)
 	so.zoom = s->zoom;
 	so.dark = s->dark;
 	/* audio and video */
-	so.request = s->private ? private_request : net_request;
+	so.request = player_request;
+	so.request_data = (void *)(intptr_t)page_flags(s);
 	double t0 = now_s(), t1;
 
 	s->in_style = 1;
@@ -1005,6 +1023,9 @@ static void doc_arrived(struct shell *s, struct job *j)
 	if (s->page.old)
 		soie_script_stop(s->page.old);	/* no more events, timers */
 	s->page.doc = NULL;
+	/* before its scripts: their requests take the host's flags */
+	s->page.level = j->ok ? r->level : NET_PUBLIC;
+	s->host.flags = page_flags(s);
 	if (!j->ok) {
 		char *e = escape_html(r->error), *u = escape_html(j->url);
 		char buf[9000];
@@ -1295,9 +1316,11 @@ static void load(struct shell *s, const char *url, const char *post, int push)
 		}
 		s->page_dl = d;
 		fetch_add(url, post, NULL, K_DOC, s->page.gen, 1, s->private |
-			(s->reload ? NET_RELOAD : 0), d);
-		/* while the page comes, connections for its resources */
-		fetch_preconnect(url, PRECONNECT, s->page.gen);
+			(s->reload ? NET_RELOAD : 0) | s->nav_guard, d);
+		/* while the page comes, connections for its resources (not
+		 * opened ahead where the guard may refuse them) */
+		if (!s->nav_guard)
+			fetch_preconnect(url, PRECONNECT, s->page.gen);
 	}
 	s->page.loading = L_DOC;
 	s->ui.address(s->ui_data, url);
@@ -1908,7 +1931,12 @@ static void submit(struct shell *s, soie_node *form, soie_node *submitter)
 		return;
 	}
 	if (method && !strcasecmp(method, "post")) {
+		/* a form that changes something (a router's settings):
+		 * guarded like the page's requests; links and GET forms
+		 * go anywhere, the user sees where they land */
+		s->nav_guard = page_flags(s) & ~SOIE_REQ_PRIVATE;
 		load(s, abs, q, 1);
+		s->nav_guard = 0;
 	} else {
 		size_t n = strcspn(abs, "?#");
 
@@ -3159,7 +3187,7 @@ int shell_system_dark(void)
 void shell_private(struct shell *s)
 {
 	s->private = SOIE_REQ_PRIVATE;
-	s->host.flags = SOIE_REQ_PRIVATE;
+	s->host.flags = page_flags(s);
 }
 
 void shell_forget_logins(int private)

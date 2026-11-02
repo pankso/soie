@@ -86,6 +86,14 @@ typedef struct {
 
 #define SOIE_REQ_NO_COOKIES 1	/* credentials omitted: no jar either way */
 #define SOIE_REQ_PRIVATE 2	/* a private window's: its own jar */
+/* The private network guard: a page asks no address more private than
+ * its own. A public page's requests: no address of the local network
+ * nor of this machine; a local network page's: none of this machine. */
+#define SOIE_REQ_NO_LAN 4
+#define SOIE_REQ_NO_LOOPBACK 8
+/* What a page's requests all carry of its host's flags */
+#define SOIE_REQ_PAGE (SOIE_REQ_PRIVATE | SOIE_REQ_NO_LAN | \
+	SOIE_REQ_NO_LOOPBACK)
 
 typedef struct {
 	int status;		/* HTTP status, 200 for files */
@@ -211,7 +219,9 @@ typedef struct {
 	 * current one's. May be NULL. */
 	void (*url)(void *data, const char *url, int push);
 	/* SOIE_REQ_PRIVATE for a private window's page: its requests and
-	 * document.cookie use the private jar */
+	 * document.cookie use the private jar; SOIE_REQ_NO_LAN,
+	 * SOIE_REQ_NO_LOOPBACK, the guard of its requests (SOIE_REQ_PAGE:
+	 * all three go with every request of the page and its workers) */
 	int flags;
 } soie_script_host;
 
