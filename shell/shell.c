@@ -29,6 +29,7 @@
 #include "shell.h"
 #include "settings.h"
 #include "auth.h"
+#include "cache.h"
 #include "debug.h"
 
 #define HOME SHELL_HOME
@@ -104,6 +105,7 @@ struct shell {
 	float zoom;		/* the page's, 1 */
 	int dark;		/* prefers-color-scheme: dark */
 	int private;		/* SOIE_REQ_PRIVATE: a private window */
+	int reload;		/* the next load is the user's reload */
 	/* The front's pixels are B G R A (shell_bgra()); what shell_paint()
 	 * showed last, at which scroll and document generation */
 	int bgra, painted_scroll;
@@ -1292,8 +1294,8 @@ static void load(struct shell *s, const char *url, const char *post, int push)
 			snprintf(d->path, sizeof(d->path), "%s/dl-XXXXXX", dir);
 		}
 		s->page_dl = d;
-		fetch_add(url, post, NULL, K_DOC, s->page.gen, 1, s->private,
-			d);
+		fetch_add(url, post, NULL, K_DOC, s->page.gen, 1, s->private |
+			(s->reload ? NET_RELOAD : 0), d);
 		/* while the page comes, connections for its resources */
 		fetch_preconnect(url, PRECONNECT, s->page.gen);
 	}
@@ -2534,6 +2536,14 @@ int shell_tick(struct shell *s, int *repaint)
 		debug(1, "all in %.2f s: %d resources, %d failed, page %.0f px",
 			now_s() - s->page.t_load, s->page.nres, failed,
 			s->page.height);
+		{
+			long h, rv, m;
+			size_t b;
+
+			cache_stats(&h, &rv, &m, &b);
+			debug(1, "cache: %ld hits, %ld revalidated, %ld misses, "
+				"%zu KB", h, rv, m, b >> 10);
+		}
 	}
 	return t;
 }
@@ -3230,7 +3240,9 @@ void shell_history(struct shell *s, int delta)
 
 void shell_reload(struct shell *s)
 {
+	s->reload = 1;
 	load(s, s->page.url, NULL, 0);
+	s->reload = 0;
 }
 
 const char *shell_url(struct shell *s)

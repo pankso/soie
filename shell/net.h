@@ -44,9 +44,13 @@ struct response {
 	struct download *dl;	/* the caller's, or NULL: all in memory */
 };
 
-/* A request through the extensions (blocking, cookies, schemes) and
- * the network. A body without a Content-Type header is sent as a
- * urlencoded form. */
+/* A request flag beside SOIE_REQ_*: the user's reload, the page is
+ * asked again even when the cache holds it fresh */
+#define NET_RELOAD 0x100
+
+/* A request through the extensions (blocking, cookies, schemes), the
+ * HTTP cache (cache.c) and the network. A body without a Content-Type
+ * header is sent as a urlencoded form. */
 int net_fetch(const soie_request *req, struct response *r);
 /* Open a connection to url's server and leave it in the pool for the
  * requests to come, unless n are there already. */

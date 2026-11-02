@@ -774,6 +774,38 @@ reversed, edit the entry and say why; do not leave stale rules here.
 - A password field's caret was placed in the bullets by the value's
   byte offset (3 bytes a bullet): now one bullet a character.
 
+## The HTTP cache
+
+- Soie had none: every page asked again for its style sheets, scripts
+  and images (Wikipedia: the same 30 resources at each article). The
+  idea came from looking at Lightpanda (an RFC 9111 cache in SQLite);
+  this one is shell/cache.c, in memory, a private cache by RFC 9111.
+- In net_fetch(), so pages, their resources and scripts' fetch/XHR all
+  go through it: GET without a body or the caller's own headers (Range,
+  Origin: those go to the network), status 200, not a body streamed to
+  a file, not a private window's (neither read nor written), not one
+  sent with a login (about:auth). Never kept: no-store, a Set-Cookie,
+  a Vary on anything but Accept-Encoding, User-Agent, Accept-Language
+  (ours never change).
+- Fresh for max-age, else Expires - Date, else a tenth of the age since
+  Last-Modified, a day at most; less the Age and the apparent age.
+  no-cache is kept but always asked again. Stale with an ETag or a
+  Last-Modified: asked with If-None-Match / If-Modified-Since, a 304
+  makes it fresh again with the 304's headers over the stored ones.
+  Neither fresh nor with a validator: not kept.
+- Partitioned by the top page's origin (key "origin url"), as browsers
+  do since 2020: a site cannot learn from timing what another loaded.
+- Back and Forward take the page from the cache when it is fresh; the
+  user's reload (NET_RELOAD, shell_reload()) asks the page again,
+  its resources still come from the cache (Chrome's way). A POST, PUT,
+  DELETE that succeeds drops its URL's entries in all partitions.
+- RAM/64, 8 to 64 MB; an entry at most a quarter of it; the least
+  recently used go first. SOIE_DEBUG=1 prints its counters after each
+  page, 2 each hit, revalidation and entry kept.
+- Measured on Wikipedia: an article 1.35 s, back to it after another
+  0.40 s (20 of its 30 resources from the cache); the second article
+  took 11 from the first's.
+
 ## The shell on its own, many page views
 
 - The shell left browser/ for shell/ (shell.c, net.c, fetch.c,

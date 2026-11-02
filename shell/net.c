@@ -27,6 +27,7 @@
 #include <gnutls/gnutls.h>
 #include <zlib.h>
 #include "net.h"
+#include "cache.h"
 
 #define TIMEOUT_MS 20000
 #define NEXT_MS 3000		/* connecting, with other addresses left */
@@ -1432,7 +1433,7 @@ int net_fetch(const soie_request *rq, struct response *r)
 	char *cur, *loc;
 	soie_response er;
 	struct download *dl = r->dl;
-	int i;
+	int i, nocache = 0;
 
 	memset(r, 0, sizeof(*r));
 	r->dl = dl;
@@ -1480,11 +1481,51 @@ int net_fetch(const soie_request *rq, struct response *r)
 	if (!cur)
 		abort();
 	for (i = 0; i < 10; i++) {
-		if (request(cur, rq, method, headers, body, rq->body_len, r,
-			    &loc)) {
+		char key[4400], cond[1024];
+		int st = CACHE_MISS;
+		time_t t = time(NULL);
+
+		/* the cache: plain GETs, not a private window's, not with
+		 * the caller's own headers (Range, Origin...); partitioned
+		 * by the top page's origin */
+		if (!nocache && !strcmp(method, "GET") && !body &&
+		    (!headers || !*headers) &&
+		    !(rq->flags & SOIE_REQ_PRIVATE) &&
+		    !origin_of(rq->first_party ? rq->first_party : cur, key,
+		    300) && strlen(cur) < sizeof(key) - 302) {
+			strcat(key, " ");
+			strcat(key, cur);
+			st = cache_get(key, (rq->flags & NET_RELOAD) &&
+				!rq->first_party, r, cond, sizeof(cond));
+			if (st == CACHE_FRESH) {
+				loc = NULL;
+				break;
+			}
+		} else {
+			*key = '\0';
+		}
+		if (request(cur, rq, method, st == CACHE_STALE ? cond : headers,
+			    body, rq->body_len, r, &loc)) {
 			free(cur);
 			return -1;
 		}
+		if (st == CACHE_STALE && r->status == 304 && !loc) {
+			if (!cache_revalidated(key, r, t))
+				break;
+			/* gone meanwhile: once more, without validators */
+			free(r->body);
+			r->body = NULL;
+			r->len = r->cap = 0;
+			nocache = 1;
+			i--;
+			continue;
+		}
+		/* not a body that went to a file (a download) */
+		if (*key && !loc && (!r->dl || r->dl->state == DL_NONE))
+			cache_put(key, r, t);
+		if (strcmp(method, "GET") && strcmp(method, "HEAD") &&
+		    r->status < 400)
+			cache_drop(cur);	/* what a POST changed */
 		if (!loc)
 			break;
 		{
