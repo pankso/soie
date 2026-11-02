@@ -3897,15 +3897,54 @@ function bodyString(b) {
 		return null;
 	if (b instanceof URLSearchParams || typeof b === 'string')
 		return String(b);
-	if (b instanceof FormData) {
-		const q = new URLSearchParams();
-		for (const [k, v] of b)
-			q.append(k, v instanceof Blob ? api.utf8Decode(v._b) : v);
-		return String(q);
-	}
+	if (b instanceof FormData)
+		return multipart(b);
 	if (b instanceof Blob)
 		return b._b;
 	return asBytes(b) || String(b);
+}
+
+/* The content type a body brings, null for none (bytes) */
+function bodyType(b) {
+	if (b instanceof URLSearchParams)
+		return 'application/x-www-form-urlencoded;charset=UTF-8';
+	if (b instanceof FormData)
+		return 'multipart/form-data; boundary=' + boundary(b);
+	if (b instanceof Blob)
+		return b.type || null;
+	if (b === undefined || b === null || asBytes(b))
+		return null;
+	return 'text/plain;charset=UTF-8';
+}
+
+/* Form data as browsers send it: multipart/form-data (servers read
+ * their form fields from it, not from a text/plain body) */
+function boundary(fd) {
+	if (!fd._boundary)
+		fd._boundary = '----SoieFormBoundary' + [...new Uint8Array(
+			api.random(12))].map((x) => x.toString(16)
+			.padStart(2, '0')).join('');
+	return fd._boundary;
+}
+function multipart(fd) {
+	const enc = new TextEncoder(), parts = [], b = boundary(fd);
+	const esc = (s) => s.replace(/"/g, '%22').replace(/\r/g, '%0D')
+		.replace(/\n/g, '%0A');
+	for (const [k, v] of fd._list) {
+		let h = '--' + b + '\r\nContent-Disposition: form-data; name="' +
+			esc(k) + '"';
+		if (v instanceof Blob) {
+			h += '; filename="' + esc(v instanceof File ? v.name : 'blob') +
+				'"\r\nContent-Type: ' + (v.type || 'application/octet-stream');
+			parts.push(enc.encode(h + '\r\n\r\n'), v._b,
+				enc.encode('\r\n'));
+		} else {
+			parts.push(enc.encode(h + '\r\n\r\n' +
+				v.replace(/\r\n|\r|\n/g, '\r\n') + '\r\n'));
+		}
+	}
+	parts.push(enc.encode('--' + b + '--\r\n'));
+	return new Blob(parts)._b;
 }
 function bodyText(b) { return typeof b === 'string' ? b : api.utf8Decode(b); }
 function bodyBytes(b) {
@@ -4010,6 +4049,9 @@ class Response {
 		this.statusText = init.statusText ||
 			STATUS_TEXT[this.status] || '';
 		this.headers = new Headers(init.headers);
+		const type = bodyType(body);
+		if (type && !this.headers.has('content-type'))
+			this.headers.set('content-type', type);
 		this.url = init.url || '';
 		this.redirected = false;
 		this.type = 'basic';
@@ -4074,17 +4116,20 @@ const REQ = Symbol('request');
 class Request {
 	constructor(input, init = {}) {
 		const r = input instanceof Request ? input[REQ] : null;
+		const body = init.body !== undefined ? init.body : r && r.body;
 		this[REQ] = {
 			url: r ? r.url : new URL(String(input), startURL()).href,
 			method: method(init.method || (r && r.method) || 'GET'),
 			headers: new Headers(init.headers || (r && r.headers)),
-			body: bodyString(init.body !== undefined ? init.body :
-				r && r.body),
+			body: bodyString(body),
 			credentials: init.credentials || (r && r.credentials) ||
 				'same-origin',
 			mode: init.mode || (r && r.mode) || 'cors',
 			signal: init.signal || (r && r.signal) || null,
 		};
+		const type = init.body !== undefined ? bodyType(body) : null;
+		if (type && !this[REQ].headers.has('content-type'))
+			this[REQ].headers.set('content-type', type);
 	}
 	get url() { return this[REQ].url; }
 	get method() { return this[REQ].method; }
@@ -4277,8 +4322,6 @@ function fetch(input, init = {}) {
 				return;
 			}
 			const h = req.headers;
-			if (req._body !== null && !h.has('content-type'))
-				h.set('content-type', 'text/plain;charset=UTF-8');
 			doRequestAsync(req.method, req.url, h, req._body,
 				req.credentials, req.mode).then(answered, () =>
 				reject(new TypeError('Failed to fetch')));
@@ -4400,9 +4443,9 @@ class XMLHttpRequest extends EventTarget {
 				return;
 			const b = this._method === 'GET' || this._method === 'HEAD' ?
 				null : bodyString(body);
-			if (b !== null && !this._headers.has('content-type'))
-				this._headers.set('content-type',
-					'text/plain;charset=UTF-8');
+			const type = b !== null && bodyType(body);
+			if (type && !this._headers.has('content-type'))
+				this._headers.set('content-type', type);
 			const args = [this._method, this._url, this._headers, b,
 				this.withCredentials ? 'include' : 'same-origin'];
 			if (/^(data|blob):/i.test(this._url)) {

@@ -37,4 +37,17 @@ log('utf8', bytes.length, new TextDecoder().decode(bytes));
 log('json', JSON.stringify({ a: [1, { b: null }] }));
 var h = new Headers({ 'Content-Type': 'text/html' });
 log('headers', h.get('content-type'), h.has('X'));
+// bodies bring their content type; form data goes as multipart
+var fd = new FormData();
+fd.append('altcha', 'eyJ');
+fd.append('a"b', 'x\ny');
+fd.append('f', new File(['hi'], 'h.txt', { type: 'text/plain' }));
+var fr = new Response(fd), ct = fr.headers.get('content-type');
+fr.text().then(t => log('formdata', ct.startsWith('multipart/form-data; boundary=----'),
+  JSON.stringify(t.split(ct.replace(/^.*boundary=/, '')).join('B'))));
+log('body types', new Response('x').headers.get('content-type'),
+  new Response(new URLSearchParams('a=1')).headers.get('content-type'),
+  new Response(new Blob(['x'], { type: 'image/png' })).headers.get('content-type'),
+  new Response(new Uint8Array(1)).headers.get('content-type'),
+  new Request('http://example.org/', { method: 'POST', body: fd }).headers.get('content-type').split(';')[0]);
 </script>

@@ -8,7 +8,9 @@ log: base64 U29pZSE= Soie!
 log: utf8 2 é
 log: json {"a":[1,{"b":null}]}
 log: headers text/html false
+log: body types text/plain;charset=UTF-8 application/x-www-form-urlencoded;charset=UTF-8 image/png null multipart/form-data
 log: aborted AbortError
+log: formdata true "--B\r\nContent-Disposition: form-data; name=\"altcha\"\r\n\r\neyJ\r\n--B\r\nContent-Disposition: form-data; name=\"a%22b\"\r\n\r\nx\r\ny\r\n--B\r\nContent-Disposition: form-data; name=\"f\"; filename=\"h.txt\"\r\nContent-Type: text/plain\r\n\r\nhi\r\n--B--\r\n"
 log: xhr state 4 200
 log: xhr load soie null
 log: fetch true 200
