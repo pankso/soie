@@ -182,6 +182,17 @@ void paint_control(struct canvas *c, const struct box *b)
 			int caret = n->doc->u.doc->caret;
 			size_t len = strlen(v);
 
+			if (v == text.s) {
+				/* a password: the caret is in the value, one
+				 * bullet (3 bytes) a character before it */
+				const char *o = soie_element_get_attr(n, "value");
+				int k, chars = 0;
+
+				for (k = 0; o[k] && k < caret; k++)
+					if (((unsigned char)o[k] & 0xc0) != 0x80)
+						chars++;
+				caret = caret < 0 ? -1 : chars * 3;
+			}
 			if (caret < 0 || (size_t)caret > len)
 				caret = (int)len;
 			tw = text_width(st, v, (size_t)caret);
