@@ -462,6 +462,7 @@ static void finish_line(struct ls *s, int forced, int last)
 			t = shift - m.ascent - fh;
 			bt = shift + m.descent + fh;
 			f->y = shift - m.ascent;
+			f->baseline = shift;	/* vs the line's, for now */
 			f->h = m.ascent + m.descent;
 			if (f->kind == F_INLINE) {
 				f->y -= f->box->p[0] + f->box->b[0];
@@ -492,7 +493,9 @@ static void finish_line(struct ls *s, int forced, int last)
 	for (i = s->start; i < b->nfrags; i++) {
 		struct frag *f = &b->frags[i];
 
-		f->baseline = base;
+		/* texts and inline boxes on their own baseline, raised
+		 * or lowered by vertical-align */
+		f->baseline = f->kind == F_ATOMIC ? base : base + f->baseline;
 		f->y += base;
 		if (f->kind == F_ATOMIC)
 			translate(f->box, f->x, f->y);

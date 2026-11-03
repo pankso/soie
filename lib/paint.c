@@ -630,18 +630,33 @@ static void decorate(struct canvas *c, const struct style *st, float x,
 
 /* Decorations come from the decorating box: the nearest ancestor with
  * text-decoration-line, for text inside it (CSS Text Decoration 3). */
-static const struct style *decorating(const struct box *t,
+static const struct box *decorating(const struct box *t,
 	const struct box *container)
 {
 	const struct box *b;
 
 	for (b = t->parent; b; b = b->parent) {
 		if ((int)b->style->v[P_TEXT_DECORATION_LINE].u.num)
-			return b->style;
+			return b;
 		if (b == container)
 			break;
 	}
 	return NULL;
+}
+
+/* The decorating box's baseline in line l: a sup inside <u> is raised,
+ * the underline is not */
+static float deco_base(const struct box *d, const struct box *b,
+	const struct line *l, const struct frag *f)
+{
+	int j;
+
+	if (d->type != B_INLINE)
+		return l->baseline;
+	for (j = l->first; j < l->first + l->n; j++)
+		if (b->frags[j].kind == F_INLINE && b->frags[j].box == d)
+			return b->frags[j].baseline;
+	return f->baseline;
 }
 
 static void paint_box(struct canvas *c, struct box *b, int stacking);
@@ -668,7 +683,7 @@ static void paint_lines(struct canvas *c, struct box *b)
 			struct frag *f = &b->frags[j];
 
 			if (f->kind == F_TEXT) {
-				const struct style *ds = decorating(f->box, b);
+				const struct box *db = decorating(f->box, b);
 				float jw = l->jspace;
 				float em = f->box->style->v[P_FONT_SIZE].u.len.px;
 
@@ -681,9 +696,14 @@ static void paint_lines(struct canvas *c, struct box *b)
 
 				draw_text(c, f->box->style, f->box->text +
 					f->start, f->len, f->x, f->baseline, jw);
-				if (ds)
-					decorate(c, ds, f->x, f->w, f->baseline,
-						f->y);
+				if (db) {
+					float y = deco_base(db, b, l, f);
+					struct fontm m;
+
+					font_metrics(db->style, &m);
+					decorate(c, db->style, f->x, f->w, y,
+						y - m.ascent);
+				}
 			} else if (f->kind == F_ATOMIC) {
 				paint_box(c, f->box, 1);
 			}
