@@ -2190,6 +2190,14 @@ run again):
   46 %. Same soname and extension ABI; ext.h gains two request flags
   (SOIE_REQ_NO_LAN, SOIE_REQ_NO_LOOPBACK) and SOIE_REQ_PAGE, no
   public function added.
+- The site's figures are rounded so that they stay true across
+  releases: "under 50,000 lines of code" (tools/loc.sh: 45,503 in
+  0.1.2, 47,548 in 0.1.3; "about 45,000" was out of date one release
+  later). At each release, check them all the same: tools/loc.sh,
+  the WPT percentages (tests/wpt/run.sh; the site said 44 and 23 %
+  until 0.1.3, when they were 62 and 46), the download size (soie
+  and xsoie packages: 725 KB in 0.1.3), then
+  tools/releases-atom.sh.
 
 ## Build
 
