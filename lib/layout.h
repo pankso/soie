@@ -146,6 +146,9 @@ int stacking_context(const struct box *b);
  * CSS px, for lengths read past the cascade (intrinsic sizes,
  * transforms, backgrounds) */
 float doc_zoom(void);
+/* How far a box's outer shadows reach out of its border box (paint.c),
+ * at most: damage takes it with the box */
+float shadow_reach(const struct style *st);
 
 /* block.c */
 struct bfc;

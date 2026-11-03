@@ -779,6 +779,299 @@ static void paint_borders(struct canvas *c, const struct box *b, float x,
 	paint_ring(c, b, x, y, w, h, r, ir);
 }
 
+/* box-shadow */
+
+struct shadow {
+	float x, y, blur, spread;
+	unsigned char rgba[4];
+	int inset;
+};
+
+#define NSHADOWS 8
+
+/* The shadows of a style, as listed (the first on top), their color
+ * currentcolor unless given; 0 for none or a list that does not
+ * parse. */
+static int shadows(const struct style *st, struct shadow *sh)
+{
+	const char *s = st ? st->v[P_BOX_SHADOW].u.str : NULL;
+	float em;
+	struct cvlist l;
+	struct cur k;
+	const struct cv *v;
+	unsigned char cur[4];
+	int n = 0, nl = 0, ok = 1;
+
+	if (!s || !strcmp(s, "none"))
+		return 0;
+	em = st->v[P_FONT_SIZE].u.len.px;
+	style_rgba(st, P_COLOR, cur);
+	memset(sh, 0, sizeof(*sh));
+	memcpy(sh->rgba, cur, 4);
+	css_component_values(s, strlen(s), &l);
+	cur_init(&k, &l);
+	while ((v = cur_peek(&k))) {
+		struct color col;
+
+		if (v->type == CT_COMMA) {
+			cur_next(&k);
+			if (nl < 2 || n + 1 >= NSHADOWS) {
+				ok = 0;
+				break;
+			}
+			n++;
+			nl = 0;
+			memset(&sh[n], 0, sizeof(*sh));
+			memcpy(sh[n].rgba, cur, 4);
+		} else if (cv_ident(v, "inset") && !sh[n].inset) {
+			cur_next(&k);
+			sh[n].inset = 1;
+		} else if ((v->type == CT_DIMENSION || (v->type ==
+		    CT_NUMBER && !v->num)) && nl < 4) {
+			float px = css_len_px(v, 0, em);
+
+			cur_next(&k);
+			if (nl == 0)
+				sh[n].x = px;
+			else if (nl == 1)
+				sh[n].y = px;
+			else if (nl == 2)
+				sh[n].blur = px;
+			else
+				sh[n].spread = px;
+			if (nl++ == 2 && px < 0) {
+				ok = 0;
+				break;
+			}
+		} else if (parse_color(&k, &col)) {
+			if (!col.current)
+				color_to_rgba(&col, sh[n].rgba);
+		} else {
+			ok = 0;
+			break;
+		}
+	}
+	cvlist_free(&l);
+	return ok && nl >= 2 ? n + 1 : 0;
+}
+
+float shadow_reach(const struct style *st)
+{
+	struct shadow sh[NSHADOWS];
+	float m = 0;
+	int i, n = shadows(st, sh);
+
+	for (i = 0; i < n; i++) {
+		float r = fmaxf(fabsf(sh[i].x), fabsf(sh[i].y)) +
+			sh[i].spread + sh[i].blur * 1.5f + 1;
+
+		if (!sh[i].inset && r > m)
+			m = r;
+	}
+	return m;
+}
+
+/* A corner's radius once its shape is spread by s (shrunk when s < 0):
+ * a small radius grows less than the spread, square stays square
+ * (css-backgrounds-3 7.1.1) */
+static float spread_r(float r, float s)
+{
+	float q;
+
+	if (r <= 0)
+		return 0;
+	if (s <= 0)
+		return r + s > 0 ? r + s : 0;
+	q = r / s;
+	if (q >= 1)
+		return r + s;
+	q -= 1;
+	return r + s * (1 + q * q * q);
+}
+
+/* One box blur over n values a step apart, its window i - lo to i + hi,
+ * the ends repeated */
+static void box_pass(unsigned char *p, int n, int step, int lo, int hi,
+	unsigned char *t)
+{
+	int i, sum = 0, w = lo + hi + 1;
+
+	for (i = 0; i < n; i++)
+		t[i] = p[(size_t)i * (size_t)step];
+	for (i = 1; i < n && t[i] == t[0]; i++)
+		;
+	if (i == n)
+		return;			/* flat: stays so */
+	for (i = -lo; i <= hi; i++)
+		sum += t[i < 0 ? 0 : i >= n ? n - 1 : i];
+	for (i = 0; i < n; i++) {
+		int a = i - lo, z = i + hi + 1;
+
+		p[(size_t)i * (size_t)step] = (unsigned char)((sum + w / 2) /
+			w);
+		sum += t[z >= n ? n - 1 : z] - t[a < 0 ? 0 : a];
+	}
+}
+
+/* A Gaussian blur of a line, three box blurs of width d (SVG's
+ * feGaussianBlur) */
+static void blur_line(unsigned char *p, int n, int step, int d,
+	unsigned char *t)
+{
+	if (d < 2)
+		return;
+	if (d & 1) {
+		box_pass(p, n, step, d / 2, d / 2, t);
+		box_pass(p, n, step, d / 2, d / 2, t);
+		box_pass(p, n, step, d / 2, d / 2, t);
+	} else {
+		box_pass(p, n, step, d / 2, d / 2 - 1, t);
+		box_pass(p, n, step, d / 2 - 1, d / 2, t);
+		box_pass(p, n, step, d / 2, d / 2, t);
+	}
+}
+
+/*
+ * One shadow of a box whose border box is x, y, w, h (radii r) and
+ * padding box px, py, pw, ph (radii pr). An outer shadow is the border
+ * box moved and spread, blurred, painted out of the border box only;
+ * an inset one is the padding box less the moved and shrunk hole,
+ * blurred, painted in the padding box. The blur (a Gaussian of
+ * deviation blur / 2) runs over a buffer of what the clip shows, with
+ * the margin it reads from.
+ */
+static void paint_shadow(struct canvas *c, const struct shadow *s,
+	float x, float y, float w, float h, const float *r, float px,
+	float py, float pw, float ph, const float *pr)
+{
+	float sx, sy, sw, sh, sr[4], lim;
+	int d = (int)floorf(s->blur / 2 * 1.87997f + 0.5f);
+	int m = d < 2 ? 0 : (d * 3 + 1) / 2 + 1;
+	int i, j, i0, j0, i1, j1, b0, c0, b1, c1, bw, bh;
+	unsigned char *buf, *t;
+
+	if (s->inset) {
+		sx = px + s->x + s->spread;
+		sy = py + s->y + s->spread;
+		sw = pw - 2 * s->spread;
+		sh = ph - 2 * s->spread;
+		for (i = 0; i < 4; i++)
+			sr[i] = spread_r(pr[i], -s->spread);
+		/* painted: the padding box */
+		i0 = (int)floorf(px - c->ox);
+		j0 = (int)floorf(py - c->oy);
+		i1 = (int)ceilf(px + pw - c->ox);
+		j1 = (int)ceilf(py + ph - c->oy);
+	} else {
+		sx = x + s->x - s->spread;
+		sy = y + s->y - s->spread;
+		sw = w + 2 * s->spread;
+		sh = h + 2 * s->spread;
+		if (sw <= 0 || sh <= 0)
+			return;
+		for (i = 0; i < 4; i++)
+			sr[i] = spread_r(r[i], s->spread);
+		/* painted: the shape and its blur */
+		i0 = (int)floorf(sx - c->ox) - m;
+		j0 = (int)floorf(sy - c->oy) - m;
+		i1 = (int)ceilf(sx + sw - c->ox) + m;
+		j1 = (int)ceilf(sy + sh - c->oy) + m;
+	}
+	if (sw < 0)
+		sw = 0;
+	if (sh < 0)
+		sh = 0;
+	lim = fminf(sw, sh) / 2;
+	for (i = 0; i < 4; i++)
+		if (sr[i] > lim)
+			sr[i] = lim;
+	if (i0 < c->cx0)
+		i0 = c->cx0;
+	if (j0 < c->cy0)
+		j0 = c->cy0;
+	if (i1 > c->cx1)
+		i1 = c->cx1;
+	if (j1 > c->cy1)
+		j1 = c->cy1;
+	if (i0 >= i1 || j0 >= j1 || !s->rgba[3])
+		return;
+	/* the buffer: what is painted and the margin the blur reads */
+	b0 = i0 - m;
+	c0 = j0 - m;
+	b1 = i1 + m;
+	c1 = j1 + m;
+	bw = b1 - b0;
+	bh = c1 - c0;
+	buf = malloc((size_t)bw * (size_t)bh);
+	t = malloc((size_t)(bw > bh ? bw : bh));
+	if (!buf || !t)
+		abort();
+	for (j = 0; j < bh; j++)
+		for (i = 0; i < bw; i++) {
+			int a = sw > 0 && sh > 0 ? rrect_cov((float)(b0 + i) +
+				c->ox, (float)(c0 + j) + c->oy, sx, sy,
+				sx + sw, sy + sh, sr) : 0;
+
+			buf[(size_t)j * (size_t)bw + (size_t)i] =
+				(unsigned char)(s->inset ? 255 - a : a);
+		}
+	for (j = 0; j < bh; j++)
+		blur_line(buf + (size_t)j * (size_t)bw, bw, 1, d, t);
+	for (i = 0; i < bw; i++)
+		blur_line(buf + i, bh, bw, d, t);
+	for (j = j0; j < j1; j++)
+		for (i = i0; i < i1; i++) {
+			int a = buf[(size_t)(j - c0) * (size_t)bw +
+				(size_t)(i - b0)];
+			float qx = (float)i + c->ox, qy = (float)j + c->oy;
+
+			if (!a)
+				continue;
+			if (s->inset)
+				a = a * rrect_cov(qx, qy, px, py, px + pw,
+					py + ph, pr) / 255;
+			else
+				a = a * (255 - rrect_cov(qx, qy, x, y, x + w,
+					y + h, r)) / 255;
+			if (a > 0)
+				blend(c, i, j, s->rgba, a);
+		}
+	free(t);
+	free(buf);
+}
+
+/* A box's outer shadows, background, inset shadows and borders */
+static void paint_decor(struct canvas *c, const struct box *b, float x,
+	float y, float w, float h)
+{
+	struct shadow sh[NSHADOWS];
+	int i, n = shadows(b->style, sh);
+	float sx = x, sy = y, sw = w, shh = h, r[4], ir[4];
+
+	if (n) {
+		snap(c, &sx, &sy, &sw, &shh);
+		radii(b, sw, shh, r);
+		for (i = 0; i < 4; i++) {
+			float bw = b->b[i] > b->b[(i + 3) % 4] ? b->b[i] :
+				b->b[(i + 3) % 4];
+
+			ir[i] = r[i] - bw > 0 ? r[i] - bw : 0;
+		}
+		for (i = n - 1; i >= 0; i--)
+			if (!sh[i].inset)
+				paint_shadow(c, &sh[i], sx, sy, sw, shh, r,
+					sx + b->b[3], sy + b->b[0], sw - b->b[1] -
+					b->b[3], shh - b->b[0] - b->b[2], ir);
+	}
+	paint_background(c, b, x, y, w, h);
+	for (i = n - 1; i >= 0; i--)
+		if (sh[i].inset)
+			paint_shadow(c, &sh[i], sx, sy, sw, shh, r, sx + b->b[3],
+				sy + b->b[0], sw - b->b[1] - b->b[3], shh -
+				b->b[0] - b->b[2], ir);
+	paint_borders(c, b, x, y, w, h);
+}
+
 static void paint_outline(struct canvas *c, const struct box *b, float x,
 	float y, float w, float h)
 {
@@ -867,8 +1160,7 @@ static void paint_lines(struct canvas *c, struct box *b)
 			if (f->kind == F_INLINE) {
 				struct box *ib = f->box;
 
-				paint_background(c, ib, f->x, f->y, f->w, f->h);
-				paint_borders(c, ib, f->x, f->y, f->w, f->h);
+				paint_decor(c, ib, f->x, f->y, f->w, f->h);
 			}
 		}
 		for (j = l->first; j < l->first + l->n; j++) {
@@ -1080,8 +1372,7 @@ static void paint_box(struct canvas *c, struct box *b, int stacking)
 		bg_done = NULL;		/* painted under its negative layers */
 	} else if (b->type != B_INLINE && b->parent &&
 	    !kw(b->style, P_VISIBILITY, "hidden")) {
-		paint_background(c, b, x, y, w, h);
-		paint_borders(c, b, x, y, w, h);
+		paint_decor(c, b, x, y, w, h);
 	}
 	if (b->type == B_REPLACED) {
 		paint_replaced(c, b);
@@ -1187,8 +1478,7 @@ static void paint_context(struct canvas *c, struct box *b)
 			float w = b->w + b->p[1] + b->p[3] + b->b[1] + b->b[3];
 			float h = b->h + b->p[0] + b->p[2] + b->b[0] + b->b[2];
 
-			paint_background(c, b, x, y, w, h);
-			paint_borders(c, b, x, y, w, h);
+			paint_decor(c, b, x, y, w, h);
 			bg_done = b;
 		}
 		qsort(neg, (size_t)nneg, sizeof(*neg), zcmp);

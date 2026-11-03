@@ -187,12 +187,17 @@ static void walk(struct table *t, const struct box *b, struct dent *d,
 		d->sig = mix(d->sig, b->b, sizeof(b->b));
 		d->sig = mix(d->sig, b->p, sizeof(b->p));
 		MIX(d->sig, b->nlines);
-		/* the border box, and an outline around it */
+		/* the border box, and an outline or shadows around it */
 		o = 0;
-		if (st)
+		if (st) {
+			float sr = shadow_reach(st);
+
 			o = st->v[P_OUTLINE_WIDTH].u.len.px +
 				(st->v[P_OUTLINE_OFFSET].u.len.px > 0 ?
 				st->v[P_OUTLINE_OFFSET].u.len.px : 0);
+			if (sr > o)
+				o = sr;
+		}
 		x0 = b->x - b->p[3] - b->b[3] - o;
 		y0 = b->y - b->p[0] - b->b[0] - o;
 		x1 = b->x + b->w + b->p[1] + b->b[1] + o;

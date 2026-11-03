@@ -470,6 +470,22 @@ reversed, edit the entry and say why; do not leave stale rules here.
   fall on the corners; a rounded double border is two rings. Since
   2026-11-03; before, sides overlapped at the corners and a rounded
   border took the top color, solid.
+- box-shadow (since 2026-11-03; parsed but never painted before):
+  outer shadows under the background, painted out of the border box
+  only (a translucent box does not show its own shadow through),
+  inset ones over the background, in the padding box; the first
+  listed on top, currentcolor unless a color is given. Spread grows
+  the radii as the spec says (a small radius less than the spread,
+  square stays square). The blur is the spec's Gaussian (deviation
+  blur / 2) as three box blurs (feGaussianBlur's way), whatever its
+  radius the same cost per pixel, over a buffer of what the clip
+  shows plus the margin the blur reads: a band of the page paints
+  the same pixels as the whole page. 12 cases match Firefox but for
+  border-radius: 50% of a box that is not square (radii are circles
+  everywhere, ellipses later). Damage takes the shadows' reach. Cost:
+  about 1.3 ms a 200x140 card with a 30px blur; a viewport of 16
+  such cards, two shadows each, 25 ms more. No cache of blurred
+  shapes (browsers keep nine-patches): not needed yet.
 - overflow other than visible clips to the padding box (rectangles
   only; rounded clipping later). A positioned box is painted out of
   its ancestors' walk, so it takes their clipping back when its layer
