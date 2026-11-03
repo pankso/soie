@@ -606,14 +606,29 @@ static void gen_node(struct box *parent, soie_node *n)
 	box_append(parent, b);
 }
 
-static void gen_children(struct box *parent, soie_node *el)
+/* A closed <details> shows its first <summary>, nothing else */
+static soie_node *closed_summary(soie_node *el)
 {
 	soie_node *c;
+
+	if (!is_html(el, TAG_DETAILS) || soie_element_get_attr(el, "open"))
+		return NULL;
+	for (c = el->first; c; c = c->next)
+		if (is_html(c, TAG_SUMMARY))
+			return c;
+	return el;	/* none: nothing shown */
+}
+
+static void gen_children(struct box *parent, soie_node *el)
+{
+	soie_node *c, *only = closed_summary(el);
 	struct box *p;
 
 	if ((p = gen_pseudo(el, el->u.el.before, 'b')))
 		box_append(parent, p);
 	for (c = el->first; c; c = c->next) {
+		if (only && c != only)
+			continue;
 		/* text takes the style of its parent element */
 		if (c->type == SOIE_TEXT) {
 			if (c->u.text.len)

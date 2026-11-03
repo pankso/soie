@@ -1998,10 +1998,38 @@ static void changed(struct shell *s, soie_node *n)
 	fire(s, n, "change", 0, 0, NULL, 0);
 }
 
+/* A click in summary sm of a <details>, at n: toggle it, 1 if done */
+static int toggle_details(struct shell *s, soie_node *sm, soie_node *n)
+{
+	soie_node *d = soie_node_parent(sm), *c, *a;
+
+	if (!d || soie_node_get_type(d) != SOIE_ELEMENT ||
+	    strcmp(soie_element_name(d), "details"))
+		return 0;
+	for (c = soie_node_first_child(d); c; c = soie_node_next_sibling(c))
+		if (soie_node_get_type(c) == SOIE_ELEMENT &&
+		    !strcmp(soie_element_name(c), "summary"))
+			break;
+	if (c != sm)
+		return 0;
+	/* a link inside the summary is followed instead */
+	for (a = n; a && a != sm; a = soie_node_parent(a))
+		if (!strcmp(soie_element_name(a), "a") &&
+		    soie_element_get_attr(a, "href"))
+			return 0;
+	if (soie_element_get_attr(d, "open"))
+		soie_element_remove_attr(d, "open");
+	else
+		soie_element_set_attr(d, "open", "");
+	fire(s, d, "toggle", 0, 0, NULL, 0);
+	relayout(s);
+	return 1;
+}
+
 static void click(struct shell *s, int x, int y, int mods)
 {
 	soie_node *n = s->page.doc ? soie_hit_test(s->page.doc, (float)x,
-		(float)(y + s->page.scroll)) : NULL, *a, *form;
+		(float)(y + s->page.scroll)) : NULL, *a, *form, *sm;
 	const char *t;
 	float cy = (float)y;
 
@@ -2098,6 +2126,9 @@ static void click(struct shell *s, int x, int y, int mods)
 			submit(s, form, a);
 		return;
 	}
+	/* a <details>' summary opens or closes it, but for a link in it */
+	if ((sm = ancestor(n, "summary")) && toggle_details(s, sm, n))
+		return;
 	if ((a = ancestor(n, "a")) && soie_element_get_attr(a, "href")) {
 		const char *h = soie_element_get_attr(a, "href");
 		char *abs;

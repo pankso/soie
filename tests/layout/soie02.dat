@@ -225,3 +225,27 @@ width=100
 |       block anonymous 8,40 8x20
 |         line 8,40 8x20
 |           text "f" 8,42 8x16
+
+#data
+<!DOCTYPE html><body style="margin:0"><details>t<summary>s</summary>hidden<p>hidden<summary>2nd</summary></details><details open><summary>o</summary>shown</details>
+#errors
+#layout
+width=100
+#document
+| block <html> 0,0 100x60
+|   block <body> 0,0 100x60
+|     block <details> 0,0 100x20
+|       block <summary> 0,0 100x20
+|         line 0,0 100x20
+|           text "▸ " 0,2 16x16
+|           inline ::marker 0,2 16x16
+|           text "s" 16,2 8x16
+|     block <details> 0,20 100x40
+|       block <summary> 0,20 100x20
+|         line 0,20 100x20
+|           text "▾ " 0,22 16x16
+|           inline ::marker 0,22 16x16
+|           text "o" 16,22 8x16
+|       block anonymous 0,40 100x20
+|         line 0,40 100x20
+|           text "shown" 0,42 40x16
