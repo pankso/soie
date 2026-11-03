@@ -460,7 +460,16 @@ reversed, edit the entry and say why; do not leave stale rules here.
   pixels, rounded down, 1 at least when not 0 (a 0.5px border is 1px,
   1.5px is 1px). With both, 11 WPT reftests passed.
 - Borders: solid, dashed, dotted, double, inset/outset/groove/ridge
-  (shaded); corners are not mitred. Rounded borders draw one color.
+  (shaded). Sides alike on square corners are four rectangles (the
+  common case, fast); otherwise each point of the ring goes to the
+  side it is nearest by depth over that side's width, which mitres
+  the corners: CSS triangles (an empty box's borders, the carets of
+  Bootstrap and many menus) come out as triangles, a rounded box keeps
+  each side's color and pattern (doc.slitaz.org's cards were all red).
+  4x4 samples a pixel near the corners only. Dots are round, spaced to
+  fall on the corners; a rounded double border is two rings. Since
+  2026-11-03; before, sides overlapped at the corners and a rounded
+  border took the top color, solid.
 - overflow other than visible clips to the padding box (rectangles
   only; rounded clipping later). A positioned box is painted out of
   its ancestors' walk, so it takes their clipping back when its layer

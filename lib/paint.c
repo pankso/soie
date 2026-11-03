@@ -523,6 +523,193 @@ static void border_side(struct canvas *c, const struct box *b, int side,
 	}
 }
 
+/* A side of a border: its color (3D styles shaded) and its pattern,
+ * 's' solid, 'd' dashed, 'o' dotted, '2' double */
+struct bside {
+	unsigned char rgba[4];
+	int kind;
+	float w;
+};
+
+static void side_of(const struct box *b, int side, struct bside *s)
+{
+	static const int sty[4] = { P_BORDER_TOP_STYLE, P_BORDER_RIGHT_STYLE,
+		P_BORDER_BOTTOM_STYLE, P_BORDER_LEFT_STYLE };
+	static const int col[4] = { P_BORDER_TOP_COLOR, P_BORDER_RIGHT_COLOR,
+		P_BORDER_BOTTOM_COLOR, P_BORDER_LEFT_COLOR };
+	const struct style *st = b->style;
+
+	s->w = b->b[side];
+	style_rgba(st, col[side], s->rgba);
+	if (kw(st, sty[side], "inset") || kw(st, sty[side], "groove"))
+		shade(s->rgba, side == 0 || side == 3, s->rgba);
+	else if (kw(st, sty[side], "outset") || kw(st, sty[side], "ridge"))
+		shade(s->rgba, side == 1 || side == 2, s->rgba);
+	s->kind = kw(st, sty[side], "dashed") ? 'd' :
+		kw(st, sty[side], "dotted") ? 'o' :
+		kw(st, sty[side], "double") && s->w >= 3 ? '2' : 's';
+}
+
+/* Is a point of side s drawn: t its depth across the side (0 at the
+ * outer edge, 1 at the inner), a its distance along the side, len the
+ * side's length. Dots are round, about a width apart, spaced to fall
+ * on both corners. */
+static int on_side(const struct bside *s, float t, float a, float len)
+{
+	float d, u, p;
+	int n;
+
+	if (s->kind == 's' || s->kind == '2')
+		return 1;
+	if (s->kind == 'o') {
+		n = (int)roundf((len - s->w) / (2 * s->w));
+		p = n > 0 ? (len - s->w) / (float)n : 2 * s->w;
+		u = fmodf(a - s->w / 2 + p / 2, p) - p / 2;
+		d = (t - 0.5f) * s->w;
+		return u * u + d * d <= s->w * s->w / 4;
+	}
+	d = s->w * 3;
+	return fmodf(a, 2 * d) < d;
+}
+
+static int in_rrect(float x, float y, float x0, float y0, float x1, float y1,
+	const float *r)
+{
+	float cx, cy, rr;
+
+	if (x < x0 || x > x1 || y < y0 || y > y1)
+		return 0;
+	if (x < x0 + r[0] && y < y0 + r[0])
+		cx = x0 + r[0], cy = y0 + r[0], rr = r[0];
+	else if (x > x1 - r[1] && y < y0 + r[1])
+		cx = x1 - r[1], cy = y0 + r[1], rr = r[1];
+	else if (x > x1 - r[2] && y > y1 - r[2])
+		cx = x1 - r[2], cy = y1 - r[2], rr = r[2];
+	else if (x < x0 + r[3] && y > y1 - r[3])
+		cx = x0 + r[3], cy = y1 - r[3], rr = r[3];
+	else
+		return 1;
+	return (x - cx) * (x - cx) + (y - cy) * (y - cy) <= rr * rr;
+}
+
+/*
+ * A border whose sides differ, or rounded: each point of the ring goes
+ * to the side it is nearest, by depth over the side's width, which
+ * joins sides along the diagonals of the corners (CSS triangles are
+ * the borders of an empty box), 4x4 samples a pixel near the corners
+ * and the patterns. Straight solid parts are filled as they come.
+ */
+static void paint_ring(struct canvas *c, const struct box *b, float x,
+	float y, float w, float h, const float *r, const float *ir)
+{
+	struct bside s[4];
+	float x1 = x + w, y1 = y + h, bw[4], cl, cr, ct, cb;
+	float ix = x + b->b[3], iy = y + b->b[0];
+	float ix1 = x1 - b->b[1], iy1 = y1 - b->b[2];
+	int inner = ix1 > ix && iy1 > iy, i, j, k, i0, i1, j0, j1;
+	/* double: the outer and the inner thirds, rings of their own */
+	float r1[4], r2[4], t1[4], t2[4];
+
+	for (k = 0; k < 4; k++) {
+		side_of(b, k, &s[k]);
+		bw[k] = s[k].w > 0 ? s[k].w : 1e-30f;
+		t1[k] = b->b[k] / 3;
+		t2[k] = b->b[k] * 2 / 3;
+	}
+	for (k = 0; k < 4; k++) {
+		float m = fmaxf(b->b[k], b->b[(k + 3) % 4]);
+
+		r1[k] = fmaxf(r[k] - m / 3, 0);
+		r2[k] = fmaxf(r[k] - m * 2 / 3, 0);
+	}
+	cl = fmaxf(b->b[3], fmaxf(r[0], r[3]));
+	cr = fmaxf(b->b[1], fmaxf(r[1], r[2]));
+	ct = fmaxf(b->b[0], fmaxf(r[0], r[1]));
+	cb = fmaxf(b->b[2], fmaxf(r[2], r[3]));
+	i0 = (int)floorf(x - c->ox);
+	i1 = (int)ceilf(x1 - c->ox);
+	j0 = (int)floorf(y - c->oy);
+	j1 = (int)ceilf(y1 - c->oy);
+	if (i0 < c->cx0)
+		i0 = c->cx0;
+	if (i1 > c->cx1)
+		i1 = c->cx1;
+	if (j0 < c->cy0)
+		j0 = c->cy0;
+	if (j1 > c->cy1)
+		j1 = c->cy1;
+	for (j = j0; j < j1; j++) {
+		float py = (float)j + c->oy;
+		int band = py < y + ct || py + 1 > y1 - cb;
+
+		for (i = i0; i < i1; i++) {
+			float px = (float)i + c->ox;
+			int n[4] = { 0, 0, 0, 0 }, sx, sy;
+
+			/* between the side bands: nothing to paint */
+			if (!band && px >= x + cl && px + 1 <= x1 - cr) {
+				int to = (int)floorf(x1 - cr - c->ox) - 1;
+
+				if (to > i)
+					i = to;
+				continue;
+			}
+			/* inside a straight solid part */
+			k = -1;
+			if (px >= x + cl && px + 1 <= x1 - cr) {
+				if (py >= y && py + 1 <= iy)
+					k = 0;
+				else if (py >= iy1 && py + 1 <= y1)
+					k = 2;
+			} else if (py >= y + ct && py + 1 <= y1 - cb) {
+				if (px >= x && px + 1 <= ix)
+					k = 3;
+				else if (px >= ix1 && px + 1 <= x1)
+					k = 1;
+			}
+			if (k >= 0 && s[k].kind == 's') {
+				blend(c, i, j, s[k].rgba, 255);
+				continue;
+			}
+			/* inside the padding box: no border there */
+			if (inner && rrect_cov(px, py, ix, iy, ix1, iy1, ir) == 255)
+				continue;
+			for (sy = 0; sy < 4; sy++)
+				for (sx = 0; sx < 4; sx++) {
+					float qx = px + ((float)sx + 0.5f) / 4;
+					float qy = py + ((float)sy + 0.5f) / 4;
+					float d[4], t;
+					int m;
+
+					if (!in_rrect(qx, qy, x, y, x1, y1, r) ||
+					    (inner && in_rrect(qx, qy, ix, iy,
+					    ix1, iy1, ir)))
+						continue;
+					d[0] = (qy - y) / bw[0];
+					d[1] = (x1 - qx) / bw[1];
+					d[2] = (y1 - qy) / bw[2];
+					d[3] = (qx - x) / bw[3];
+					for (m = 0, k = 1; k < 4; k++)
+						if (d[k] < d[m])
+							m = k;
+					t = d[m];
+					if (s[m].kind == '2' ?
+					    !in_rrect(qx, qy, x + t1[3], y + t1[0],
+					    x1 - t1[1], y1 - t1[2], r1) ||
+					    in_rrect(qx, qy, x + t2[3], y + t2[0],
+					    x1 - t2[1], y1 - t2[2], r2) :
+					    on_side(&s[m], t, m == 0 || m == 2 ?
+					    qx - x : qy - y, m == 0 || m == 2 ?
+					    w : h))
+						n[m]++;
+				}
+			for (k = 0; k < 4; k++)
+				if (n[k])
+					blend(c, i, j, s[k].rgba, n[k] * 255 / 16);
+		}
+	}
+}
+
 /* A box's edges on whole pixels, as browsers paint them: two boxes
  * meeting at a fractional edge share no pixel, one over another at
  * the same place covers it whole. */
@@ -561,30 +748,35 @@ static void paint_borders(struct canvas *c, const struct box *b, float x,
 	float y, float w, float h)
 {
 	float r[4], ir[4];
-	int i, same = 1;
-	unsigned char rgba[4], first[4];
+	int i, k, same = 1;
+	struct bside sd[4];
 
 	snap(c, &x, &y, &w, &h);
+	if (!b->b[0] && !b->b[1] && !b->b[2] && !b->b[3])
+		return;
 	radii(b, w, h, r);
-	if (r[0] || r[1] || r[2] || r[3]) {
-		/* rounded: one color ring (the top one), solid */
-		for (i = 0; i < 4; i++) {
-			float bw = b->b[i] > b->b[(i + 3) % 4] ? b->b[i] :
-				b->b[(i + 3) % 4];
-
-			ir[i] = r[i] - bw > 0 ? r[i] - bw : 0;
-		}
-		style_rgba(b->style, P_BORDER_TOP_COLOR, rgba);
-		if (b->b[0] || b->b[1] || b->b[2] || b->b[3])
-			fill_rrect(c, x, y, w, h, r, x + b->b[3], y + b->b[0],
-				w - b->b[1] - b->b[3], h - b->b[0] - b->b[2],
-				ir, rgba);
+	/* sides alike, square corners: each side a rectangle */
+	for (i = 0, k = -1; i < 4 && same; i++) {
+		side_of(b, i, &sd[i]);
+		if (sd[i].w <= 0)
+			continue;
+		if (k >= 0 && (memcmp(sd[i].rgba, sd[k].rgba, 4) ||
+		    sd[i].kind != sd[k].kind))
+			same = 0;
+		k = i;
+	}
+	if (same && sd[k].kind != 'o' && !r[0] && !r[1] && !r[2] && !r[3]) {
+		for (i = 0; i < 4; i++)
+			border_side(c, b, i, x, y, w, h);
 		return;
 	}
-	style_rgba(b->style, P_BORDER_TOP_COLOR, first);
-	(void)same;
-	for (i = 0; i < 4; i++)
-		border_side(c, b, i, x, y, w, h);
+	for (i = 0; i < 4; i++) {
+		float bw = b->b[i] > b->b[(i + 3) % 4] ? b->b[i] :
+			b->b[(i + 3) % 4];
+
+		ir[i] = r[i] - bw > 0 ? r[i] - bw : 0;
+	}
+	paint_ring(c, b, x, y, w, h, r, ir);
 }
 
 static void paint_outline(struct canvas *c, const struct box *b, float x,
