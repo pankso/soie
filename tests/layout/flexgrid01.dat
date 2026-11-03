@@ -250,3 +250,38 @@ width=300
 |       block <div> 0,80 30x20
 |         line 0,80 30x20
 |           text "x" 0,82 8x16
+
+#data
+<!DOCTYPE html><body style="margin:0"><div style="display:flex;align-items:center;min-height:68px;background:#ddd;width:300px"><span style="background:#f88">A</span></div><div style="position:relative;height:150px;width:300px;background:#eee"> <div style="position:absolute;top:20px;bottom:0;width:100%;display:flex"><div style="flex-grow:1;background:#8f8"></div></div></div><div style="display:flex;height:56px;align-items:stretch;background:#ccf;width:300px"> <div style="display:inline-flex;align-items:stretch"><a style="display:inline-flex;align-items:center;background:#ff8">Learn</a></div></div><div style="display:flex;flex-direction:column;justify-content:space-between;min-height:120px;width:300px;background:#fcf"> <div>top</div><div style="background:#f88">bottom</div></div><div style="display:flex;height:50px;background:#cff;width:300px"><div style="display:flex"><a style="display:flex;align-items:center;height:100%;background:#8cf">pct</a></div></div>
+#errors
+#layout
+width=320
+#document
+| block <html> 0,0 320x444
+|   block <body> 0,0 320x444
+|     block <div> 0,0 300x68
+|       block <span> 0,24 8x20
+|         line 0,24 8x20
+|           text "A" 0,26 8x16
+|     block <div> 0,68 300x150
+|       block abs <div> 0,88 300x130
+|         block <div> 0,88 300x130
+|     block <div> 0,218 300x56
+|       block <div> 0,218 40x56
+|         block <a> 0,218 40x56
+|           block anonymous 0,236 40x20
+|             line 0,236 40x20
+|               text "Learn" 0,238 40x16
+|     block <div> 0,274 300x120
+|       block <div> 0,274 300x20
+|         line 0,274 300x20
+|           text "top" 0,276 24x16
+|       block <div> 0,374 300x20
+|         line 0,374 300x20
+|           text "bottom" 0,376 48x16
+|     block <div> 0,394 300x50
+|       block <div> 0,394 24x50
+|         block <a> 0,394 24x50
+|           block anonymous 0,409 24x20
+|             line 0,409 24x20
+|               text "pct" 0,411 24x16

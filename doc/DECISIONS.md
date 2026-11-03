@@ -1593,6 +1593,18 @@ on the same frozen DOM.
   (max-width 1000px, margin auto) in a body that is a column wrapped
   its text less and got a short height, and the next section covered
   its bottom (www.slitaz.org's cards, soie.slitaz.org's).
+- A flex container's height is the definite one it is given: its
+  height, or one set from outside, a stretched item or an absolute
+  box between its top and bottom (layout_contents() passes it).
+  layout_flex() used to read the height property again: OSM's map
+  (an absolute flex row between top: 55px and bottom: 0) was 0 px
+  tall, and a height in % applied twice. A stretched item is laid
+  out again at its line's height whenever that changes it, the
+  container's height definite or not (9.4 step 11): go.dev's and
+  php.net's menus centre again. A single line of auto height is
+  clamped to the container's min and max heights, a column of auto
+  height too, for justify-content (GitHub's header, framasoft's
+  cards). +1 WPT (percentage-heights-021), layout time unchanged.
 
 ## JavaScript (phase 10)
 

@@ -360,13 +360,21 @@ static void abs_children(struct box *f, float w, float h, int row,
 	}
 }
 
+/*
+ * cbh is f's own content height when definite, else -1: its height,
+ * or one set from outside (a stretched item, an abs box between its
+ * top and bottom), as layout_contents() passes it.
+ */
 float layout_flex(struct box *f, float cbh)
 {
 	const struct style *st = f->style;
 	int row = is_row(st), rev = is_reverse(st);
 	int wrap = !kw(st, P_FLEX_WRAP, "nowrap");
 	int wrev = kw(st, P_FLEX_WRAP, "wrap-reverse");
-	float W = f->w, H = box_spec_h(f, P_HEIGHT, cbh);
+	float W = f->w, H = cbh;
+	float lo = box_spec_h(f, P_MIN_HEIGHT, cbh);
+	float hi = box_spec_h(f, P_MAX_HEIGHT, cbh);
+	float colh = -1;	/* a column's height, auto but clamped */
 	float main_avail, mgap, cgap, y, cross_total = 0, extra;
 	struct item *v = NULL;
 	struct box *c;
@@ -445,13 +453,11 @@ float layout_flex(struct box *f, float cbh)
 			 * its min and max (body { min-height: 100vh }: the
 			 * footer at the bottom of the screen) */
 			if (main_avail >= 1e29f && nlines == 1 && end == n) {
-				float lo = box_spec_h(f, P_MIN_HEIGHT, cbh);
-				float hi = box_spec_h(f, P_MAX_HEIGHT, cbh);
-
 				if (hi >= 0 && avail > hi)
 					avail = hi;
 				if (lo >= 0 && avail < lo)
 					avail = lo;
+				colh = avail;
 			}
 
 			flex_line(v + start, end - start, avail -
@@ -517,9 +523,17 @@ float layout_flex(struct box *f, float cbh)
 		/* a definite cross size: single lines fill it */
 		float cross_avail = row ? H : W;
 
-		if (cross_avail >= 0 && nlines == 1 && !wrap)
+		if (cross_avail >= 0 && nlines == 1 && !wrap) {
 			lcross[0] = cross_avail, cross_total = cross_avail;
-		else if (cross_avail >= 0 && ac == 's' && nlines &&
+		} else if (row && nlines == 1 && !wrap) {
+			/* single line of auto height: within the container's
+			 * min and max heights (CSS Flexbox 9.4 step 15) */
+			if (hi >= 0 && lcross[0] > hi)
+				lcross[0] = hi;
+			if (lo >= 0 && lcross[0] < lo)
+				lcross[0] = lo;
+			cross_total = lcross[0];
+		} else if (cross_avail >= 0 && ac == 's' && nlines &&
 			 cross_avail > cross_total) {
 			float add = (cross_avail - cross_total) / (float)nlines;
 
@@ -546,7 +560,7 @@ float layout_flex(struct box *f, float cbh)
 			autos += v[k].auto_ms + v[k].auto_me;
 		}
 		used += mgap * (float)(z - a - 1 > 0 ? z - a - 1 : 0);
-		lineavail = row ? W : (H >= 0 ? H : used);
+		lineavail = row ? W : H >= 0 ? H : colh >= 0 ? colh : used;
 		free_space = lineavail - used;
 		pos = 0;
 		if (free_space > 0 && autos) {
@@ -611,10 +625,10 @@ float layout_flex(struct box *f, float cbh)
 				if (!row) {
 					/* a new width: lay out again */
 					layout_item(b, 0, 0, cross, it->main);
-				} else if (H >= 0 && !wrap &&
-				    cross != it->cross) {
-					/* a definite height (CSS Flexbox 9.8):
-					 * its percentages resolve against it */
+				} else if (cross != it->cross) {
+					/* a definite height (CSS Flexbox 9.4
+					 * step 11): its percentages and its own
+					 * flex lines resolve against it */
 					layout_item(b, 0, 0, it->main, cross);
 				}
 			} else if (it->auto_cs && it->auto_ce) {
@@ -671,7 +685,7 @@ float layout_flex(struct box *f, float cbh)
 			for (i = 0; i < n; i++)
 				used += v[i].main + v[i].mbefore + v[i].mafter;
 			used += mgap * (float)(n > 1 ? n - 1 : 0);
-			h = H >= 0 ? H : used;
+			h = H >= 0 ? H : colh >= 0 ? colh : used;
 		}
 		abs_children(f, W, box_clamp_h(f, h, cbh), row, rev, jc);
 		free(lasc);
