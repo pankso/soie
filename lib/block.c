@@ -706,19 +706,80 @@ static int has_ratio(const struct box *b)
 }
 
 /* Replaced elements: CSS 2 10.3.2 and 10.6.2 */
+/* Both auto, with a ratio: the min/max table of CSS 2 10.4 */
+static void replaced_minmax(struct box *b, float w, float h, float cbw,
+	float cbh)
+{
+	float maxw = spec_width(b, P_MAX_WIDTH, cbw);
+	float minw = spec_width(b, P_MIN_WIDTH, cbw);
+	float maxh = spec_height(b, P_MAX_HEIGHT, cbh);
+	float minh = spec_height(b, P_MIN_HEIGHT, cbh);
+	float rw, rh;
+
+	if (minw < 0)
+		minw = 0;
+	if (minh < 0)
+		minh = 0;
+	if (maxw < 0)
+		maxw = 1e30f;
+	if (maxh < 0)
+		maxh = 1e30f;
+	if (maxw < minw)
+		maxw = minw;
+	if (maxh < minh)
+		maxh = minh;
+	if (w > maxw && h > maxh) {
+		if (maxw / w <= maxh / h)
+			rw = maxw, rh = fmaxf(minh, maxw * h / w);
+		else
+			rw = fmaxf(minw, maxh * w / h), rh = maxh;
+	} else if (w < minw && h < minh) {
+		if (minw / w <= minh / h)
+			rw = fminf(maxw, minh * w / h), rh = minh;
+		else
+			rw = minw, rh = fminf(maxh, minw * h / w);
+	} else if (w < minw && h > maxh) {
+		rw = minw, rh = maxh;
+	} else if (w > maxw && h < minh) {
+		rw = maxw, rh = minh;
+	} else if (w > maxw) {
+		rw = maxw, rh = fmaxf(maxw * h / w, minh);
+	} else if (w < minw) {
+		rw = minw, rh = fminf(minw * h / w, maxh);
+	} else if (h > maxh) {
+		rw = fmaxf(maxh * w / h, minw), rh = maxh;
+	} else if (h < minh) {
+		rw = fminf(minh * w / h, maxw), rh = minh;
+	} else {
+		rw = w, rh = h;
+	}
+	b->w = rw;
+	b->h = rh;
+}
+
 static void replaced_size(struct box *b, float cbw, float cbh)
 {
 	float w = spec_width(b, P_WIDTH, cbw), h = spec_height(b, P_HEIGHT,
 		cbh);
 	float iw = b->iw > 0 ? b->iw : 0, ih = b->ih > 0 ? b->ih : 0;
 
+	int ratio = iw > 0 && ih > 0 && has_ratio(b);
+
+	if (ratio && w < 0 && h < 0) {
+		replaced_minmax(b, iw, ih, cbw, cbh);
+		return;
+	}
+	/* the auto one from the other's used size (CSS 2 10.3.2, 10.6.2):
+	 * width:100px;max-width:50px;height:auto is 50 wide, ratio high */
 	if (w < 0 && h < 0) {
 		w = iw;
 		h = ih;
 	} else if (w < 0) {
-		w = ih > 0 && has_ratio(b) ? h * iw / ih : iw;
+		h = clamp_h(b, h, cbh);
+		w = ratio ? h * iw / ih : iw;
 	} else if (h < 0) {
-		h = iw > 0 && has_ratio(b) ? w * ih / iw : ih;
+		w = clamp_w(b, w, cbw);
+		h = ratio ? w * ih / iw : ih;
 	}
 	b->w = clamp_w(b, w, cbw);
 	b->h = clamp_h(b, h, cbh);
