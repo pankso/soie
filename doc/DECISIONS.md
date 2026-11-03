@@ -480,19 +480,34 @@ reversed, edit the entry and say why; do not leave stale rules here.
   blur / 2) as three box blurs (feGaussianBlur's way), whatever its
   radius the same cost per pixel, over a buffer of what the clip
   shows plus the margin the blur reads: a band of the page paints
-  the same pixels as the whole page. 12 cases match Firefox but for
-  border-radius: 50% of a box that is not square (radii are circles
-  everywhere, ellipses later). Damage takes the shadows' reach. Cost:
+  the same pixels as the whole page. 12 cases match Firefox. Damage
+  takes the shadows' reach. Cost:
   about 1.3 ms a 200x140 card with a 30px blur; a viewport of 16
   such cards, two shadows each, 25 ms more. No cache of blurred
   shapes (browsers keep nine-patches): not needed yet.
-- overflow other than visible clips to the padding box (rectangles
-  only; rounded clipping later). A positioned box is painted out of
+- Corners are elliptical: a radius in % is of the width across and of
+  the height down (border-radius: 50% of a box that is not square is
+  an ellipse), and radii that would meet past a side are scaled down
+  together (css-backgrounds-3 5.5), no longer each clamped to half
+  the smaller side. The curves inside (padding box, content box, a
+  double border's lines) take each side's width on their own axis: a
+  thick top border under thin sides curves as in Firefox. The
+  "h / v" syntax is still parsed as h alone. Since 2026-11-03.
+- overflow other than visible clips to the padding box, in the curve
+  of its corners: a mask of what the clip shows (as mask-image's), its
+  rounded rectangle times the mask there was. An image, video or SVG
+  is clipped the same way to its content box's curve (form controls
+  draw their own), a background image to the border box's (gradient
+  buttons had square corners). A positioned box is painted out of
   its ancestors' walk, so it takes their clipping back when its layer
   is painted: that of its containing block chain (an absolute box
   skips the static ancestors up to its containing block, a fixed one
-  all of them). python.org hid its skip link, a relative <a>, in a
-  1px overflow: hidden box: drawn on the page without it.
+  all of them), the rounded ones of the 8 nearest too. python.org hid
+  its skip link, a relative <a>, in a 1px overflow: hidden box: drawn
+  on the page without it. A test page of 12 cases: 0.082 RMSE from
+  Firefox before, 0.0095 after. Cost: a page in a rounded overflow:
+  hidden box paints 18% slower (masked pixels take the blend path),
+  5 ms more on a viewport.
 - clip: rect() of an absolute or fixed box (the skip links of go.dev
   and many others: clip: rect(0 0 0 0)), from its border box's
   corner, auto its edge; an empty rect is empty, not a pixel wide.

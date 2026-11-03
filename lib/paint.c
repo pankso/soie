@@ -91,14 +91,31 @@ static void clip_rect(struct canvas *c, const struct box *b)
 	cvlist_free(&l);
 }
 
+/* Does b's overflow clip its content (to its padding box) */
+static int clips(const struct box *b)
+{
+	return b->style && b->parent && b->type != B_INLINE &&
+		(!kw(b->style, P_OVERFLOW_X, "visible") ||
+		!kw(b->style, P_OVERFLOW_Y, "visible"));
+}
+
+/* A form control, which paints its own box inside */
+static int control(const struct box *b)
+{
+	const soie_node *n = b->node;
+
+	return n && n->ns == SOIE_NS_HTML && (n->tag == TAG_INPUT ||
+		n->tag == TAG_TEXTAREA || n->tag == TAG_SELECT ||
+		n->tag == TAG_BUTTON);
+}
+
 /* What clips b's content: overflow (to its padding box) and clip */
 static void content_clip(struct canvas *c, const struct box *b)
 {
 	if (!b->style || !b->parent)
 		return;
 	clip_rect(c, b);
-	if (b->type != B_INLINE && (!kw(b->style, P_OVERFLOW_X, "visible") ||
-	    !kw(b->style, P_OVERFLOW_Y, "visible")))
+	if (clips(b))
 		clip_to(c, b->x - b->p[3], b->y - b->p[0],
 			b->x + b->w + b->p[1], b->y + b->h + b->p[2]);
 }
@@ -202,6 +219,34 @@ void fill_rect(struct canvas *c, float x, float y, float w, float h,
 	}
 }
 
+/*
+ * Rounded rectangles: radii r[0..3] across (top-left, top-right,
+ * bottom-right, bottom-left), r[4..7] down, the corners elliptical;
+ * a corner with either radius 0 is square.
+ */
+
+/* Is x, y out of the curve of the corner it is in (0 when in no
+ * corner) */
+static int corner_out(float x, float y, float x0, float y0, float x1,
+	float y1, const float *r)
+{
+	float cx, cy, dx, dy;
+
+	if (x < x0 + r[0] && y < y0 + r[4])
+		cx = x0 + r[0], cy = y0 + r[4], dx = r[0], dy = r[4];
+	else if (x > x1 - r[1] && y < y0 + r[5])
+		cx = x1 - r[1], cy = y0 + r[5], dx = r[1], dy = r[5];
+	else if (x > x1 - r[2] && y > y1 - r[6])
+		cx = x1 - r[2], cy = y1 - r[6], dx = r[2], dy = r[6];
+	else if (x < x0 + r[3] && y > y1 - r[7])
+		cx = x0 + r[3], cy = y1 - r[7], dx = r[3], dy = r[7];
+	else
+		return 0;
+	dx = (x - cx) / dx;
+	dy = (y - cy) / dy;
+	return dx * dx + dy * dy > 1;
+}
+
 /* Coverage of a pixel center by a rounded rectangle (4x4 samples). */
 static int rrect_cov(float px, float py, float x0, float y0, float x1,
 	float y1, const float *r)
@@ -213,36 +258,63 @@ static int rrect_cov(float px, float py, float x0, float y0, float x1,
 	if (px + 1 <= x0 || px >= x1 || py + 1 <= y0 || py >= y1)
 		return 0;
 	if (px >= x0 && px + 1 <= x1 && py >= y0 && py + 1 <= y1 &&
-	    (px >= x0 + r[0] || py >= y0 + r[0]) &&
-	    (px + 1 <= x1 - r[1] || py >= y0 + r[1]) &&
-	    (px + 1 <= x1 - r[2] || py + 1 <= y1 - r[2]) &&
-	    (px >= x0 + r[3] || py + 1 <= y1 - r[3]))
+	    (px >= x0 + r[0] || py >= y0 + r[4]) &&
+	    (px + 1 <= x1 - r[1] || py >= y0 + r[5]) &&
+	    (px + 1 <= x1 - r[2] || py + 1 <= y1 - r[6]) &&
+	    (px >= x0 + r[3] || py + 1 <= y1 - r[7]))
 		return 255;
 	for (sy = 0; sy < 4; sy++)
 		for (sx = 0; sx < 4; sx++) {
 			float x = px + ((float)sx + 0.5f) / 4;
 			float y = py + ((float)sy + 0.5f) / 4;
-			float cx, cy, rr;
 
-			if (x < x0 || x > x1 || y < y0 || y > y1)
-				continue;
-			/* corners: top-left, top-right, bottom-right, -left */
-			if (x < x0 + r[0] && y < y0 + r[0])
-				cx = x0 + r[0], cy = y0 + r[0], rr = r[0];
-			else if (x > x1 - r[1] && y < y0 + r[1])
-				cx = x1 - r[1], cy = y0 + r[1], rr = r[1];
-			else if (x > x1 - r[2] && y > y1 - r[2])
-				cx = x1 - r[2], cy = y1 - r[2], rr = r[2];
-			else if (x < x0 + r[3] && y > y1 - r[3])
-				cx = x0 + r[3], cy = y1 - r[3], rr = r[3];
-			else {
-				n++;
-				continue;
-			}
-			if ((x - cx) * (x - cx) + (y - cy) * (y - cy) <= rr * rr)
+			if (x >= x0 && x <= x1 && y >= y0 && y <= y1 &&
+			    !corner_out(x, y, x0, y0, x1, y1, r))
 				n++;
 		}
 	return n * 255 / 16;
+}
+
+/* Radii r scaled down together so that no two meet past a side of a
+ * w x h box (css-backgrounds-3 5.5), a corner square if either of its
+ * radii is 0 */
+static void fit_radii(float *r, float w, float h)
+{
+	float f = 1, s;
+	int i;
+
+	for (i = 0; i < 8; i++)
+		if (!(r[i] > 0))
+			r[i] = 0;
+	if ((s = r[0] + r[1]) > w)
+		f = fminf(f, w / s);
+	if ((s = r[3] + r[2]) > w)
+		f = fminf(f, w / s);
+	if ((s = r[4] + r[7]) > h)
+		f = fminf(f, h / s);
+	if ((s = r[5] + r[6]) > h)
+		f = fminf(f, h / s);
+	for (i = 0; i < 8; i++)
+		r[i] = f < 1 ? r[i] * f : r[i];
+	for (i = 0; i < 4; i++)
+		if (!r[i] || !r[i + 4])
+			r[i] = r[i + 4] = 0;
+}
+
+/* The radii of a curve e[top, right, bottom, left] inside another of
+ * radii r (padding box, content box, a double border's line) */
+static void inset_radii(const float *r, const float *e, float *out)
+{
+	static const int ax[4] = { 3, 1, 1, 3 }, ay[4] = { 0, 0, 2, 2 };
+	int i;
+
+	for (i = 0; i < 4; i++) {
+		out[i] = fmaxf(r[i] - e[ax[i]], 0);
+		out[i + 4] = fmaxf(r[i + 4] - e[ay[i]], 0);
+	}
+	for (i = 0; i < 4; i++)
+		if (!out[i] || !out[i + 4])
+			out[i] = out[i + 4] = 0;
 }
 
 /* Ring between an outer and an inner rounded rectangle (inner may be
@@ -270,7 +342,7 @@ static void fill_rrect(struct canvas *c, float x, float y, float w, float h,
 	/* a solid background: the rows clear of the corners are filled
 	 * between the edges' pixels */
 	if (solid(c, rgba) && (iw <= 0 || ih <= 0)) {
-		float top = fmaxf(r[0], r[1]), bottom = fmaxf(r[2], r[3]);
+		float top = fmaxf(r[4], r[5]), bottom = fmaxf(r[6], r[7]);
 
 		f0 = (int)ceilf(x - c->ox) > i0 ? (int)ceilf(x - c->ox) : i0;
 		f1 = (int)floorf(x + w - c->ox) < i1 ?
@@ -306,7 +378,7 @@ static void fill_rrect(struct canvas *c, float x, float y, float w, float h,
 void fill_round(struct canvas *c, float x, float y, float w, float h,
 	float r, const unsigned char *rgba)
 {
-	const float rr[4] = { r, r, r, r };
+	const float rr[8] = { r, r, r, r, r, r, r, r };
 
 	fill_rrect(c, x, y, w, h, rr, 0, 0, 0, 0, NULL, rgba);
 }
@@ -448,16 +520,15 @@ static void radii(const struct box *b, float w, float h, float *r)
 	static const int p[4] = { P_BORDER_TOP_LEFT_RADIUS,
 		P_BORDER_TOP_RIGHT_RADIUS, P_BORDER_BOTTOM_RIGHT_RADIUS,
 		P_BORDER_BOTTOM_LEFT_RADIUS };
-	float m = (w < h ? w : h) / 2;
 	int i;
 
+	/* one value: a percentage is of the width across, of the height
+	 * down (50%: an ellipse) */
 	for (i = 0; i < 4; i++) {
 		r[i] = len_val(&b->style->v[p[i]], w);
-		if (r[i] > m)
-			r[i] = m;
-		if (r[i] < 0)
-			r[i] = 0;
+		r[i + 4] = len_val(&b->style->v[p[i]], h);
 	}
+	fit_radii(r, w, h);
 }
 
 static void shade(const unsigned char *in, int dark, unsigned char *out)
@@ -575,21 +646,9 @@ static int on_side(const struct bside *s, float t, float a, float len)
 static int in_rrect(float x, float y, float x0, float y0, float x1, float y1,
 	const float *r)
 {
-	float cx, cy, rr;
-
 	if (x < x0 || x > x1 || y < y0 || y > y1)
 		return 0;
-	if (x < x0 + r[0] && y < y0 + r[0])
-		cx = x0 + r[0], cy = y0 + r[0], rr = r[0];
-	else if (x > x1 - r[1] && y < y0 + r[1])
-		cx = x1 - r[1], cy = y0 + r[1], rr = r[1];
-	else if (x > x1 - r[2] && y > y1 - r[2])
-		cx = x1 - r[2], cy = y1 - r[2], rr = r[2];
-	else if (x < x0 + r[3] && y > y1 - r[3])
-		cx = x0 + r[3], cy = y1 - r[3], rr = r[3];
-	else
-		return 1;
-	return (x - cx) * (x - cx) + (y - cy) * (y - cy) <= rr * rr;
+	return !corner_out(x, y, x0, y0, x1, y1, r);
 }
 
 /*
@@ -608,7 +667,7 @@ static void paint_ring(struct canvas *c, const struct box *b, float x,
 	float ix1 = x1 - b->b[1], iy1 = y1 - b->b[2];
 	int inner = ix1 > ix && iy1 > iy, i, j, k, i0, i1, j0, j1;
 	/* double: the outer and the inner thirds, rings of their own */
-	float r1[4], r2[4], t1[4], t2[4];
+	float r1[8], r2[8], t1[4], t2[4];
 
 	for (k = 0; k < 4; k++) {
 		side_of(b, k, &s[k]);
@@ -616,16 +675,12 @@ static void paint_ring(struct canvas *c, const struct box *b, float x,
 		t1[k] = b->b[k] / 3;
 		t2[k] = b->b[k] * 2 / 3;
 	}
-	for (k = 0; k < 4; k++) {
-		float m = fmaxf(b->b[k], b->b[(k + 3) % 4]);
-
-		r1[k] = fmaxf(r[k] - m / 3, 0);
-		r2[k] = fmaxf(r[k] - m * 2 / 3, 0);
-	}
+	inset_radii(r, t1, r1);
+	inset_radii(r, t2, r2);
 	cl = fmaxf(b->b[3], fmaxf(r[0], r[3]));
 	cr = fmaxf(b->b[1], fmaxf(r[1], r[2]));
-	ct = fmaxf(b->b[0], fmaxf(r[0], r[1]));
-	cb = fmaxf(b->b[2], fmaxf(r[2], r[3]));
+	ct = fmaxf(b->b[0], fmaxf(r[4], r[5]));
+	cb = fmaxf(b->b[2], fmaxf(r[6], r[7]));
 	i0 = (int)floorf(x - c->ox);
 	i1 = (int)ceilf(x1 - c->ox);
 	j0 = (int)floorf(y - c->oy);
@@ -726,11 +781,87 @@ static void snap(const struct canvas *c, float *x, float *y, float *w,
 	*y += c->oy;
 }
 
+/*
+ * A rounded clip: what is painted next is weighed by the rounded
+ * rectangle x, y, w, h (radii r), within the mask there is (a mask of
+ * the clip's pixels, as mask_push()'s). *save keeps the mask before,
+ * for mask_pop(); 0 when square, nothing pushed.
+ */
+static int round_push(struct canvas *c, float x, float y, float w, float h,
+	const float *r, struct canvas *save)
+{
+	int x0, y0, x1, y1, i, j;
+	unsigned char *m;
+
+	if (!r[0] && !r[1] && !r[2] && !r[3])
+		return 0;
+	x0 = (int)floorf(x - c->ox);
+	y0 = (int)floorf(y - c->oy);
+	x1 = (int)ceilf(x + w - c->ox);
+	y1 = (int)ceilf(y + h - c->oy);
+	x0 = x0 < c->cx0 ? c->cx0 : x0;
+	y0 = y0 < c->cy0 ? c->cy0 : y0;
+	x1 = x1 > c->cx1 ? c->cx1 : x1;
+	y1 = y1 > c->cy1 ? c->cy1 : y1;
+	if (x1 < x0)
+		x1 = x0;
+	if (y1 < y0)
+		y1 = y0;
+	m = malloc((size_t)(x1 - x0) * (size_t)(y1 - y0) + 1);
+	if (!m)
+		abort();
+	for (j = y0; j < y1; j++)
+		for (i = x0; i < x1; i++) {
+			int a = rrect_cov((float)i + c->ox, (float)j + c->oy, x,
+				y, x + w, y + h, r);
+
+			m[(size_t)(j - y0) * (size_t)(x1 - x0) + (size_t)(i -
+				x0)] = (unsigned char)(a * mask_at(c, i, j) /
+				255);
+		}
+	*save = *c;
+	c->mask = m;
+	c->mx0 = x0;
+	c->my0 = y0;
+	c->mx1 = x1;
+	c->my1 = y1;
+	return 1;
+}
+
+static void mask_pop(struct canvas *c, const struct canvas *save);
+
+/* b's rounded clip: its padding box (overflow), or its content box
+ * (inner: replaced content), the curves inside its border's */
+static int round_clip(struct canvas *c, const struct box *b, int inner,
+	struct canvas *save)
+{
+	float x = b->x - b->p[3] - b->b[3], y = b->y - b->p[0] - b->b[0];
+	float w = b->w + b->p[1] + b->p[3] + b->b[1] + b->b[3];
+	float h = b->h + b->p[0] + b->p[2] + b->b[0] + b->b[2];
+	float r[8], ir[8], e[4];
+	int i;
+
+	if (!b->style)
+		return 0;
+	snap(c, &x, &y, &w, &h);
+	radii(b, w, h, r);
+	if (!r[0] && !r[1] && !r[2] && !r[3])
+		return 0;
+	for (i = 0; i < 4; i++)
+		e[i] = b->b[i] + (inner ? b->p[i] : 0);
+	inset_radii(r, e, ir);
+	return round_push(c, x + e[3], y + e[0], w - e[1] - e[3],
+		h - e[0] - e[2], ir, save);
+}
+
 static void paint_background(struct canvas *c, const struct box *b,
 	float x, float y, float w, float h)
 {
+	const char *im = b->style->v[P_BACKGROUND_IMAGE].u.str;
+	struct canvas save;
+	int rk = 0;
 	unsigned char rgba[4];
-	float r[4];
+	float r[8];
 
 	snap(c, &x, &y, &w, &h);
 	style_rgba(b->style, P_BACKGROUND_COLOR, rgba);
@@ -741,13 +872,18 @@ static void paint_background(struct canvas *c, const struct box *b,
 		else
 			fill_rect(c, x, y, w, h, rgba);
 	}
+	/* images in the curve too (gradient buttons) */
+	if (im && strcmp(im, "none"))
+		rk = round_push(c, x, y, w, h, r, &save);
 	paint_bg_image(c, b, x, y, w, h);
+	if (rk)
+		mask_pop(c, &save);
 }
 
 static void paint_borders(struct canvas *c, const struct box *b, float x,
 	float y, float w, float h)
 {
-	float r[4], ir[4];
+	float r[8], ir[8];
 	int i, k, same = 1;
 	struct bside sd[4];
 
@@ -770,12 +906,7 @@ static void paint_borders(struct canvas *c, const struct box *b, float x,
 			border_side(c, b, i, x, y, w, h);
 		return;
 	}
-	for (i = 0; i < 4; i++) {
-		float bw = b->b[i] > b->b[(i + 3) % 4] ? b->b[i] :
-			b->b[(i + 3) % 4];
-
-		ir[i] = r[i] - bw > 0 ? r[i] - bw : 0;
-	}
+	inset_radii(r, b->b, ir);
 	paint_ring(c, b, x, y, w, h, r, ir);
 }
 
@@ -944,7 +1075,7 @@ static void paint_shadow(struct canvas *c, const struct shadow *s,
 	float x, float y, float w, float h, const float *r, float px,
 	float py, float pw, float ph, const float *pr)
 {
-	float sx, sy, sw, sh, sr[4], lim;
+	float sx, sy, sw, sh, sr[8];
 	int d = (int)floorf(s->blur / 2 * 1.87997f + 0.5f);
 	int m = d < 2 ? 0 : (d * 3 + 1) / 2 + 1;
 	int i, j, i0, j0, i1, j1, b0, c0, b1, c1, bw, bh;
@@ -955,7 +1086,7 @@ static void paint_shadow(struct canvas *c, const struct shadow *s,
 		sy = py + s->y + s->spread;
 		sw = pw - 2 * s->spread;
 		sh = ph - 2 * s->spread;
-		for (i = 0; i < 4; i++)
+		for (i = 0; i < 8; i++)
 			sr[i] = spread_r(pr[i], -s->spread);
 		/* painted: the padding box */
 		i0 = (int)floorf(px - c->ox);
@@ -969,7 +1100,7 @@ static void paint_shadow(struct canvas *c, const struct shadow *s,
 		sh = h + 2 * s->spread;
 		if (sw <= 0 || sh <= 0)
 			return;
-		for (i = 0; i < 4; i++)
+		for (i = 0; i < 8; i++)
 			sr[i] = spread_r(r[i], s->spread);
 		/* painted: the shape and its blur */
 		i0 = (int)floorf(sx - c->ox) - m;
@@ -981,10 +1112,7 @@ static void paint_shadow(struct canvas *c, const struct shadow *s,
 		sw = 0;
 	if (sh < 0)
 		sh = 0;
-	lim = fminf(sw, sh) / 2;
-	for (i = 0; i < 4; i++)
-		if (sr[i] > lim)
-			sr[i] = lim;
+	fit_radii(sr, sw, sh);
 	if (i0 < c->cx0)
 		i0 = c->cx0;
 	if (j0 < c->cy0)
@@ -1046,17 +1174,12 @@ static void paint_decor(struct canvas *c, const struct box *b, float x,
 {
 	struct shadow sh[NSHADOWS];
 	int i, n = shadows(b->style, sh);
-	float sx = x, sy = y, sw = w, shh = h, r[4], ir[4];
+	float sx = x, sy = y, sw = w, shh = h, r[8], ir[8];
 
 	if (n) {
 		snap(c, &sx, &sy, &sw, &shh);
 		radii(b, sw, shh, r);
-		for (i = 0; i < 4; i++) {
-			float bw = b->b[i] > b->b[(i + 3) % 4] ? b->b[i] :
-				b->b[(i + 3) % 4];
-
-			ir[i] = r[i] - bw > 0 ? r[i] - bw : 0;
-		}
+		inset_radii(r, b->b, ir);
 		for (i = n - 1; i >= 0; i--)
 			if (!sh[i].inset)
 				paint_shadow(c, &sh[i], sx, sy, sw, shh, r,
@@ -1348,8 +1471,8 @@ static void paint_box(struct canvas *c, struct box *b, int stacking)
 	struct box *k;
 	float x, y, w, h, save_alpha = c->alpha;
 	int cx0 = c->cx0, cy0 = c->cy0, cx1 = c->cx1, cy1 = c->cy1;
-	struct canvas msave;
-	int mk;
+	struct canvas msave, rsave;
+	int mk, rk;
 
 	if (!stacking && positioned(b) && b->parent) {
 		zadd(b);
@@ -1375,7 +1498,12 @@ static void paint_box(struct canvas *c, struct box *b, int stacking)
 		paint_decor(c, b, x, y, w, h);
 	}
 	if (b->type == B_REPLACED) {
+		/* an image in the curve of its content box; controls
+		 * draw their own */
+		rk = !control(b) && round_clip(c, b, 1, &rsave);
 		paint_replaced(c, b);
+		if (rk)
+			mask_pop(c, &rsave);
 		paint_outline(c, b, x, y, w, h);
 		c->cx0 = cx0;
 		c->cy0 = cy0;
@@ -1387,6 +1515,7 @@ static void paint_box(struct canvas *c, struct box *b, int stacking)
 		return;
 	}
 	content_clip(c, b);
+	rk = clips(b) && round_clip(c, b, 0, &rsave);
 	if (b->flags & BF_INLINE_KIDS) {
 		paint_lines(c, b);
 		paint_out_of_flow(c, b);
@@ -1399,6 +1528,8 @@ static void paint_box(struct canvas *c, struct box *b, int stacking)
 			if (k->flags & BF_FLOAT)
 				paint_box(c, k, 0);
 	}
+	if (rk)
+		mask_pop(c, &rsave);
 	c->cx0 = cx0;
 	c->cy0 = cy0;
 	c->cx1 = cx1;
@@ -1509,9 +1640,16 @@ static void paint_context(struct canvas *c, struct box *b)
  * (overflow, clip), which their walk did not give it: it is painted
  * out of it. An absolute box escapes the static ones up to its
  * containing block, a fixed one all of them. */
-static void ancestor_clip(struct canvas *c, const struct box *b)
+#define NROUND 8
+
+/* The clipping of b's containing block chain; the rounded ones (the
+ * NROUND nearest) pushed as masks, saved in save[] for mask_pop(),
+ * their number returned */
+static int ancestor_clip(struct canvas *c, const struct box *b,
+	struct canvas *save)
 {
 	const struct box *e = b, *a;
+	int n = 0;
 
 	for (a = b->parent; a; a = a->parent) {
 		if (e->style && kw(e->style, P_POSITION, "fixed"))
@@ -1520,8 +1658,11 @@ static void ancestor_clip(struct canvas *c, const struct box *b)
 		    !positioned(a))
 			continue;
 		content_clip(c, a);
+		if (n < NROUND && clips(a) && round_clip(c, a, 0, &save[n]))
+			n++;
 		e = a;
 	}
+	return n;
 }
 
 /* A layer: a stacking context paints its own layers, under its
@@ -1529,12 +1670,15 @@ static void ancestor_clip(struct canvas *c, const struct box *b)
 static void paint_layer(struct canvas *c, struct box *b)
 {
 	int cx0 = c->cx0, cy0 = c->cy0, cx1 = c->cx1, cy1 = c->cy1;
+	struct canvas save[NROUND];
+	int n = ancestor_clip(c, b, save);
 
-	ancestor_clip(c, b);
 	if (!stacking_context(b))
 		paint_box(c, b, 1);
 	else
 		paint_context(c, b);
+	while (n--)
+		mask_pop(c, &save[n]);
 	c->cx0 = cx0;
 	c->cy0 = cy0;
 	c->cx1 = cx1;
