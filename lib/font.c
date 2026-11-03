@@ -11,6 +11,7 @@
 #include <dirent.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <sys/stat.h>
 #include "layout.h"
 #include "font.h"
@@ -62,6 +63,16 @@ static int os2_weight(FT_Face f)
 	return f->style_flags & FT_STYLE_FLAG_BOLD ? 700 : 400;
 }
 
+/* The width class: DejaVu Sans Condensed is family "DejaVu Sans" too */
+static int os2_width(FT_Face f)
+{
+	TT_OS2 *os2 = FT_Get_Sfnt_Table(f, FT_SFNT_OS2);
+
+	if (os2 && os2->usWidthClass >= 1 && os2->usWidthClass <= 9)
+		return os2->usWidthClass;
+	return 5;
+}
+
 static struct face *add_face(void)
 {
 	faces = xrealloc(faces, (size_t)(nfaces + 1) * sizeof(*faces));
@@ -87,6 +98,7 @@ static void add_file(const char *path)
 			x->path = xstrndup(path, strlen(path));
 			x->index = i;
 			x->weight = os2_weight(f);
+			x->width = os2_width(f);
 			x->italic = (f->style_flags & FT_STYLE_FLAG_ITALIC) != 0;
 		}
 		FT_Done_Face(f);
@@ -172,6 +184,7 @@ struct face *font_add_memory(const void *doc, const char *family,
 	x->len = len;
 	x->weight = weight ? weight : os2_weight(f);
 	x->italic = italic;
+	x->width = 5;	/* the font-stretch descriptor's default */
 	x->doc = doc;
 	x->ft = f;
 	x->upem = f->units_per_EM ? f->units_per_EM : 1000;
@@ -263,8 +276,46 @@ static int weight_cost(int want, int have)
 	return have > want ? have - want : 1000 + want - have;
 }
 
-/* Best face of a family for weight and italic, or -1. */
-static int find_family(const char *fam, int weight, int italic,
+/* CSS Fonts 4 5.2: the width closest, narrower first when the one
+ * wanted is normal or narrower, wider first otherwise */
+static int width_cost(int want, int have)
+{
+	if (want == have)
+		return 0;
+	if (want <= 5)
+		return have < want ? want - have : 10 + have - want;
+	return have > want ? have - want : 10 + want - have;
+}
+
+/* font-stretch as a width class: keywords, or a percentage */
+static int stretch_class(const char *v)
+{
+	static const char *const kws[] = { "ultra-condensed",
+		"extra-condensed", "condensed", "semi-condensed", "normal",
+		"semi-expanded", "expanded", "extra-expanded",
+		"ultra-expanded" };
+	static const float pc[] = { 50, 62.5f, 75, 87.5f, 100, 112.5f, 125,
+		150, 200 };
+	char *e;
+	float p;
+	int i;
+
+	if (!v || !*v)
+		return 5;
+	for (i = 0; i < 9; i++)
+		if (!strcasecmp(v, kws[i]))
+			return i + 1;
+	p = strtof(v, &e);
+	if (e == v || *e != '%')
+		return 5;
+	for (i = 0; i < 8 && p >= (pc[i] + pc[i + 1]) / 2; i++)
+		;
+	return i + 1;
+}
+
+/* Best face of a family for width, weight and italic, or -1: width
+ * first, then style, then weight (CSS Fonts 4 5.2) */
+static int find_family(const char *fam, int width, int weight, int italic,
 	const void *doc)
 {
 	int i, best = -1, bc = 1 << 30;
@@ -275,7 +326,8 @@ static int find_family(const char *fam, int weight, int italic,
 		if (strcmp(faces[i].family, fam) ||
 		    (faces[i].doc && faces[i].doc != doc))
 			continue;
-		c = weight_cost(weight, faces[i].weight) +
+		c = width_cost(width, faces[i].width) * 1000000 +
+			weight_cost(weight, faces[i].weight) +
 			(faces[i].italic != italic ? 100000 : 0) +
 			(faces[i].doc ? 0 : 1);	/* web fonts first */
 		if (c < bc) {
@@ -286,19 +338,19 @@ static int find_family(const char *fam, int weight, int italic,
 	return best;
 }
 
-static int find_name(const char *name, int weight, int italic,
+static int find_name(const char *name, int width, int weight, int italic,
 	const void *doc)
 {
 	int i, k, r;
 
-	r = find_family(name, weight, italic, doc);
+	r = find_family(name, width, weight, italic, doc);
 	if (r >= 0)
 		return r;
 	for (i = 0; generics[i][0]; i++)
 		if (!strcmp(name, generics[i][0]))
 			for (k = 1; k < 5; k++)
-				if ((r = find_family(generics[i][k], weight,
-						     italic, doc)) >= 0)
+				if ((r = find_family(generics[i][k], width,
+						     weight, italic, doc)) >= 0)
 					return r;
 	return -1;
 }
@@ -306,7 +358,7 @@ static int find_name(const char *name, int weight, int italic,
 /* A font chain: the faces of font-family, in order, plus a default. */
 struct chain {
 	const char *family;	/* interned family list */
-	int weight, italic;
+	int width, weight, italic;
 	const void *doc;
 	int face[8];
 	int n;
@@ -327,6 +379,7 @@ static const struct chain *chain_for(const struct style *st)
 	const char *fam = st->v[P_FONT_FAMILY].u.str;
 	int weight = (int)st->v[P_FONT_WEIGHT].u.num;
 	int italic = !kw(st, P_FONT_STYLE, "normal");
+	int width = stretch_class(st->v[P_FONT_STRETCH].u.str);
 	const void *doc = font_doc;
 	struct chain *c;
 	const char *p;
@@ -334,6 +387,7 @@ static const struct chain *chain_for(const struct style *st)
 
 	for (i = 0; i < nchains; i++)
 		if (chains[i].family == fam && chains[i].weight == weight &&
+		    chains[i].width == width &&
 		    chains[i].italic == italic && chains[i].doc == doc)
 			return &chains[i];
 	if (nchains == NCHAINS)
@@ -341,6 +395,7 @@ static const struct chain *chain_for(const struct style *st)
 	c = &chains[nchains++];
 	memset(c, 0, sizeof(*c));
 	c->family = fam;
+	c->width = width;
 	c->weight = weight;
 	c->italic = italic;
 	c->doc = doc;
@@ -368,12 +423,12 @@ static const struct chain *chain_for(const struct style *st)
 		name[n] = '\0';
 		while (*p && *p != ',')
 			p++;
-		if (n && (f = find_name(name, weight, italic, doc)) >= 0)
+		if (n && (f = find_name(name, width, weight, italic, doc)) >= 0)
 			c->face[c->n++] = f;
 	}
 	/* the default: serif, as browsers */
-	if ((i = find_name("serif", weight, italic, doc)) >= 0 ||
-	    (i = find_name("sans-serif", weight, italic, doc)) >= 0)
+	if ((i = find_name("serif", width, weight, italic, doc)) >= 0 ||
+	    (i = find_name("sans-serif", width, weight, italic, doc)) >= 0)
 		c->face[c->n++] = i;
 	else if (nfaces)
 		c->face[c->n++] = 0;

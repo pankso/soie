@@ -422,6 +422,14 @@ reversed, edit the entry and say why; do not leave stale rules here.
   that; not done yet.
 - `soie_fonts_stub(1)` keeps the 0.5em stub font: the test runner and
   `soie-render -S` use it, so layout tests do not depend on fonts.
+- Faces are matched by width first, then style, then weight (CSS
+  Fonts 4 5.2), the width being the OS/2 usWidthClass and
+  `font-stretch` (keywords, percentages). DejaVu Sans Condensed calls
+  itself "DejaVu Sans" with the same weights, and the directory scan
+  found it first: every page was drawn about 8 % narrower than in
+  Firefox, lines broke elsewhere (seen on 11 of 38 surveyed sites,
+  2026-11-03). Web fonts are normal width (the descriptor is not
+  read). The `font` shorthand takes a stretch keyword as one token.
 
 ## Painting (phase 5)
 

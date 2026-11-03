@@ -991,12 +991,20 @@ static int sh_font(struct cur *c, struct svec *out)
 			/* font-variant: only small-caps here */
 			if (i == 1 && !cv_ident(v, "small-caps"))
 				continue;
-			/* font-stretch: only keywords here */
-			if (i == 3 && (v->type != CT_IDENT || kw_index(
-			    "ultra-condensed|extra-condensed|condensed|"
-			    "semi-condensed|semi-expanded|expanded|"
-			    "extra-expanded|ultra-expanded", v->str) < 0))
-				continue;
+			/* font-stretch: only keywords here, one token (its
+			 * raw value would take the rest of the shorthand) */
+			if (i == 3) {
+				if (r[3].from >= 0 || v->type != CT_IDENT ||
+				    kw_index("ultra-condensed|extra-condensed|"
+				    "condensed|semi-condensed|semi-expanded|"
+				    "expanded|extra-expanded|ultra-expanded",
+				    v->str) < 0)
+					continue;
+				r[3].from = c->i;
+				cur_next(c);
+				r[3].to = c->i;
+				break;
+			}
 			/* font-weight: a number here must not be the size */
 			if (r[i].from < 0 && try_at(pre[i], c, &r[i]))
 				break;

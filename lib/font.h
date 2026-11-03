@@ -25,6 +25,7 @@ struct face {
 	size_t len;
 	long index;
 	int weight, italic;
+	int width;		/* OS/2 width class, 1-9, 5 normal */
 	const void *doc;	/* web font: its document */
 	FT_Face ft;
 	int upem;

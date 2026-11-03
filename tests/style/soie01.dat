@@ -596,3 +596,41 @@ overflow-x,overflow-y
 |       style="overflow-x:clip"
 |       @overflow-x: clip
 |       @overflow-y: visible
+
+#data
+<!DOCTYPE html><p style="font: condensed bold 12px serif">a<p style="font: italic ultra-expanded 600 12px serif">b<p style="font: condensed condensed 12px serif">c
+#errors
+#properties
+font-stretch,font-weight,font-style
+#document
+| <!DOCTYPE html>
+| <html>
+|   @font-stretch: normal
+|   @font-weight: 400
+|   @font-style: normal
+|   <head>
+|     @font-stretch: normal
+|     @font-weight: 400
+|     @font-style: normal
+|   <body>
+|     @font-stretch: normal
+|     @font-weight: 400
+|     @font-style: normal
+|     <p>
+|       style="font: condensed bold 12px serif"
+|       @font-stretch: condensed
+|       @font-weight: 700
+|       @font-style: normal
+|       "a"
+|     <p>
+|       style="font: italic ultra-expanded 600 12px serif"
+|       @font-stretch: ultra-expanded
+|       @font-weight: 600
+|       @font-style: italic
+|       "b"
+|     <p>
+|       style="font: condensed condensed 12px serif"
+|       @font-stretch: normal
+|       @font-weight: 400
+|       @font-style: normal
+|       "c"
