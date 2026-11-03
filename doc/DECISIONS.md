@@ -2179,6 +2179,17 @@ run again):
   and the automatic minimum size of flex items. WPT layout subset:
   flexbox 44 to 61 %, grid 23 to 46 %. Same soname and extension ABI,
   no public function added.
+- 0.1.3 (2026-11-04): HTTP Basic logins (about:auth), an HTTP cache in
+  memory, the private network guard; box-shadow, mitred and rounded
+  borders, elliptical corners and rounded clipping; flex containers
+  of a height set from outside (OpenStreetMap's map), details and
+  summary, fonts by width; JavaScript fixes for desktop sites, ALTCHA
+  captchas and workers. Against Firefox on a survey of 38 sites:
+  OpenStreetMap 0.20 to 0.065 RMSE, debian.org 0.26 to 0.10,
+  github.com 0.10 to 0.046. WPT layout subset: flexbox 62 %, grid
+  46 %. Same soname and extension ABI; ext.h gains two request flags
+  (SOIE_REQ_NO_LAN, SOIE_REQ_NO_LOOPBACK) and SOIE_REQ_PAGE, no
+  public function added.
 
 ## Build
 

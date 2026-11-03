@@ -5,7 +5,7 @@ reference browser. No toolkit, no JavaScript in the core, built to
 render modern pages on old machines. See `doc/DECISIONS.md` for what
 Soie is and is not, and how extensions plug in.
 
-Status: version 0.1.2 (October 2026). Extensions
+Status: version 0.1.3 (November 2026). Extensions
 (`lib/soie/ext.h`) bring cookies, content blocking, WebP, JavaScript
 (QuickJS) and audio/video (FFmpeg, ALSA, Media Source Extensions: YouTube plays). `browser/xsoie` browses the
 web (HTTPS, forms, history, cookies, scripts, video). The HTML parser follows the WHATWG algorithm and passes the
@@ -92,7 +92,7 @@ a little tabbed browser on it.
     ext/         extensions (cookies, block, webp, script, media)
     tools/       soie-render, generators
     tests/       unit tests, html5lib test runner, local corpus
-    doc/         DECISIONS.md
+    doc/         DECISIONS.md, CHANGELOG.md, TODO.md
 
 ## Known limits
 
