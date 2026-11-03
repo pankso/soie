@@ -1,0 +1,13 @@
+log: touch false false false
+log: name "_" _
+log: name ":x" :x
+log: name "a-b" a-b
+log: name "xé" xé
+log: name "été" été
+log: name "1a" InvalidCharacterError
+log: name "-a" InvalidCharacterError
+log: name "a b" InvalidCharacterError
+log: name "_ x" InvalidCharacterError
+log: navigation 0 1
+log: rejection unhandledrejection r true
+log: beacon wrapped true

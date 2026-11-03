@@ -1,0 +1,19 @@
+<!DOCTYPE html>
+<script>
+var log = (...a) => console.log(a.map(String).join(' '));
+// a desktop: no touch handlers, as Modernizr tests them
+log('touch', 'ontouchstart' in window, 'ontouchstart' in document.documentElement,
+	'onorientationchange' in window);
+// valid element local names (DOM): '_' and ':' may start one
+for (const n of ['_', ':x', 'a-b', 'xé', 'été', '1a', '-a', 'a b', '_ x']) {
+	try { log('name', JSON.stringify(n), document.createElement(n).localName); }
+	catch (e) { log('name', JSON.stringify(n), e.name); }
+}
+log('navigation', performance.navigation.type, performance.navigation.TYPE_RELOAD);
+var p = new PromiseRejectionEvent('unhandledrejection', { promise: null, reason: 'r' });
+log('rejection', p.type, p.reason, p instanceof Event);
+// navigator's methods may be wrapped
+var beacon = navigator.sendBeacon;
+navigator.sendBeacon = function () { return 'wrapped ' + beacon.apply(navigator, arguments); };
+log('beacon', navigator.sendBeacon('/x'));
+</script>

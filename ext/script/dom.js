@@ -241,6 +241,15 @@ class ErrorEvent extends Event {
 		this.colno = 0;
 	}
 }
+/* Not fired yet (no rejection tracking): there for pages that test
+ * it, core-js replaces the native Promise when it is missing */
+class PromiseRejectionEvent extends Event {
+	constructor(type, init = {}) {
+		super(type, init);
+		this.promise = init.promise;
+		this.reason = init.reason;
+	}
+}
 class PopStateEvent extends Event {
 	constructor(type, init = {}) {
 		super(type, init);
@@ -1601,8 +1610,7 @@ for (const ev of ['click', 'dblclick', 'mousedown', 'mouseup', 'mousemove',
 	'keyup', 'keypress', 'focus', 'blur', 'change', 'input', 'submit',
 	'reset', 'load', 'error', 'scroll', 'resize', 'contextmenu', 'wheel',
 	'select', 'abort', 'play', 'pause', 'ended', 'timeupdate', 'toggle',
-	'pointerdown', 'pointerup', 'pointermove', 'touchstart', 'touchend',
-	'touchmove', 'animationend', 'transitionend', 'beforeunload',
+	'pointerdown', 'pointerup', 'pointermove', 'animationend', 'transitionend', 'beforeunload',
 	'unload', 'popstate', 'hashchange', 'message', 'readystatechange',
 	'DOMContentLoaded', 'focusin', 'focusout', 'invalid',
 	'loadedmetadata', 'canplay', 'volumechange', 'playing', 'waiting',
@@ -3119,7 +3127,8 @@ class Document extends Node {
 	}
 	createElement(name, opts) {
 		name = String(name);
-		if (!/^[a-zA-Z][^\s\/>\0]*$/.test(name))
+		if (!/^(?:[a-zA-Z][^\t\n\f\r \/>\0]*|[:_\u0080-\uffff][-.:\w\u0080-\uffff]*)$/
+		    .test(name))
 			throw new DOMException('bad element name',
 				'InvalidCharacterError');
 		const el = api.createElement(NS_HTML, name.toLowerCase(), this);
@@ -5074,10 +5083,12 @@ const navigator = Object.create(Navigator.prototype, {
 	pdfViewerEnabled: { value: false, enumerable: true },
 	plugins: { value: list([]), enumerable: true },
 	mimeTypes: { value: list([]), enumerable: true },
-	javaEnabled: { value: () => false },
-	sendBeacon: { value: () => true },
-	vibrate: { value: () => false },
-	registerProtocolHandler: { value: () => {} },
+	/* methods may be replaced, as browsers' (sendBeacon wrappers) */
+	javaEnabled: { value: () => false, writable: true, configurable: true },
+	sendBeacon: { value: () => true, writable: true, configurable: true },
+	vibrate: { value: () => false, writable: true, configurable: true },
+	registerProtocolHandler: { value: () => {}, writable: true,
+		configurable: true },
 	mediaCapabilities: { value: {
 		/* what MediaSource takes plays well: the media extension
 		 * refuses what a small machine does not */
@@ -5110,6 +5121,8 @@ const performance = {
 	now: () => api.now() - start,
 	timeOrigin: Date.now() - (api.now() - start),
 	timing: { navigationStart: Date.now() },
+	navigation: { type: 0, redirectCount: 0, TYPE_NAVIGATE: 0,
+		TYPE_RELOAD: 1, TYPE_BACK_FORWARD: 2, TYPE_RESERVED: 255 },
 	mark() {},
 	measure() {},
 	clearMarks() {},
@@ -5460,7 +5473,7 @@ const globals = {
 	EventTarget, Event, CustomEvent, UIEvent, MouseEvent, PointerEvent,
 	WheelEvent, KeyboardEvent, FocusEvent, InputEvent, SubmitEvent,
 	ProgressEvent, ErrorEvent, PopStateEvent, HashChangeEvent,
-	MessageEvent, Node, CharacterData, Text, CDATASection, Comment,
+	PromiseRejectionEvent, MessageEvent, Node, CharacterData, Text, CDATASection, Comment,
 	ProcessingInstruction,
 	DocumentType, DocumentFragment, Document, HTMLDocument: Document,
 	Element, SVGElement, SVGSVGElement, MathMLElement, Attr,
@@ -5626,8 +5639,7 @@ for (const ev of ['load', 'unload', 'beforeunload', 'resize', 'scroll',
 	'error', 'message', 'popstate', 'hashchange', 'click', 'keydown',
 	'keyup', 'focus', 'blur', 'online', 'offline', 'pageshow',
 	'pagehide', 'storage', 'DOMContentLoaded', 'mousemove', 'mouseup',
-	'mousedown', 'touchstart', 'touchend', 'wheel', 'orientationchange',
-	'visibilitychange', 'unhandledrejection'])
+	'mousedown', 'wheel', 'visibilitychange', 'unhandledrejection'])
 	Object.defineProperty(g, 'on' + ev.toLowerCase(), {
 		get() { return (g[HANDLERS] && g[HANDLERS][ev]) || null; },
 		set(v) {

@@ -1713,6 +1713,17 @@ on the same frozen DOM.
   1 GB of heap in three seconds, a blank page. React's input
   hydration also set defaultChecked, which had no setter. Test:
   `tests/js/polyfill.html`.
+- A desktop has no touch: window and elements have no ontouchstart,
+  ontouchend, ontouchmove or onorientationchange, the properties
+  Modernizr and others test (python.org showed its mobile layout).
+  PromiseRejectionEvent exists but is not fired yet (QuickJS's
+  rejection tracker is not hooked): core-js, missing it, replaces the
+  native Promise, and its jobs flooded radio.net until the heap ran
+  out. performance.navigation (type 0) for Le Monde's bundles;
+  createElement takes DOM's valid element names ('_', ':', non-ASCII
+  first, as the classList probe of mozilla.org); navigator's methods
+  are writable, so pages can wrap sendBeacon. Test:
+  `tests/js/compat.html`.
 
 ## Audio and video (phase 11)
 
