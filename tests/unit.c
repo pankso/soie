@@ -603,6 +603,32 @@ static void test_hostile_depth(void)
 	}
 }
 
+/* The hit test in lines: a link inside a span is the link, and the
+ * padding of nested inline boxes is the innermost one's. */
+static void test_hit_inline(void)
+{
+	static const char page[] = "<body style=\"margin:0\">"
+		"<span id=s><a id=a href=x>link</a> tail</span><br>"
+		"<span id=t style=\"padding:0 10px\"><b id=b "
+		"style=\"padding:0 10px\">ab</b></span>";
+	soie_node *doc = soie_html_parse(page, sizeof(page) - 1, NULL), *n;
+	const char *id;
+	static const struct { float x, y; const char *id; } hits[] = {
+		{ 4, 4, "a" }, { 60, 4, "s" }, { 5, 22, "t" }, { 15, 22, "b" },
+		{ 25, 22, "b" },
+	};
+	size_t i;
+
+	CHECK(soie_style_document(doc, NULL) == 0);
+	soie_layout_document(doc, 200, 100);
+	for (i = 0; i < sizeof(hits) / sizeof(hits[0]); i++) {
+		n = soie_hit_test(doc, hits[i].x, hits[i].y);
+		id = n ? soie_element_get_attr(n, "id") : NULL;
+		CHECK(id && !strcmp(id, hits[i].id));
+	}
+	soie_node_free(doc);
+}
+
 int main(void)
 {
 	soie_fonts_stub(1);
@@ -620,6 +646,7 @@ int main(void)
 	test_select();
 	test_deep();
 	test_hostile_depth();
+	test_hit_inline();
 	printf("unit: %s (%d failures)\n", failures ? "FAIL" : "ok", failures);
 	return failures != 0;
 }

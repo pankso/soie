@@ -1112,19 +1112,44 @@ static soie_node *hit(struct box *b, float x, float y, int depth)
 		if ((kids[i]->flags & BF_FLOAT) && !positioned(kids[i]))
 			r = hit(kids[i], x, y, depth + 1);
 	if (!r && (b->flags & BF_INLINE_KIDS)) {
+		const struct box *in = NULL;
+		int deep = -1;
+
 		r = hit_in_inline(b, x, y, depth + 1);
+		/* text and atomics first: an inline box's frag comes after
+		 * its content and spans it, an outer one after an inner */
 		for (i = b->nfrags - 1; i >= 0 && !r; i--) {
 			struct frag *f = &b->frags[i];
 
 			if (f->kind == F_ATOMIC) {
 				if (!positioned(f->box))
 					r = hit(f->box, x, y, depth + 1);
-			} else if (inside(x, y, f->x, f->y, f->w, f->h) &&
+			} else if (f->kind == F_TEXT &&
+				   inside(x, y, f->x, f->y, f->w, f->h) &&
 				   hittable(f->box->style)) {
-				r = node_of(f->kind == F_TEXT ?
-					f->box->parent : f->box);
+				r = node_of(f->box->parent);
 			}
 		}
+		/* then, between texts (padding, spaces), the innermost
+		 * inline box there */
+		for (i = 0; i < b->nfrags && !r; i++) {
+			struct frag *f = &b->frags[i];
+			const struct box *k;
+			int d = 0;
+
+			if (f->kind != F_INLINE ||
+			    !inside(x, y, f->x, f->y, f->w, f->h) ||
+			    !hittable(f->box->style))
+				continue;
+			for (k = f->box; k && k != b; k = k->parent)
+				d++;
+			if (d > deep) {
+				deep = d;
+				in = f->box;
+			}
+		}
+		if (!r && in)
+			r = node_of(in);
 	} else if (!r) {
 		for (i = n - 1; i >= 0 && !r; i--)
 			if (!(kids[i]->flags & (BF_FLOAT | BF_ABS)) &&
