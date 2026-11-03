@@ -1283,6 +1283,11 @@ static void load(struct shell *s, const char *url, const char *post, int push)
 		load_here(s, HOME, home_html);
 		return;
 	}
+	/* about:blank, with a fragment or a query too: an empty page */
+	if (!strncasecmp(url, "about:blank", 11) && strchr("#?", url[11])) {
+		load_here(s, url, "");
+		return;
+	}
 	if (settings_get() && settings_url(url)) {
 		int changed;
 		char *html = settings_page(post, &changed);
