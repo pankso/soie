@@ -635,9 +635,12 @@ static int has_url(const struct cv *v, int n)
 {
 	int i;
 
+	/* url(a.png), url('a.png') (a function), src("a.woff") */
 	for (i = 0; i < n; i++)
-		if (v[i].type == CT_URL || ((v[i].type == CT_FUNCTION ||
-		    v[i].type == CT_BLOCK) && has_url(v[i].kids.v, v[i].kids.n)))
+		if (v[i].type == CT_URL || (v[i].type == CT_FUNCTION &&
+		    (ascii_ieq(v[i].str, "url") || ascii_ieq(v[i].str, "src"))) ||
+		    ((v[i].type == CT_FUNCTION || v[i].type == CT_BLOCK) &&
+		    has_url(v[i].kids.v, v[i].kids.n)))
 			return 1;
 	return 0;
 }
@@ -661,6 +664,9 @@ static int add_decls(struct srule *r, struct decl *d, int n, const char *base)
 	int i, got = 0;
 
 	for (i = 0; i < n; i++) {
+		/* against the sheet that has them, custom properties too */
+		if (base && has_url(d[i].value.v, d[i].value.n))
+			resolve_urls(d[i].value.v, d[i].value.n, base);
 		if (!strncmp(d[i].name, "--", 2)) {
 			struct buf b = { 0 };
 
@@ -675,8 +681,6 @@ static int add_decls(struct srule *r, struct decl *d, int n, const char *base)
 			got++;
 			continue;
 		}
-		if (base && has_url(d[i].value.v, d[i].value.n))
-			resolve_urls(d[i].value.v, d[i].value.n, base);
 		got += parse_declaration(d[i].name, &d[i].value,
 			d[i].important, &r->decls);
 	}

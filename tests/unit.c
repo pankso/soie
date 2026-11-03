@@ -629,6 +629,49 @@ static void test_hit_inline(void)
 	soie_node_free(doc);
 }
 
+/* url() in a sheet is against the sheet's URL: quoted, unquoted and
+ * in custom properties alike */
+static int sheet_fetch(void *data, const char *url, char **buf, size_t *len)
+{
+	static const char css[] = ".a{background-image:url(../i/x.png)}"
+		".b{background-image:url('../i/x.png')}"
+		".c{--u:url(\"../i/x.png\")} .c{background-image:var(--u)}";
+
+	(void)data;
+	if (strcmp(url, "http://h/css/s.css"))
+		return -1;
+	*buf = malloc(sizeof(css));
+	memcpy(*buf, css, sizeof(css));
+	*len = sizeof(css) - 1;
+	return 0;
+}
+
+static void test_sheet_urls(void)
+{
+	static const char page[] = "<link rel=stylesheet href=css/s.css>"
+		"<p class=a>a<p class=b>b<p class=c>c";
+	soie_node *doc = soie_html_parse(page, sizeof(page) - 1, NULL), **p;
+	soie_style_options o;
+	size_t i, n = 0;
+	char *v;
+
+	memset(&o, 0, sizeof(o));
+	o.base_url = "http://h/page.html";
+	o.fetch = sheet_fetch;
+	CHECK(soie_style_document(doc, &o) == 0);
+	p = soie_query(doc, "p", 0, &n);
+	CHECK(n == 3);
+	for (i = 0; i < n; i++) {
+		v = soie_computed_value(p[i], NULL, "background-image");
+		CHECK(v && !strcmp(v, "url(\"http://h/i/x.png\")"));
+		if (v && strcmp(v, "url(\"http://h/i/x.png\")"))
+			fprintf(stderr, "  got %s\n", v);
+		free(v);
+	}
+	free(p);
+	soie_node_free(doc);
+}
+
 int main(void)
 {
 	soie_fonts_stub(1);
@@ -647,6 +690,7 @@ int main(void)
 	test_deep();
 	test_hostile_depth();
 	test_hit_inline();
+	test_sheet_urls();
 	printf("unit: %s (%d failures)\n", failures ? "FAIL" : "ok", failures);
 	return failures != 0;
 }
