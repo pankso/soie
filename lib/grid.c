@@ -336,22 +336,44 @@ static int parse_areas(const char *text, struct area *a, int max, int *rows,
 	return n;
 }
 
-/* A line by name ("a" for the n-th line named a, area edges too). */
-static int named_line(const struct tracks *t, const struct area *areas,
-	int nareas, const char *name, int end, int row)
+/* The first line named name, explicit or of an area's edges
+ * (area a makes lines a-start and a-end), or -1 */
+static int line_named(const struct tracks *t, const struct area *areas,
+	int nareas, const char *name, int row)
 {
 	char key[80];
-	int i;
+	size_t n = strlen(name);
+	int i, end = -1;
 
-	for (i = 0; i < nareas; i++)
-		if (!strcmp(areas[i].name, name))
-			return row ? (end ? areas[i].r1 : areas[i].r0) :
-				(end ? areas[i].c1 : areas[i].c0);
+	if (n > 6 && !strcmp(name + n - 6, "-start"))
+		end = 0, n -= 6;
+	else if (n > 4 && !strcmp(name + n - 4, "-end"))
+		end = 1, n -= 4;
 	snprintf(key, sizeof(key), " %s ", name);
 	for (i = 0; t->names && i <= t->n; i++)
 		if (t->names[i] && strstr(t->names[i], key))
 			return i;
+	for (i = 0; end >= 0 && i < nareas; i++)
+		if (strlen(areas[i].name) == n &&
+		    !strncmp(areas[i].name, name, n))
+			return row ? (end ? areas[i].r1 : areas[i].r0) :
+				(end ? areas[i].c1 : areas[i].c0);
 	return -1;
+}
+
+/* A line by its <custom-ident> (CSS Grid 8.3.1): a line named
+ * name-start (name-end for an end), the area's edge, else one named
+ * name. */
+static int named_line(const struct tracks *t, const struct area *areas,
+	int nareas, const char *name, int end, int row)
+{
+	char edge[80];
+	int i;
+
+	snprintf(edge, sizeof(edge), "%s%s", name, end ? "-end" : "-start");
+	if ((i = line_named(t, areas, nareas, edge, row)) >= 0)
+		return i;
+	return line_named(t, areas, nareas, name, row);
 }
 
 /* grid-row-start and friends: line (0-based) or -1 auto; *span. */

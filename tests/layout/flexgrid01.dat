@@ -224,3 +224,29 @@ width=400
 |       block <div> 200,0 200x26
 |         line 200,0 200x20
 |           text "b" 200,2 8x16
+
+#data
+<!DOCTYPE html><body style="margin:0"><div style="display:grid;grid-template-columns:[full-start] 50px [title-start] 100px [title-end] 50px [full-end];grid-template-rows:[top-start] 20px [top-end] 20px"><div id=a style="grid-column:title;background:red">a</div><div id=b style="grid-column:full;grid-row:2">b</div><div id=c style="grid-column:title-start / full-end;grid-row:top">c</div></div><div style="display:grid;grid-template-areas:'x y';grid-template-columns:30px 40px"><div style="grid-column:y-start / y-end">y</div><div style="grid-column:x;grid-row:2">x</div></div>
+#errors
+#layout
+width=300
+#document
+| block <html> 0,0 300x100
+|   block <body> 0,0 300x100
+|     block <div> 0,0 300x60
+|       block <div> 50,40 100x20
+|         line 50,40 100x20
+|           text "a" 50,42 8x16
+|       block <div> 0,20 200x20
+|         line 0,20 200x20
+|           text "b" 0,22 8x16
+|       block <div> 50,0 150x20
+|         line 50,0 150x20
+|           text "c" 50,2 8x16
+|     block <div> 0,60 300x40
+|       block <div> 30,60 40x20
+|         line 30,60 40x20
+|           text "y" 30,62 8x16
+|       block <div> 0,80 30x20
+|         line 0,80 30x20
+|           text "x" 0,82 8x16
