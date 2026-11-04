@@ -18,7 +18,7 @@ FreeType/HarfBuzz text (phase 4) and tables; flexbox and grid.
 The repository is https://hg.slitaz.org/soie (Mercurial). A read-only
 git mirror is at https://github.com/pankso/soie: pull requests there
 are welcome, they are read and imported by hand into Mercurial
-(`tools/pr-import.sh`). Bugs and ideas: https://maille.slitaz.org/
+(`tools/pr-import.sh`). Bugs and ideas: https://maille.slitaz.org/tags/soie
 
 ## Build
 
