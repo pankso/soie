@@ -220,7 +220,8 @@ static int interrupt(JSRuntime *rt, void *opaque)
  * collector (mark()): a tree no script reaches is a cycle it frees.
  * The page's document is held for good. Kept forever instead, every
  * node a page touched held its wrapper and all it reached: YouTube grew
- * 60 MB a video, out of memory at the third.
+ * 60 MB a video, out of memory at the third. A shadow tree is a part
+ * of its host's tree: its wrappers live as long as the host's.
  */
 struct wref {
 	JSValue obj;		/* the wrapper, not a reference */
@@ -277,6 +278,14 @@ static void finalize(JSRuntime *rt, JSValue val)
 
 static JSValue wrap(struct sctx *c, soie_node *n);
 
+/* The node above n: its parent, or its host for a shadow root */
+static soie_node *above(const soie_node *n)
+{
+	soie_node *p = soie_node_parent(n);
+
+	return p ? p : soie_shadow_host(n);
+}
+
 /* w in the members of the root of its tree now, out of the old one's:
  * the new hold first, w never goes in between; w is not touched once
  * the old is let go (it may be freed then) */
@@ -288,8 +297,8 @@ static void rehome(struct sctx *c, struct wref *w)
 	JSValue old_anchor = w->anchor;
 	size_t old_mi = w->mi;
 
-	while (soie_node_parent(r))
-		r = soie_node_parent(r);
+	while (above(r))
+		r = above(r);
 	if (r == old)
 		return;
 	if (old && old != w->n)
@@ -341,15 +350,18 @@ static void sweep(struct sctx *c)
 }
 
 /* Nodes inserted: their wrappers, and those below, in the new tree at
- * once (left in the old one, they could go with it before the sweep) */
+ * once (left in the old one, they could go with it before the sweep);
+ * those of shadow trees below too */
 static void strengthen(struct sctx *c, soie_node *top)
 {
-	soie_node *n = top;
+	soie_node *n = top, *s;
 	struct wref *w;
 
 	while (n) {
 		if ((w = soie_node_user(n)))
 			rehome(c, w);
+		if ((s = soie_shadow_root(n)))
+			strengthen(c, s);
 		if (soie_node_first_child(n)) {
 			n = soie_node_first_child(n);
 			continue;
@@ -372,6 +384,8 @@ static JSValue wrap(struct sctx *c, soie_node *n)
 		return JS_DupValue(c->js, w->obj);
 	if (soie_node_get_type(n) == SOIE_ELEMENT)
 		name = soie_element_name(n);
+	else if (soie_shadow_host(n))
+		name = "#shadow-root";	/* ShadowRoot's prototype */
 	args[0] = JS_NewInt32(c->js, soie_node_get_type(n));
 	args[1] = JS_NewString(c->js, name);
 	args[2] = JS_NewInt32(c->js, soie_node_get_type(n) == SOIE_ELEMENT ?
@@ -476,6 +490,12 @@ static JSValue n_rel(JSContext *js, JSValueConst this, int argc,
 	case 5: r = soie_template_content(n); break;
 	case 6: r = soie_document_element(n); break;
 	case 7: r = soie_node_document(n); break;
+	case 8: r = soie_shadow_host(n); break;
+	case 9:	/* Element.shadowRoot */
+		r = soie_shadow_root(n);
+		if (r && !soie_shadow_open(r))
+			r = NULL;
+		break;
 	}
 	return wrap(ctx_of(js), r);
 }
@@ -635,12 +655,22 @@ static JSValue n_remove_attr(JSContext *js, JSValueConst this, int argc,
 	return JS_UNDEFINED;
 }
 
-/* In the page: not in a fragment, nor in a document a script made */
+/* In the page: not in a fragment, nor in a document a script made; a
+ * shadow tree is if its host is */
 static int connected(struct sctx *c, soie_node *n)
 {
-	while (soie_node_parent(n))
-		n = soie_node_parent(n);
+	while (above(n))
+		n = above(n);
 	return n == c->doc;
+}
+
+static JSValue n_connected(JSContext *js, JSValueConst this, int argc,
+	JSValueConst *argv)
+{
+	NODE(0, n);
+
+	(void)this;
+	return JS_NewBool(js, connected(ctx_of(js), n));
 }
 
 /* Scripts inside nodes just inserted run, in tree order: inline ones
@@ -885,7 +915,8 @@ static JSValue n_adopt(JSContext *js, JSValueConst this, int argc,
 
 	(void)this;
 	if (soie_node_adopt(soie_node_document(d), n))
-		return JS_ThrowTypeError(js, "cannot adopt a document");
+		return JS_ThrowTypeError(js,
+			"cannot adopt a document or a shadow root");
 	return JS_UNDEFINED;
 }
 
@@ -996,6 +1027,76 @@ static JSValue n_query(JSContext *js, JSValueConst this, int argc,
 	for (i = 0; i < n; i++)
 		JS_SetPropertyUint32(js, a, (uint32_t)i, wrap(ctx_of(js), v[i]));
 	free(v);
+	return a;
+}
+
+/* Natives: shadow trees */
+
+/* attachShadow(host, open): its new root, null if it has one */
+static JSValue n_attach_shadow(JSContext *js, JSValueConst this, int argc,
+	JSValueConst *argv)
+{
+	NODE(0, n);
+
+	(void)this;
+	return wrap(ctx_of(js), soie_attach_shadow(n, argc > 1 &&
+		JS_ToBool(js, argv[1])));
+}
+
+static JSValue n_shadow_open(JSContext *js, JSValueConst this, int argc,
+	JSValueConst *argv)
+{
+	NODE(0, n);
+
+	(void)this;
+	return JS_NewBool(js, soie_shadow_open(n));
+}
+
+/* shadowCss(root, text): its adopted style sheets */
+static JSValue n_shadow_css(JSContext *js, JSValueConst this, int argc,
+	JSValueConst *argv)
+{
+	NODE(0, n);
+	STR(1, css);
+
+	(void)this;
+	soie_shadow_css(n, css);
+	JS_FreeCString(js, css);
+	return JS_UNDEFINED;
+}
+
+static void shadows_in(struct sctx *c, soie_node *top, JSValue a,
+	uint32_t *i)
+{
+	soie_node *k = top, *s;
+
+	while (k) {
+		if ((s = soie_shadow_root(k))) {
+			JS_SetPropertyUint32(c->js, a, (*i)++, wrap(c, s));
+			shadows_in(c, s, a, i);
+		}
+		if (soie_node_first_child(k)) {
+			k = soie_node_first_child(k);
+			continue;
+		}
+		while (k != top && !soie_node_next_sibling(k))
+			k = soie_node_parent(k);
+		k = k == top ? NULL : soie_node_next_sibling(k);
+	}
+}
+
+/* shadows(n): the shadow roots of n and below, theirs too, in tree
+ * order: where else custom elements may be */
+static JSValue n_shadows(JSContext *js, JSValueConst this, int argc,
+	JSValueConst *argv)
+{
+	uint32_t i = 0;
+	JSValue a;
+	NODE(0, n);
+
+	(void)this;
+	a = JS_NewArray(js);
+	shadows_in(ctx_of(js), n, a, &i);
 	return a;
 }
 
@@ -3032,6 +3133,13 @@ static const JSCFunctionListEntry natives[] = {
 	JS_CFUNC_MAGIC_DEF("content", 1, n_rel, 5),
 	JS_CFUNC_MAGIC_DEF("root", 1, n_rel, 6),
 	JS_CFUNC_MAGIC_DEF("ownerDoc", 1, n_rel, 7),
+	JS_CFUNC_MAGIC_DEF("host", 1, n_rel, 8),
+	JS_CFUNC_MAGIC_DEF("shadowRoot", 1, n_rel, 9),
+	JS_CFUNC_DEF("attachShadow", 2, n_attach_shadow),
+	JS_CFUNC_DEF("shadowOpen", 1, n_shadow_open),
+	JS_CFUNC_DEF("shadowCss", 2, n_shadow_css),
+	JS_CFUNC_DEF("shadows", 1, n_shadows),
+	JS_CFUNC_DEF("connected", 1, n_connected),
 	JS_CFUNC_DEF("newDocument", 1, n_new_document),
 	JS_CFUNC_DEF("adopt", 2, n_adopt),
 	JS_CFUNC_DEF("hit", 2, n_hit),

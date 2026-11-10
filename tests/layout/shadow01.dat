@@ -1,0 +1,67 @@
+#data
+<!DOCTYPE html><body style="margin:0"><div id=h>light<b>bold</b><i slot=x>named</i><u slot=nowhere>gone</u><template shadowrootmode=open><p style="margin:0">A<slot name=x>fallback x</slot>B</p><p style="margin:0"><slot>fallback default</slot></p><p style="margin:0"><slot name=y>fallback y</slot></p><slot>second default</slot></template></div>
+#errors
+#layout
+width=200
+#document
+| block <html> 0,0 200x80
+|   block <body> 0,0 200x80
+|     block <div> 0,0 200x80
+|       block <p> 0,0 200x20
+|         line 0,0 200x20
+|           text "A" 0,2 8x16
+|           text "named" 8,2 40x16
+|           inline <i> 8,2 40x16
+|           text "B" 48,2 8x16
+|       block <p> 0,20 200x20
+|         line 0,20 200x20
+|           text "light" 0,22 40x16
+|           text "bold" 40,22 32x16
+|           inline <b> 40,22 32x16
+|       block <p> 0,40 200x20
+|         line 0,40 200x20
+|           text "fallback y" 0,42 80x16
+|       block anonymous 0,60 200x20
+|         line 0,60 200x20
+|           text "second default" 0,62 112x16
+
+#data
+<!DOCTYPE html><body style="margin:0"><div>a<span style="display:none"><template shadowrootmode=open>hidden</template>x</span><span><template shadowrootmode=open><div>block in inline</div></template>light</span>b</div><div><template shadowrootmode=open></template>no slot: nothing</div>
+#errors
+#layout
+width=200
+#document
+| block <html> 0,0 200x60
+|   block <body> 0,0 200x60
+|     block <div> 0,0 200x60
+|       block anonymous 0,0 200x20
+|         line 0,0 200x20
+|           text "a" 0,2 8x16
+|           inline <span> 8,2 0x16
+|       block <div> 0,20 200x20
+|         line 0,20 200x20
+|           text "block in inline" 0,22 120x16
+|       block anonymous 0,40 200x20
+|         line 0,40 200x20
+|           inline <span> 0,42 0x16
+|           text "b" 0,42 8x16
+|     block <div> 0,60 200x0
+
+#data
+<!DOCTYPE html><body style="margin:0"><x-o><template shadowrootmode=open><x-i><template shadowrootmode=open><div style="border:1px solid"><slot></slot></div></template><slot></slot>!</x-i></template><b>deep</b></x-o><slot>plain slot</slot>
+#errors
+#layout
+width=200
+#document
+| block <html> 0,0 200x42
+|   block <body> 0,0 200x42
+|     block <div> 0,0 200x22
+|       line 1,1 198x20
+|         text "deep" 1,3 32x16
+|         inline <b> 1,3 32x16
+|         text "!" 33,3 8x16
+|     block anonymous 0,22 200x20
+|       line 0,22 200x20
+|         inline <x-i> 0,24 0x16
+|         inline <x-o> 0,24 0x16
+|         text "plain slot" 0,24 80x16

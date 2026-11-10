@@ -656,8 +656,9 @@ void layout_touch(soie_node *n)
 	soie_node *doc = n->doc;
 	unsigned long built = doc->u.doc->lbuilt, s = ++doc->u.doc->lstamp;
 
-	/* an ancestor changed since the last layout: so did its own */
-	for (; n && n->lchg <= built; n = n->parent)
+	/* an ancestor changed since the last layout: so did its own; the
+	 * flat tree's (a slotted node's slot and the slot's ancestors) */
+	for (; n && n->lchg <= built; n = flat_parent(n))
 		n->lchg = s;
 }
 
@@ -878,9 +879,29 @@ static soie_node *closed_summary(soie_node *el)
 	return el;	/* none: nothing shown */
 }
 
+/* The host whose light children slot el shows, with their slot name;
+ * NULL when it shows its own children (no shadow tree, another slot of
+ * that name before, nothing for it) */
+static soie_node *slot_host(soie_node *el, const char **name)
+{
+	soie_node *s = shadow_scope(el), *c;
+	const char *n;
+
+	if (!s)
+		return NULL;
+	*name = (n = soie_element_get_attr(el, "name")) ? n : "";
+	if (slot_find(s, *name) != el)
+		return NULL;
+	for (c = s->u.frag.host->first; c; c = c->next)
+		if ((n = slot_name(c)) && !strcmp(n, *name))
+			return s->u.frag.host;
+	return NULL;
+}
+
 static void gen_children(struct box *parent, soie_node *el)
 {
-	soie_node *c, *only = closed_summary(el);
+	soie_node *c, *only = closed_summary(el), *from = el, *host = NULL;
+	const char *name = NULL, *n;
 	struct box *p;
 
 	if ((p = gen_pseudo(el, el->u.el.before, 'b')))
@@ -897,10 +918,17 @@ static void gen_children(struct box *parent, soie_node *el)
 				strlen(t)));
 		}
 	}
-	for (c = el->first; c; c = c->next) {
-		if (only && c != only)
+	/* the flat tree: a host shows its shadow tree, a slot what it
+	 * takes of the host's children */
+	if (el->u.el.shadow)
+		from = el->u.el.shadow;
+	else if (is_html(el, TAG_SLOT) && (host = slot_host(el, &name)))
+		from = host;
+	for (c = from->first; c; c = c->next) {
+		if ((only && c != only) || (host && (!(n = slot_name(c)) ||
+		    strcmp(n, name))))
 			continue;
-		/* text takes the style of its parent element */
+		/* text takes the style of its parent element (its slot) */
 		if (c->type == SOIE_TEXT) {
 			if (c->u.text.len)
 				box_append(parent, text_box(el->u.el.style,

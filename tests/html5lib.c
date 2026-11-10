@@ -110,6 +110,32 @@ static soie_ns context_ns(const char **name)
 	return SOIE_NS_HTML;
 }
 
+/* Shadow roots for the style and layout tests, until the parser makes
+ * them (declarative shadow DOM): a <template shadowrootmode> becomes
+ * the shadow root of its parent element. */
+static void declare_shadows(soie_node *top)
+{
+	soie_node *n, *next, *r, *c;
+	const char *m;
+
+	for (n = soie_node_first_child(top); n; n = next) {
+		next = soie_node_next_sibling(n);
+		if (soie_node_get_type(n) != SOIE_ELEMENT)
+			continue;
+		m = soie_element_get_attr(n, "shadowrootmode");
+		if (m && !strcmp(soie_element_name(n), "template") &&
+		    (r = soie_attach_shadow(top, strcmp(m, "closed")))) {
+			while ((c = soie_node_first_child(
+			    soie_template_content(n))))
+				soie_node_append(r, c);
+			soie_node_remove(n);
+			declare_shadows(r);
+			continue;
+		}
+		declare_shadows(n);
+	}
+}
+
 /* One test in [s, end) with a scripting flag; 1 on success, -1 skipped. */
 static int run_one(const char *file, int num, char *s, char *end,
 	int scripting)
@@ -160,6 +186,8 @@ static int run_one(const char *file, int num, char *s, char *end,
 		char *props = section(s, end, "#properties");
 		char *lay = section(s, end, "#layout");
 
+		if (lay || props)
+			declare_shadows(root);
 		if (lay) {
 			int w = 800;
 

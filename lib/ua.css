@@ -14,6 +14,10 @@ dialog:not([open]) { display: none; }
 /* scripts run: <noscript> holds raw text, never shown */
 @media (scripting) { noscript { display: none !important; } }
 
+/* A slot shows its assigned nodes (else its own children) in
+ * place, it has no box */
+slot { display: contents; }
+
 /* 15.3.2 The page */
 html, body { display: block; }
 body { margin: 8px; }

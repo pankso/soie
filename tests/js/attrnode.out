@@ -1,2 +1,2 @@
 log: 4 | 0 | false | true | true |  | false | NotFoundError | false
-log: true | true | true | true | open | 1 | true | 0 | NotSupportedError |  | <i>a</i>b
+log: true | true | true | true | open | 1 | true | 0 | NotSupportedError |  | NotSupportedError | <i>a</i>b

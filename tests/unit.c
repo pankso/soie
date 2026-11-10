@@ -191,6 +191,67 @@ static void test_parse_api(void)
 	soie_node_free(doc);
 }
 
+/* Shadow roots: made, rendered, styled, freed and adopted with their
+ * host, never cloned nor serialized */
+static void test_shadow(void)
+{
+	static const char html[] = "<style>p{color:red}</style>"
+		"<div id=h><b>light</b><i slot=x>named</i></div>";
+	soie_node *doc = soie_html_parse(html, sizeof(html) - 1, NULL);
+	soie_node *other = soie_document_new();
+	soie_node *h, *r, *p, *c;
+	char *s, *v;
+
+	h = soie_node_last_child(soie_node_last_child(
+		soie_document_element(doc)));
+	CHECK(h && !strcmp(soie_element_name(h), "div"));
+	r = soie_attach_shadow(h, 1);
+	CHECK(r && soie_node_get_type(r) == SOIE_DOCUMENT_FRAGMENT);
+	CHECK(soie_attach_shadow(h, 0) == NULL);
+	CHECK(soie_attach_shadow(r, 1) == NULL);
+	CHECK(soie_shadow_root(h) == r && soie_shadow_host(r) == h);
+	CHECK(soie_shadow_open(r) && soie_shadow_host(h) == NULL);
+	CHECK(soie_node_parent(r) == NULL);
+	p = soie_element_new(doc, SOIE_NS_HTML, "p");
+	CHECK(soie_node_append(r, p) == 0);
+	CHECK(soie_node_append(p, soie_element_new(doc, SOIE_NS_HTML,
+		"slot")) == 0);
+	/* a host in its own shadow tree: a cycle */
+	CHECK(soie_node_append(p, h) == -1);
+	CHECK(soie_node_append(p, soie_document_element(doc)) == -1);
+	soie_shadow_css(r, "p { color: blue } ::slotted(b) { color: green }");
+	CHECK(soie_style_document(doc, NULL) == 0);
+	v = soie_computed_value(p, NULL, "color");
+	CHECK(v && !strcmp(v, "rgb(0, 0, 255)"));
+	free(v);
+	v = soie_computed_value(soie_node_first_child(h), NULL, "color");
+	CHECK(v && !strcmp(v, "rgb(0, 128, 0)"));
+	free(v);
+	CHECK(soie_layout_document(doc, 300, 200) == 0);
+	s = soie_layout_dump(doc, NULL);
+	CHECK(s && strstr(s, "block <p>") && strstr(s, "\"light\"") &&
+		!strstr(s, "named"));
+	free(s);
+	s = soie_node_serialize(h, 1, NULL);
+	CHECK(s && !strcmp(s, "<div id=\"h\"><b>light</b><i slot=\"x\">"
+		"named</i></div>"));
+	free(s);
+	c = soie_node_clone(h, 1);
+	CHECK(c && soie_shadow_root(c) == NULL);
+	soie_node_free(c);
+	/* adopted with its host, not alone */
+	CHECK(soie_node_adopt(other, r) == -1);
+	CHECK(soie_node_adopt(other, h) == 0);
+	CHECK(soie_node_document(r) == other &&
+		soie_node_document(p) == other);
+	soie_node_free(doc);
+	/* freed with its host, the host with its document */
+	c = soie_element_new(other, SOIE_NS_HTML, "span");
+	CHECK(soie_attach_shadow(c, 0) != NULL);
+	soie_node_free(c);
+	soie_node_free(other);
+}
+
 static void test_charsets(void)
 {
 	/* BOM wins over everything */
@@ -676,6 +737,7 @@ int main(void)
 {
 	soie_fonts_stub(1);
 	test_dom();
+	test_shadow();
 	test_parse_api();
 	test_charsets();
 	test_entities();

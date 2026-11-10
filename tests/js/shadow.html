@@ -1,0 +1,142 @@
+<!doctype html>
+<style>
+p { color: red }	/* the document's: never in a shadow tree */
+x-card { display: block; color: green }
+.big { font-size: 40px }
+</style>
+<x-card id=c><span slot=title>Hello</span>light<b>bold</b><i slot=nope>gone</i></x-card>
+<div class=dark><x-btn id=a>A</x-btn></div>
+<script>
+const out = [], log = (...a) => console.log(a.join(' | '));
+const cs = (e) => getComputedStyle(e);
+// A vanilla component: <style> in its tree, :host, named and default slots
+customElements.define('x-card', class extends HTMLElement {
+	constructor() {
+		super();
+		this.attachShadow({ mode: 'open' }).innerHTML =
+			'<style>:host { padding: 4px; color: blue } p { color: navy }' +
+			' ::slotted(b) { color: purple }</style>' +
+			'<h1><slot name=title>Default title</slot></h1>' +
+			'<p><slot></slot></p><footer><slot name=foot>fallback</slot></footer>';
+	}
+	connectedCallback() { out.push('card connected'); }
+});
+const c = document.getElementById('c'), r = c.shadowRoot;
+log(out.join(), r instanceof ShadowRoot, r.mode, r.host === c, r.innerHTML.length > 100);
+const sl = r.querySelectorAll('slot');
+log(sl.length, sl[1].assignedNodes().length, sl[1].assignedElements().map((e) => e.tagName),
+	sl[0].assignedNodes()[0].textContent, sl[2].assignedNodes().length,
+	sl[2].assignedNodes({ flatten: true })[0].textContent, sl[0].name);
+log(c.querySelector('b').assignedSlot === sl[1], c.querySelector('i').assignedSlot,
+	c.lastChild.assignedSlot, c.childNodes[1].assignedSlot === sl[1]);
+const p = r.querySelector('p');
+log(p.getRootNode() === r, p.getRootNode({ composed: true }) === document,
+	p.isConnected, p.parentNode === r, p.parentElement);
+// outer rules win for the host, the tree's rules style the tree only
+log(cs(c).color, cs(c).paddingTop, cs(p).color, cs(c.querySelector('b')).color,
+	cs(c.querySelector('span')).color);
+// boxes: the shadow tree's, slotted ones in place, the unassigned none
+log(r.querySelector('h1').getBoundingClientRect().height > 0,
+	c.querySelector('i').getBoundingClientRect().width,
+	c.querySelector('b').getBoundingClientRect().width > 0);
+
+// Lit's way: constructed sheets adopted, kept in step
+const sheet = new CSSStyleSheet();
+sheet.replaceSync(':host { color: blue; background-color: green !important }' +
+	' :host-context(.dark) .in { font-weight: 700 } .in { color: orange }');
+customElements.define('x-btn', class extends HTMLElement {
+	connectedCallback() {
+		if (this.shadowRoot)
+			return;
+		const sr = this.attachShadow({ mode: 'open' });
+		sr.adoptedStyleSheets = [sheet];
+		sr.innerHTML = '<span class=in><slot></slot></span>';
+	}
+});
+const a = document.getElementById('a'), ain = a.shadowRoot.firstChild;
+log(cs(a).color, cs(a).backgroundColor, cs(ain).color, cs(ain).fontWeight);
+sheet.replaceSync('.in { color: teal }');
+log(cs(ain).color, cs(a).backgroundColor);
+a.shadowRoot.adoptedStyleSheets.push(new CSSStyleSheet());
+a.shadowRoot.adoptedStyleSheets[1].replaceSync('.in { color: olive }');
+log(a.shadowRoot.adoptedStyleSheets.length, cs(ain).color);
+a.shadowRoot.adoptedStyleSheets = [];
+log(cs(ain).color);
+
+// nested components, closed roots, upgrades inside shadow trees
+const seq = [];
+customElements.define('x-inner', class extends HTMLElement {
+	constructor() {
+		super();
+		this.attachShadow({ mode: 'closed' }).innerHTML = '<em><slot></slot></em>';
+	}
+	connectedCallback() { seq.push('inner'); }
+	disconnectedCallback() { seq.push('inner out'); }
+});
+const o = document.createElement('div');
+o.attachShadow({ mode: 'open' }).innerHTML = '<x-inner id=in><slot></slot></x-inner><x-late></x-late>';
+o.append('light');
+const inner = o.shadowRoot.getElementById('in');
+log(seq.join(), inner.shadowRoot, inner.isConnected);
+document.body.append(o);
+customElements.define('x-late', class extends HTMLElement {
+	connectedCallback() { seq.push('late ' + (this.getRootNode().host === o)); }
+});
+log(seq.join(), inner.isConnected, o.getBoundingClientRect().height > 0);
+o.remove();
+log(seq.join(), inner.isConnected);
+
+// light children and slots changing, the layout following
+const h = document.createElement('div');
+h.innerHTML = '<span id=s>abc</span>';
+document.body.append(h);
+const hr = h.attachShadow({ mode: 'open' });
+hr.innerHTML = '<div id=w1><div id=w2><slot></slot></div></div><div>o</div>';
+const s = h.querySelector('#s');
+const w = () => [s.getBoundingClientRect().width,
+	hr.getElementById('w2').getBoundingClientRect().height];
+const ws = [w()];
+s.className = 'big'; ws.push(w());
+s.firstChild.data = 'abcdef'; ws.push(w());
+s.slot = 'x'; ws.push(w());
+s.removeAttribute('slot'); ws.push(w());
+const t = document.createElement('i'); t.textContent = 'XYZ';
+h.append(t); ws.push(w() + '/' + t.getBoundingClientRect().width);
+hr.querySelector('slot').style.color = 'rgb(1, 2, 3)'; ws.push(cs(t).color);
+hr.querySelector('slot').remove(); ws.push(w() + '/' + cs(t).color);
+log(ws.join(' '));
+
+// what cannot be
+try { hr.appendChild(h); log('NO THROW'); } catch (e) { log(e.name); }
+try { h.attachShadow({ mode: 'open' }); log('NO THROW'); } catch (e) { log(e.name); }
+try { document.createElement('img').attachShadow({ mode: 'open' }); log('NO THROW'); } catch (e) { log(e.name); }
+try { document.adoptNode(hr); log('NO THROW'); } catch (e) { log(e.name); }
+log(h.cloneNode(true).shadowRoot, h.innerHTML);
+
+// wrappers of shadow trees live with their host's tree
+let held = null;
+for (let i = 0; i < 400; i++) {
+	const e = document.createElement('div');
+	e.attachShadow({ mode: 'open' }).innerHTML = '<p><slot></slot><b>x</b></p>';
+	e.shadowRoot.mark = 'root' + i;
+	e.shadowRoot.firstChild.mark = 'p' + i;
+	document.body.append(e);
+	if (i % 2)
+		e.remove();
+	if (i === 7) {
+		held = e.shadowRoot.querySelector('b');
+		e.mark = 'host7';
+	}
+	const junk = [];
+	for (let j = 0; j < 300; j++)
+		junk.push({ j, s: 'x' + j });
+}
+setTimeout(() => {
+	for (let j = 0; j < 100000; j++)
+		({ j });
+	const kept = document.body.lastElementChild;
+	log(held.getRootNode().mark, held.getRootNode().host.mark,
+		held.getRootNode({ composed: true }) === held.getRootNode().host,
+		kept.shadowRoot.mark, kept.shadowRoot.firstChild.mark);
+}, 1100);
+</script>

@@ -1,0 +1,20 @@
+log: card connected | true | open | true | true
+log: 3 | 2 | B | Hello | 0 | fallback | title
+log: true |  |  | true
+log: true | true | true | true | 
+log: rgb(0, 128, 0) | 4px | rgb(0, 0, 128) | rgb(128, 0, 128) | rgb(0, 128, 0)
+log: true | 0 | true
+log: rgb(0, 0, 255) | rgb(0, 128, 0) | rgb(255, 165, 0) | 700
+log: rgb(0, 128, 128) | rgba(0, 0, 0, 0)
+log: 2 | rgb(128, 128, 0)
+log: rgb(0, 0, 0)
+log:  |  | false
+log: inner,late true | true | true
+log: inner,late true,inner out | false
+log: 24,20 60,50 120,50 0,0 120,50 120,50/24 rgb(1, 2, 3) 0,0/rgb(0, 0, 0)
+log: HierarchyRequestError
+log: NotSupportedError
+log: NotSupportedError
+log: HierarchyRequestError
+log:  | <span id="s" class="big">abcdef</span><i>XYZ</i>
+log: root7 | host7 | true | root398 | p398

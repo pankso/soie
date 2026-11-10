@@ -141,7 +141,8 @@ struct simple {
 	int a, b;		/* An+B */
 	char *name;		/* lowercase for type and attribute names */
 	char *value;
-	struct sellist *args;	/* :is() :not() :has() :nth-*(of S) */
+	struct sellist *args;	/* :is() :not() :has() :nth-*(of S)
+				 * :host() ::slotted() */
 };
 
 struct compound {
@@ -164,7 +165,7 @@ struct sellist {
 	const struct sellist *parent;	/* what & stands for */
 };
 
-enum { PE_NONE, PE_BEFORE, PE_AFTER, PE_MARKER, PE_OTHER };
+enum { PE_NONE, PE_BEFORE, PE_AFTER, PE_MARKER, PE_OTHER, PE_SLOTTED };
 
 /* Pseudo-classes (the cascade indexes rules by some) */
 enum {
@@ -176,6 +177,7 @@ enum {
 	PC_LINK, PC_VISITED, PC_CHECKED, PC_DISABLED, PC_ENABLED,
 	PC_REQUIRED, PC_OPTIONAL, PC_READ_ONLY, PC_READ_WRITE,
 	PC_PLACEHOLDER_SHOWN, PC_OPEN, PC_DEFINED, PC_VALID,
+	PC_HOST, PC_HOST_CONTEXT,	/* :host, :host(S), :host-context(S) */
 	PC_TRUE,	/* always matches: :scope... handled as root */
 	PC_FALSE	/* states the engine does not have yet */
 };
@@ -187,6 +189,13 @@ int selector_match(const struct sellist *l, int i, const soie_node *el);
 int word_in(const char *list, const char *w, int ci);
 int sellist_match(const struct sellist *l, const soie_node *el);
 void selector_scope(const soie_node *el);
+/* The shadow root whose rules are matched (cascade.c), else NULL: its
+ * host matches :host, ::slotted() sees its slots */
+void selector_shadow(const soie_node *root);
+/* Selector i of l: has its subject :host? does el match its
+ * ::slotted() argument (the rest is matched from el's slot)? */
+int selector_has_host(const struct sellist *l, int i);
+int selector_slotted(const struct sellist *l, int i, const soie_node *el);
 unsigned sellist_max_spec(const struct sellist *s, const soie_node *el);
 /*
  * What a change can affect beyond the changed element's subtree. The

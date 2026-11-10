@@ -395,6 +395,8 @@ const char *soie_element_get_attr(const soie_node *n, const char *name)
 	return a ? a->value : NULL;
 }
 
+static void slot_attr(soie_node *n, const char *name);
+
 int soie_element_set_attr(soie_node *n, const char *name, const char *value)
 {
 	struct attr *a;
@@ -411,12 +413,14 @@ int soie_element_set_attr(soie_node *n, const char *name, const char *value)
 		a->value = xstrndup(value, strlen(value));
 		n->doc->u.doc->gen++;
 		style_changed_attr(n, CH_ATTR, name, old);
+		slot_attr(n, name);
 		free(old);
 		return 0;
 	}
 	element_add_attr(n, SOIE_NS_NONE, name, value, strlen(value));
 	n->doc->u.doc->gen++;
 	style_changed_attr(n, CH_ATTR, name, NULL);
+	slot_attr(n, name);
 	return 0;
 }
 
@@ -436,6 +440,7 @@ int soie_element_remove_attr(soie_node *n, const char *name)
 	n->doc->u.doc->gen++;
 	layout_touch(n);
 	style_changed_attr(n, CH_ATTR, aname, old);
+	slot_attr(n, aname);
 	free(aname);
 	free(old);
 	return 0;
@@ -444,6 +449,187 @@ int soie_element_remove_attr(soie_node *n, const char *name)
 soie_node *soie_template_content(const soie_node *n)
 {
 	return n->type == SOIE_ELEMENT ? n->u.el.content : NULL;
+}
+
+/* Shadow trees */
+
+soie_node *soie_attach_shadow(soie_node *el, int open)
+{
+	soie_node *r;
+
+	if (el->type != SOIE_ELEMENT || el->u.el.shadow)
+		return NULL;
+	r = soie_document_fragment_new(el->doc);
+	r->u.frag.host = el;
+	r->u.frag.closed = !open;
+	el->u.el.shadow = r;
+	el->doc->u.doc->shadows++;
+	el->doc->u.doc->gen++;
+	/* its light children leave the boxes, its tree is styled */
+	layout_touch(el);
+	style_changed(el, CH_ATTR);
+	return r;
+}
+
+soie_node *soie_shadow_root(const soie_node *el)
+{
+	return el->type == SOIE_ELEMENT ? el->u.el.shadow : NULL;
+}
+
+soie_node *soie_shadow_host(const soie_node *n)
+{
+	return n->type == SOIE_DOCUMENT_FRAGMENT ? n->u.frag.host : NULL;
+}
+
+int soie_shadow_open(const soie_node *root)
+{
+	return root->type == SOIE_DOCUMENT_FRAGMENT && root->u.frag.host &&
+		!root->u.frag.closed;
+}
+
+void soie_shadow_css(soie_node *root, const char *css)
+{
+	if (!soie_shadow_host(root))
+		return;
+	free(root->u.frag.css);
+	root->u.frag.css = css && *css ? xstrndup(css, strlen(css)) : NULL;
+	/* other rules: sheet_signature() sees it */
+	root->doc->u.doc->gen++;
+}
+
+struct soie_node *shadow_scope(const struct soie_node *n)
+{
+	while (n->parent)
+		n = n->parent;
+	return n->type == SOIE_DOCUMENT_FRAGMENT && n->u.frag.host ?
+		(struct soie_node *)n : NULL;
+}
+
+const char *slot_name(const struct soie_node *n)
+{
+	const char *s;
+
+	if (n->type == SOIE_TEXT)
+		return "";
+	if (n->type != SOIE_ELEMENT)
+		return NULL;
+	return (s = soie_element_get_attr(n, "slot")) ? s : "";
+}
+
+struct soie_node *slot_find(const struct soie_node *s, const char *name)
+{
+	const struct soie_node *n = s->first;
+	const char *a;
+
+	while (n) {
+		if (is_html(n, TAG_SLOT) && !strcmp((a =
+		    soie_element_get_attr(n, "name")) ? a : "", name))
+			return (struct soie_node *)n;
+		if (n->first) {
+			n = n->first;
+			continue;
+		}
+		while (n != s && !n->next)
+			n = n->parent;
+		n = n == s ? NULL : n->next;
+	}
+	return NULL;
+}
+
+struct soie_node *slot_of(const struct soie_node *n)
+{
+	const struct soie_node *h = n->parent;
+	const char *name;
+
+	if (!h || h->type != SOIE_ELEMENT || !h->u.el.shadow ||
+	    !(name = slot_name(n)))
+		return NULL;
+	return slot_find(h->u.el.shadow, name);
+}
+
+struct soie_node *flat_parent(const struct soie_node *n)
+{
+	struct soie_node *p = n->parent, *s;
+
+	if (!p)
+		return node_above(n);
+	if (p->type == SOIE_ELEMENT && p->u.el.shadow)
+		return (s = slot_of(n)) ? s : p;
+	if (p->type == SOIE_DOCUMENT_FRAGMENT && p->u.frag.host)
+		return p->u.frag.host;
+	return p;
+}
+
+/* Which nodes the slots of host's shadow tree take changed: their
+ * boxes are built again */
+static void slots_touch(soie_node *host)
+{
+	soie_node *s = host->u.el.shadow, *n = s->first;
+
+	while (n) {
+		if (is_html(n, TAG_SLOT))
+			layout_touch(n);
+		if (n->first) {
+			n = n->first;
+			continue;
+		}
+		while (n != s && !n->next)
+			n = n->parent;
+		n = n == s ? NULL : n->next;
+	}
+}
+
+/* The slots of host's shadow tree changed: its children may go to
+ * another one, inherit from it */
+static void slots_moved(soie_node *host)
+{
+	soie_node *c;
+
+	slots_touch(host);
+	for (c = host->first; c; c = c->next)
+		if (c->type == SOIE_ELEMENT)
+			style_changed(c, CH_ATTR);
+}
+
+/* n comes into parent p or leaves it: a light child of a host, or a
+ * slot (or a subtree with one) in a shadow tree, changes what slots
+ * take */
+static void slots_changed(soie_node *p, soie_node *n)
+{
+	soie_node *k = n, *s;
+
+	if (p->type == SOIE_ELEMENT && p->u.el.shadow)
+		slots_touch(p);
+	if (n->type != SOIE_ELEMENT || !(s = shadow_scope(p)))
+		return;
+	while (k) {
+		if (is_html(k, TAG_SLOT)) {
+			slots_moved(s->u.frag.host);
+			return;
+		}
+		if (k->first) {
+			k = k->first;
+			continue;
+		}
+		while (k != n && !k->next)
+			k = k->parent;
+		k = k == n ? NULL : k->next;
+	}
+}
+
+/* An attribute of n changed: slot of a light child, name of a slot */
+static void slot_attr(soie_node *n, const char *name)
+{
+	soie_node *s;
+
+	if (!n->doc->u.doc->shadows)
+		return;
+	if (!strcmp(name, "slot") && n->parent &&
+	    n->parent->type == SOIE_ELEMENT && n->parent->u.el.shadow)
+		slots_touch(n->parent);
+	else if (!strcmp(name, "name") && is_html(n, TAG_SLOT) &&
+		 (s = shadow_scope(n)))
+		slots_moved(s->u.frag.host);
 }
 
 /* Character data */
@@ -572,7 +758,7 @@ static void move_one(soie_node *n, soie_node *from, soie_node *to)
 	n->doc = to;
 }
 
-/* n's subtree, template contents included */
+/* n's subtree, template contents and shadow trees included */
 static void move_tree(soie_node *n, soie_node *from, soie_node *to)
 {
 	soie_node *s = n;
@@ -581,6 +767,10 @@ static void move_tree(soie_node *n, soie_node *from, soie_node *to)
 		move_one(s, from, to);
 		if (s->type == SOIE_ELEMENT && s->u.el.content)
 			move_tree(s->u.el.content, from, to);
+		if (s->type == SOIE_ELEMENT && s->u.el.shadow) {
+			move_tree(s->u.el.shadow, from, to);
+			to->u.doc->shadows++;
+		}
 		if (s->first) {
 			s = s->first;
 			continue;
@@ -595,7 +785,9 @@ int soie_node_adopt(soie_node *doc, soie_node *n)
 {
 	soie_node *from = n->doc;
 
-	if (doc->type != SOIE_DOCUMENT || n->type == SOIE_DOCUMENT)
+	/* a shadow root goes with its host only */
+	if (doc->type != SOIE_DOCUMENT || n->type == SOIE_DOCUMENT ||
+	    soie_shadow_host(n))
 		return -1;
 	node_detach(n);
 	if (from == doc)
@@ -624,6 +816,8 @@ void node_detach(struct soie_node *n)
 		return;
 	style_changed(n, CH_REMOVE);
 	layout_touch(p);
+	if (n->doc->u.doc->shadows)
+		slots_changed(p, n);
 	if (n->prev)
 		n->prev->next = n->next;
 	else
@@ -654,6 +848,8 @@ void node_insert(struct soie_node *parent, struct soie_node *child,
 		parent->last = child;
 	parent->doc->u.doc->gen++;
 	layout_touch(parent);
+	if (parent->doc->u.doc->shadows)
+		slots_changed(parent, child);
 	style_changed(child, CH_INSERT);
 }
 
@@ -669,7 +865,8 @@ int soie_node_insert_before(soie_node *parent, soie_node *child,
 	if (child->type == SOIE_DOCUMENT || child->doc != parent->doc ||
 	    (ref && ref->parent != parent) || child == ref)
 		return -1;
-	for (a = parent; a; a = a->parent)
+	/* hosts too: a host in its own shadow tree is a cycle */
+	for (a = parent; a; a = node_above(a))
 		if (a == child)
 			return -1;
 	if (child->type == SOIE_DOCUMENT_FRAGMENT) {
@@ -707,6 +904,16 @@ static void node_free_one(soie_node *n)
 		free(n->u.el.attrs);
 		if (n->u.el.content)
 			soie_node_free(n->u.el.content);
+		if (n->u.el.shadow) {
+			/* kept if a script holds a node of it: no host then */
+			n->u.el.shadow->u.frag.host = NULL;
+			soie_node_free(n->u.el.shadow);
+		}
+		break;
+	case SOIE_DOCUMENT_FRAGMENT:
+		if (n->u.frag.host)
+			n->u.frag.host->u.el.shadow = NULL;
+		free(n->u.frag.css);
 		break;
 	case SOIE_TEXT:
 	case SOIE_COMMENT:
@@ -731,10 +938,12 @@ static void node_free_one(soie_node *n)
 		n->u.doc->dirty = NULL;
 		n->u.doc->ndirty = 0;
 		/* every node left, attached or not; template contents
-		 * are on the list too */
+		 * and shadow roots are on the list too */
 		for (a = n->u.doc->all; a; a = a->anext)
 			if (a->type == SOIE_ELEMENT)
-				a->u.el.content = NULL;
+				a->u.el.content = a->u.el.shadow = NULL;
+			else if (a->type == SOIE_DOCUMENT_FRAGMENT)
+				a->u.frag.host = NULL;
 		while (n->u.doc->all)
 			node_free_one(n->u.doc->all);
 		break;
@@ -757,6 +966,26 @@ static void node_free_one(soie_node *n)
 	free(n);
 }
 
+/* Has a node of n's subtree, shadow trees included, a user pointer? */
+static int held(const soie_node *n)
+{
+	const soie_node *c;
+
+	for (c = n; c; ) {
+		if (c->user || (c->type == SOIE_ELEMENT && c->u.el.shadow &&
+		    held(c->u.el.shadow)))
+			return 1;
+		if (c->first) {
+			c = c->first;
+			continue;
+		}
+		while (c != n && !c->next)
+			c = c->parent;
+		c = c == n ? NULL : c->next;
+	}
+	return 0;
+}
+
 /* Iterative, so that deeply nested trees do not blow the stack. A
  * subtree where a node has a user pointer (a script's wrapper) is only
  * taken out: the document frees it, after its host let go. */
@@ -764,21 +993,9 @@ void soie_node_free(soie_node *n)
 {
 	soie_node *c = n, *p;
 
-	if (n->type != SOIE_DOCUMENT) {
-		for (c = n; c; ) {
-			if (c->user) {
-				node_detach(n);
-				return;
-			}
-			if (c->first) {
-				c = c->first;
-				continue;
-			}
-			while (c != n && !c->next)
-				c = c->parent;
-			c = c == n ? NULL : c->next;
-		}
-		c = n;
+	if (n->type != SOIE_DOCUMENT && held(n)) {
+		node_detach(n);
+		return;
 	}
 
 	/* a document's scripts let go of their wrappers before its nodes

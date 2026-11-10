@@ -9,9 +9,10 @@ by RMSE (the 38 sites survey of 2026-11-03).
 
 - Form controls: the pop-up list of a `<select>`, a `range` that
   slides, a color picker, date fields.
-- Shadow DOM: decide whether to implement it (attachShadow, slots,
-  declarative `<template shadowrootmode>`); web components show
-  nothing without it.
+- Shadow DOM, what is left: events through shadow boundaries
+  (composed path, retargeting), the shell's link and form lookups
+  across hosts, focus inside shadow trees, `slotchange`, declarative
+  `<template shadowrootmode>` in the parser, `::part()`.
 
 ## Rendering, small
 

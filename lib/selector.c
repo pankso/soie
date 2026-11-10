@@ -28,7 +28,7 @@ static const struct {
 	{ "enabled", PC_ENABLED }, { "first-child", PC_FIRST_CHILD },
 	{ "first-of-type", PC_FIRST_OF_TYPE }, { "focus", PC_FALSE },
 	{ "focus-visible", PC_FALSE }, { "focus-within", PC_FALSE },
-	{ "fullscreen", PC_FALSE }, { "host", PC_FALSE },
+	{ "fullscreen", PC_FALSE }, { "host", PC_HOST },
 	{ "hover", PC_FALSE },
 	{ "in-range", PC_VALID }, { "indeterminate", PC_FALSE },
 	{ "invalid", PC_FALSE }, { "last-child", PC_LAST_CHILD },
@@ -190,6 +190,16 @@ void selector_scope(const soie_node *el)
 	sel_scope = el;
 }
 
+/* The shadow root of the rules the cascade matches, NULL for the
+ * document's: :host is its host, the parent of its tree's top
+ * elements for the combinators */
+static THREAD_LOCAL const soie_node *sel_shadow;
+
+void selector_shadow(const soie_node *root)
+{
+	sel_shadow = root;
+}
+
 static int find_pseudo_class(const char *name)
 {
 	int i;
@@ -247,9 +257,16 @@ static int parse_pseudo_fn(struct sp *p, const struct cv *f,
 			0);
 		return s->args != NULL;
 	}
-	if (ascii_ieq(n, "host") || ascii_ieq(n, "host-context") ||
-	    ascii_ieq(n, "state") || ascii_ieq(n, "active-view-transition-type")) {
-		/* shadow DOM and custom states: valid, never matching */
+	if (ascii_ieq(n, "host") || ascii_ieq(n, "host-context")) {
+		/* a compound selector, of the host or of its ancestors */
+		s->pseudo = (unsigned char)(ascii_ieq(n, "host") ? PC_HOST :
+			PC_HOST_CONTEXT);
+		s->args = parse_list(&f->kids, 0, f->kids.n, NULL, 0, 0, 0);
+		return s->args && s->args->n == 1 && s->args->c[0].n == 1;
+	}
+	if (ascii_ieq(n, "state") ||
+	    ascii_ieq(n, "active-view-transition-type")) {
+		/* custom states: valid, never matching */
 		s->pseudo = PC_FALSE;
 		return 1;
 	}
@@ -387,7 +404,19 @@ static int parse_compound(struct sp *p, struct compound *c, int *pe)
 					goto bad;
 				s.type = SEL_PSEUDO_ELEMENT;
 				s.pseudo = PE_OTHER;
-				*pe = PE_OTHER;
+				if (ascii_ieq(v->str, "slotted")) {
+					/* a compound selector of the
+					 * slotted element */
+					s.pseudo = PE_SLOTTED;
+					s.args = parse_list(&v->kids, 0,
+						v->kids.n, NULL, 0, 0, 0);
+					if (!s.args || s.args->n != 1 ||
+					    s.args->c[0].n != 1) {
+						simple_free(&s);
+						goto bad;
+					}
+				}
+				*pe = s.pseudo;
 			} else if (v->type == CT_FUNCTION && !element) {
 				if (*pe != PE_NONE ||
 				    !parse_pseudo_fn(p, v, &s)) {
@@ -444,7 +473,7 @@ static unsigned compound_spec(const struct compound *c,
 			break;
 		case SEL_TYPE:
 		case SEL_PSEUDO_ELEMENT:
-			spec += SPEC_C;
+			spec += SPEC_C + list_max_spec(s->args);
 			break;
 		case SEL_NEST:
 			spec += list_max_spec(parent);
@@ -455,6 +484,9 @@ static unsigned compound_spec(const struct compound *c,
 			if (s->pseudo == PC_IS || s->pseudo == PC_NOT ||
 			    s->pseudo == PC_HAS)
 				spec += list_max_spec(s->args);
+			else if (s->pseudo == PC_HOST ||
+				 s->pseudo == PC_HOST_CONTEXT)
+				spec += SPEC_B + list_max_spec(s->args);
 			else if (s->pseudo == PC_NTH_CHILD ||
 				 s->pseudo == PC_NTH_LAST_CHILD)
 				spec += SPEC_B + list_max_spec(s->args);
@@ -698,6 +730,74 @@ static soie_node *next_el(const soie_node *n)
 static soie_node *parent_el(const soie_node *n)
 {
 	return n->parent && n->parent->type == SOIE_ELEMENT ? n->parent : NULL;
+}
+
+/* Is el the host of the rules' shadow tree? */
+static int is_host(const soie_node *el)
+{
+	return sel_shadow && el->u.el.shadow == sel_shadow;
+}
+
+/* Does compound c hold :host? Nothing else of a shadow tree's rules
+ * sees its host */
+static int has_host(const struct compound *c)
+{
+	int i;
+
+	for (i = 0; i < c->n; i++)
+		if (c->s[i].type == SEL_PSEUDO && (c->s[i].pseudo == PC_HOST ||
+		    c->s[i].pseudo == PC_HOST_CONTEXT))
+			return 1;
+	return 0;
+}
+
+static int matches_list(const struct sellist *l, const soie_node *el);
+
+/* Above el, a top element of the rules' shadow tree, its host for
+ * compound i of c if it holds :host (`:host > .x`, `:host .x`). Only
+ * called at the top of a fragment: match_rec() itself reads no
+ * thread-local, it is on every page's hot path */
+static const soie_node *host_up(const soie_node *el,
+	const struct complex *c, int i)
+{
+	return el->parent == sel_shadow && has_host(&c->c[i]) ?
+		sel_shadow->u.frag.host : NULL;
+}
+
+static int top_of_fragment(const soie_node *el)
+{
+	return el->parent && el->parent->type == SOIE_DOCUMENT_FRAGMENT;
+}
+
+int selector_has_host(const struct sellist *l, int i)
+{
+	return has_host(&l->c[i].c[l->c[i].n - 1]);
+}
+
+/* An argument of :host(), :host-context(), ::slotted(): el is matched
+ * from outside the shadow tree */
+static int matches_outside(const struct sellist *l, const soie_node *el)
+{
+	const soie_node *saved = sel_shadow;
+	int r;
+
+	sel_shadow = NULL;
+	r = matches_list(l, el);
+	sel_shadow = saved;
+	return r;
+}
+
+/* ::slotted(x) of selector i of l: does el match x? */
+int selector_slotted(const struct sellist *l, int i, const soie_node *el)
+{
+	const struct compound *c = &l->c[i].c[l->c[i].n - 1];
+	int j;
+
+	for (j = 0; j < c->n; j++)
+		if (c->s[j].type == SEL_PSEUDO_ELEMENT &&
+		    c->s[j].pseudo == PE_SLOTTED)
+			return matches_outside(c->s[j].args, el);
+	return 0;
 }
 
 static const char *attr(const soie_node *el, const char *name)
@@ -1009,6 +1109,18 @@ static int match_pseudo(const struct simple *s, const soie_node *el)
 			(!(t = attr(el, "value")) || !*t);
 	case PC_OPEN:
 		return attr(el, "open") != NULL;
+	case PC_HOST:
+		return is_host(el) && (!s->args ||
+			matches_outside(s->args, el));
+	case PC_HOST_CONTEXT:
+		if (!is_host(el))
+			return 0;
+		/* the host or an ancestor, through outer hosts */
+		for (n = el; n; n = node_above(n))
+			if (n->type == SOIE_ELEMENT &&
+			    matches_outside(s->args, n))
+				return 1;
+		return 0;
 	case PC_DEFINED:
 	case PC_TRUE:
 		return 1;
@@ -1384,7 +1496,7 @@ static int related(const soie_node *x, const soie_node *el, int comb)
 static int match_rec(const struct complex *c, int idx, const soie_node *el,
 	const soie_node *anchor, const struct sellist *parent)
 {
-	const soie_node *n;
+	const soie_node *n, *p;
 	int comb, r;
 
 	if (!match_compound(&c->c[idx], el, parent))
@@ -1394,12 +1506,15 @@ static int match_rec(const struct complex *c, int idx, const soie_node *el,
 		return anchor ? related(anchor, el, comb) : 1;
 	switch (comb) {
 	case COMB_DESC:
-		for (n = parent_el(el); n; n = parent_el(n))
-			if ((r = match_rec(c, idx - 1, n, anchor, parent)))
+		for (n = el; (p = parent_el(n)); )
+			if ((r = match_rec(c, idx - 1, n = p, anchor, parent)))
 				return r;
-		return -1;
+		/* past the top of a shadow tree, its host */
+		n = top_of_fragment(n) ? host_up(n, c, idx - 1) : NULL;
+		return n ? match_rec(c, idx - 1, n, anchor, parent) : -1;
 	case COMB_CHILD:
-		n = parent_el(el);
+		if (!(n = parent_el(el)) && top_of_fragment(el))
+			n = host_up(el, c, idx - 1);
 		return n ? match_rec(c, idx - 1, n, anchor, parent) : -1;
 	case COMB_NEXT:
 		n = prev_el(el);

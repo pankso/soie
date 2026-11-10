@@ -69,10 +69,13 @@ static int script_kind(const soie_node *el)
 	return 0;
 }
 
+/* In the document, shadow trees of its hosts included */
 static int connected(const soie_node *n)
 {
-	while (n->parent)
-		n = n->parent;
+	const soie_node *a;
+
+	while ((a = node_above(n)))
+		n = a;
 	return n->type == SOIE_DOCUMENT;
 }
 

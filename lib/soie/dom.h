@@ -78,6 +78,25 @@ int soie_element_remove_attr(soie_node *n, const char *name);
 /* The content fragment of an HTML <template>, NULL for other nodes. */
 soie_node *soie_template_content(const soie_node *n);
 
+/*
+ * Shadow DOM. soie_attach_shadow() gives element el a shadow root: a
+ * document fragment of el's document whose children render in place
+ * of el's own, which only <slot> elements of it show. NULL when el has
+ * one already or is not an element. The root goes with el: freed,
+ * adopted with it (never alone), never cloned nor serialized. open is
+ * the mode scripts see (Element.shadowRoot). soie_shadow_css() sets the
+ * text of the root's adopted style sheets (NULL for none), copied: its
+ * rules apply to that tree only, as those of a <style> in it.
+ */
+soie_node *soie_attach_shadow(soie_node *el, int open);
+/* el's shadow root, whatever its mode; NULL if it has none */
+soie_node *soie_shadow_root(const soie_node *el);
+/* The host of shadow root n, NULL for any other node */
+soie_node *soie_shadow_host(const soie_node *n);
+/* 1 for a shadow root attached open */
+int soie_shadow_open(const soie_node *root);
+void soie_shadow_css(soie_node *root, const char *css);
+
 /* Text and comments. Data may contain NUL bytes, hence the length. */
 soie_node *soie_text_new(soie_node *doc, const char *s, size_t len);
 soie_node *soie_comment_new(soie_node *doc, const char *s, size_t len);
@@ -105,7 +124,7 @@ soie_node *soie_node_clone(const soie_node *n, int deep);
  * Move n, out of its tree, with its subtree to document doc (DOM
  * adoptNode): from then on doc owns it and frees it. Its computed
  * styles are dropped, a player of a media element in it stops.
- * Returns -1 for a document.
+ * Returns -1 for a document or a shadow root.
  */
 int soie_node_adopt(soie_node *doc, soie_node *n);
 

@@ -128,7 +128,8 @@ static void dump_node(struct buf *b, const soie_node *n, int depth)
 struct item {
 	const soie_node *n;
 	int depth;
-	int content;		/* the "content" line of a template */
+	int content;		/* the "content" line of a template (1),
+				 * "#shadow-root" of a host (2) */
 };
 
 struct todo {
@@ -187,10 +188,16 @@ static char *dump(const soie_node *n, const char *props, size_t *len)
 		todo_push(&t, n, 0, 0);
 	while (t.len) {
 		it = t.items[--t.len];
-		if (it.content) {
+		if (it.content == 1) {
 			indent(&b, it.depth);
 			buf_add(&b, "content\n", 8);
 			todo_children(&t, it.n->u.el.content, it.depth + 1);
+			continue;
+		}
+		if (it.content == 2) {
+			indent(&b, it.depth);
+			buf_add(&b, "#shadow-root\n", 13);
+			todo_children(&t, it.n->u.el.shadow, it.depth + 1);
 			continue;
 		}
 		dump_node(&b, it.n, it.depth);
@@ -199,6 +206,8 @@ static char *dump(const soie_node *n, const char *props, size_t *len)
 		todo_children(&t, it.n, it.depth + 1);
 		if (it.n->type == SOIE_ELEMENT && it.n->u.el.content)
 			todo_push(&t, it.n, it.depth + 1, 1);
+		if (it.n->type == SOIE_ELEMENT && it.n->u.el.shadow)
+			todo_push(&t, it.n, it.depth + 1, 2);
 	}
 	free(t.items);
 	if (len)

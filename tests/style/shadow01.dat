@@ -1,0 +1,299 @@
+#data
+<!DOCTYPE html><style>p{color:red}:root{background-color:yellow}x-a{color:green;font-size:20px}</style><x-a><template shadowrootmode=open><style>p{font-style:italic}:root{background-color:blue}</style><p>shadow</p><div><slot></slot></div></template><p>light</p></x-a>
+#errors
+#properties
+color,font-size,font-style,background-color
+#document
+| <!DOCTYPE html>
+| <html>
+|   @color: rgb(0, 0, 0)
+|   @font-size: 16px
+|   @font-style: normal
+|   @background-color: rgb(255, 255, 0)
+|   <head>
+|     @color: rgb(0, 0, 0)
+|     @font-size: 16px
+|     @font-style: normal
+|     @background-color: rgba(0, 0, 0, 0)
+|     <style>
+|       @color: rgb(0, 0, 0)
+|       @font-size: 16px
+|       @font-style: normal
+|       @background-color: rgba(0, 0, 0, 0)
+|       "p{color:red}:root{background-color:yellow}x-a{color:green;font-size:20px}"
+|   <body>
+|     @color: rgb(0, 0, 0)
+|     @font-size: 16px
+|     @font-style: normal
+|     @background-color: rgba(0, 0, 0, 0)
+|     <x-a>
+|       @color: rgb(0, 128, 0)
+|       @font-size: 20px
+|       @font-style: normal
+|       @background-color: rgba(0, 0, 0, 0)
+|       #shadow-root
+|         <style>
+|           @color: rgb(0, 128, 0)
+|           @font-size: 20px
+|           @font-style: normal
+|           @background-color: rgba(0, 0, 0, 0)
+|           "p{font-style:italic}:root{background-color:blue}"
+|         <p>
+|           @color: rgb(0, 128, 0)
+|           @font-size: 20px
+|           @font-style: italic
+|           @background-color: rgba(0, 0, 0, 0)
+|           "shadow"
+|         <div>
+|           @color: rgb(0, 128, 0)
+|           @font-size: 20px
+|           @font-style: normal
+|           @background-color: rgba(0, 0, 0, 0)
+|           <slot>
+|             @color: rgb(0, 128, 0)
+|             @font-size: 20px
+|             @font-style: normal
+|             @background-color: rgba(0, 0, 0, 0)
+|       <p>
+|         @color: rgb(255, 0, 0)
+|         @font-size: 20px
+|         @font-style: normal
+|         @background-color: rgba(0, 0, 0, 0)
+|         "light"
+
+#data
+<!DOCTYPE html><style>x-b{color:red}x-b.imp{display:block!important}</style><x-b class="a imp"><template shadowrootmode=open><style>:host{color:blue;font-weight:700;display:flex!important}:host(.a){font-style:italic}:host(.z){font-size:30px}:host > i{color:green}:host(.a) i{text-decoration-line:underline}* {font-size:5px}</style><i>in</i></template></x-b>
+#errors
+#properties
+color,font-weight,font-style,font-size,display,text-decoration-line
+#document
+| <!DOCTYPE html>
+| <html>
+|   @color: rgb(0, 0, 0)
+|   @font-weight: 400
+|   @font-style: normal
+|   @font-size: 16px
+|   @display: block
+|   @text-decoration-line: none
+|   <head>
+|     @color: rgb(0, 0, 0)
+|     @font-weight: 400
+|     @font-style: normal
+|     @font-size: 16px
+|     @display: none
+|     @text-decoration-line: none
+|     <style>
+|       @color: rgb(0, 0, 0)
+|       @font-weight: 400
+|       @font-style: normal
+|       @font-size: 16px
+|       @display: none
+|       @text-decoration-line: none
+|       "x-b{color:red}x-b.imp{display:block!important}"
+|   <body>
+|     @color: rgb(0, 0, 0)
+|     @font-weight: 400
+|     @font-style: normal
+|     @font-size: 16px
+|     @display: block
+|     @text-decoration-line: none
+|     <x-b>
+|       class="a imp"
+|       @color: rgb(255, 0, 0)
+|       @font-weight: 700
+|       @font-style: italic
+|       @font-size: 16px
+|       @display: flex
+|       @text-decoration-line: none
+|       #shadow-root
+|         <style>
+|           @color: rgb(255, 0, 0)
+|           @font-weight: 700
+|           @font-style: italic
+|           @font-size: 5px
+|           @display: none
+|           @text-decoration-line: none
+|           ":host{color:blue;font-weight:700;display:flex!important}:host(.a){font-style:italic}:host(.z){font-size:30px}:host > i{color:green}:host(.a) i{text-decoration-line:underline}* {font-size:5px}"
+|         <i>
+|           @color: rgb(0, 128, 0)
+|           @font-weight: 700
+|           @font-style: italic
+|           @font-size: 5px
+|           @display: block
+|           @text-decoration-line: underline
+|           "in"
+
+#data
+<!DOCTYPE html><div class=dark><x-c><template shadowrootmode=open><style>:host-context(.dark) b{color:white}:host-context(.light) b{color:black}</style><b>b</b></template></x-c></div><x-c><template shadowrootmode=open><style>:host-context(.dark) b{color:white}</style><b>b</b></template></x-c>
+#errors
+#properties
+color
+#document
+| <!DOCTYPE html>
+| <html>
+|   @color: rgb(0, 0, 0)
+|   <head>
+|     @color: rgb(0, 0, 0)
+|   <body>
+|     @color: rgb(0, 0, 0)
+|     <div>
+|       class="dark"
+|       @color: rgb(0, 0, 0)
+|       <x-c>
+|         @color: rgb(0, 0, 0)
+|         #shadow-root
+|           <style>
+|             @color: rgb(0, 0, 0)
+|             ":host-context(.dark) b{color:white}:host-context(.light) b{color:black}"
+|           <b>
+|             @color: rgb(255, 255, 255)
+|             "b"
+|     <x-c>
+|       @color: rgb(0, 0, 0)
+|       #shadow-root
+|         <style>
+|           @color: rgb(0, 0, 0)
+|           ":host-context(.dark) b{color:white}"
+|         <b>
+|           @color: rgb(0, 0, 0)
+|           "b"
+
+#data
+<!DOCTYPE html><style>.s{color:red}</style><x-d><template shadowrootmode=open><style>::slotted(*){font-weight:700}::slotted(.s){color:blue;font-style:italic}slot[name=n]::slotted(span){font-size:30px}:host ::slotted(em){color:green}div ::slotted(b){color:purple}</style><div style="color:gray"><slot name=n></slot></div><slot></slot></template><span slot=n class=s>n</span><span class=s>d</span><em>e</em><b>b</b>text</x-d>
+#errors
+#properties
+color,font-weight,font-style,font-size
+#document
+| <!DOCTYPE html>
+| <html>
+|   @color: rgb(0, 0, 0)
+|   @font-weight: 400
+|   @font-style: normal
+|   @font-size: 16px
+|   <head>
+|     @color: rgb(0, 0, 0)
+|     @font-weight: 400
+|     @font-style: normal
+|     @font-size: 16px
+|     <style>
+|       @color: rgb(0, 0, 0)
+|       @font-weight: 400
+|       @font-style: normal
+|       @font-size: 16px
+|       ".s{color:red}"
+|   <body>
+|     @color: rgb(0, 0, 0)
+|     @font-weight: 400
+|     @font-style: normal
+|     @font-size: 16px
+|     <x-d>
+|       @color: rgb(0, 0, 0)
+|       @font-weight: 400
+|       @font-style: normal
+|       @font-size: 16px
+|       #shadow-root
+|         <style>
+|           @color: rgb(0, 0, 0)
+|           @font-weight: 400
+|           @font-style: normal
+|           @font-size: 16px
+|           "::slotted(*){font-weight:700}::slotted(.s){color:blue;font-style:italic}slot[name=n]::slotted(span){font-size:30px}:host ::slotted(em){color:green}div ::slotted(b){color:purple}"
+|         <div>
+|           style="color:gray"
+|           @color: rgb(128, 128, 128)
+|           @font-weight: 400
+|           @font-style: normal
+|           @font-size: 16px
+|           <slot>
+|             name="n"
+|             @color: rgb(128, 128, 128)
+|             @font-weight: 400
+|             @font-style: normal
+|             @font-size: 16px
+|         <slot>
+|           @color: rgb(0, 0, 0)
+|           @font-weight: 400
+|           @font-style: normal
+|           @font-size: 16px
+|       <span>
+|         class="s"
+|         slot="n"
+|         @color: rgb(255, 0, 0)
+|         @font-weight: 700
+|         @font-style: italic
+|         @font-size: 30px
+|         "n"
+|       <span>
+|         class="s"
+|         @color: rgb(255, 0, 0)
+|         @font-weight: 700
+|         @font-style: italic
+|         @font-size: 16px
+|         "d"
+|       <em>
+|         @color: rgb(0, 128, 0)
+|         @font-weight: 700
+|         @font-style: italic
+|         @font-size: 16px
+|         "e"
+|       <b>
+|         @color: rgb(0, 0, 0)
+|         @font-weight: 700
+|         @font-style: normal
+|         @font-size: 16px
+|         "b"
+|       "text"
+
+#data
+<!DOCTYPE html><x-o style="color:green"><template shadowrootmode=open><style>p{color:blue}</style><x-i><template shadowrootmode=open><style>:host{font-style:italic}p{font-weight:700}</style><p><slot></slot></p></template><p>inner light</p></x-i></template></x-o>
+#errors
+#properties
+color,font-style,font-weight
+#document
+| <!DOCTYPE html>
+| <html>
+|   @color: rgb(0, 0, 0)
+|   @font-style: normal
+|   @font-weight: 400
+|   <head>
+|     @color: rgb(0, 0, 0)
+|     @font-style: normal
+|     @font-weight: 400
+|   <body>
+|     @color: rgb(0, 0, 0)
+|     @font-style: normal
+|     @font-weight: 400
+|     <x-o>
+|       style="color:green"
+|       @color: rgb(0, 128, 0)
+|       @font-style: normal
+|       @font-weight: 400
+|       #shadow-root
+|         <style>
+|           @color: rgb(0, 128, 0)
+|           @font-style: normal
+|           @font-weight: 400
+|           "p{color:blue}"
+|         <x-i>
+|           @color: rgb(0, 128, 0)
+|           @font-style: italic
+|           @font-weight: 400
+|           #shadow-root
+|             <style>
+|               @color: rgb(0, 128, 0)
+|               @font-style: italic
+|               @font-weight: 400
+|               ":host{font-style:italic}p{font-weight:700}"
+|             <p>
+|               @color: rgb(0, 128, 0)
+|               @font-style: italic
+|               @font-weight: 700
+|               <slot>
+|                 @color: rgb(0, 128, 0)
+|                 @font-style: italic
+|                 @font-weight: 700
+|           <p>
+|             @color: rgb(0, 0, 255)
+|             @font-style: italic
+|             @font-weight: 700
+|             "inner light"

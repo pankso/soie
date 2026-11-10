@@ -840,19 +840,20 @@ class Node extends EventTarget {
 	get lastChild() { return api.last(this); }
 	get nextSibling() { return api.next(this); }
 	get previousSibling() { return api.prev(this); }
-	get isConnected() {
-		let n = this;
-		for (let p; (p = api.parent(n)); )
-			n = p;
-		return n === document;
-	}
+	get isConnected() { return api.connected(this); }
 	get baseURI() { return document.baseURI; }
 	hasChildNodes() { return !!api.first(this); }
-	getRootNode() {
+	getRootNode(o) {
 		let n = this;
-		for (let p; (p = api.parent(n)); )
-			n = p;
-		return n;
+		for (;;) {
+			for (let p; (p = api.parent(n)); )
+				n = p;
+			/* composed: from a shadow root on to its host's */
+			const h = o && o.composed && api.host(n);
+			if (!h)
+				return n;
+			n = h;
+		}
 	}
 	appendChild(n) { return insert(this, n, null); }
 	insertBefore(n, ref) { return insert(this, n, ref); }
@@ -1083,6 +1084,7 @@ class Text extends CharacterData {
 		return api.createText(str(data));
 	}
 	get wholeText() { return this.data; }
+	get assignedSlot() { return assignedSlot(this); }
 	splitText(o) {
 		const d = this.data;
 		const t = api.createText(d.slice(o));
@@ -1120,25 +1122,109 @@ class DocumentFragment extends Node {
 }
 mixin(DocumentFragment, parentNode);
 
-/* A shadow root is a fragment its host keeps, and that is all: its
- * tree is not rendered yet. Scripts that only need the call to work
- * go on (Next.js hides its route announcer in one, and the whole page
- * was replaced by its error screen when attachShadow() threw) */
+/* A shadow root: the engine's (soie_attach_shadow()), rendered in
+ * place of its host's children, which its slots show. Its wrapper
+ * lives as long as its host's tree, what scripts put on it too. */
 class ShadowRoot extends DocumentFragment {
-	get innerHTML() {
-		return Array.from(this.childNodes).map((n) => n.nodeType === 1 ?
-			n.outerHTML : n.textContent).join('');
+	constructor() {
+		throw new TypeError('Illegal constructor');
 	}
+	get host() { return api.host(this); }
+	get mode() { return api.shadowOpen(this) ? 'open' : 'closed'; }
+	get delegatesFocus() { return false; }
+	get slotAssignment() { return 'named'; }
+	get clonable() { return false; }
+	get serializable() { return false; }
+	get innerHTML() { return api.serialize(this, false); }
+	/* parsed as the host's children would be; scripts in it never
+	 * run (api.parse) */
 	set innerHTML(v) {
-		const t = document.createElement('template');
-
-		t.innerHTML = v;
-		this.replaceChildren(t.content);
+		for (let k; (k = api.first(this)); )
+			api.remove(k);
+		v = v === null ? '' : String(v);
+		if (v !== '')
+			insert(this, api.parse(api.host(this), v), null);
 	}
 	get activeElement() { return null; }
-	get styleSheets() { return []; }
-	get adoptedStyleSheets() { return this._sheets || []; }
-	set adoptedStyleSheets(v) { this._sheets = Array.from(v); }
+	get styleSheets() {
+		return list(list(query(this, 'style', 0)).map(styleSheet));
+	}
+	/* push() and the like change it too, as an ObservableArray */
+	get adoptedStyleSheets() {
+		if (!this._sheetsView)
+			this.adoptedStyleSheets = [];
+		return this._sheetsView;
+	}
+	set adoptedStyleSheets(v) {
+		v = Array.from(v);
+		if (v.some((s) => !(s instanceof CSSStyleSheet)))
+			throw new TypeError('not a CSSStyleSheet');
+		this._sheets = v;
+		this._sheetsView = new Proxy(v, {
+			set: (a, k, x) => {
+				a[k] = x;
+				this.adoptedStyleSheets = a;
+				return true;
+			},
+		});
+		for (const s of v) {
+			/* to be told when the sheet changes, without holding
+			 * the root */
+			s._roots = (s._roots || []).filter((r) => r.deref() &&
+				r.deref() !== this);
+			s._roots.push(new WeakRef(this));
+		}
+		this._syncSheets();
+	}
+	/* the engine's text of the adopted sheets, in their order */
+	_syncSheets() {
+		api.shadowCss(this, this._sheets.map((s) => s._read())
+			.join('\n'));
+	}
+}
+
+/* Elements that may be shadow hosts, besides custom elements */
+const SHADOW_HOSTS = new Set(['article', 'aside', 'blockquote', 'body',
+	'div', 'footer', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'header', 'main',
+	'nav', 'p', 'section', 'span']);
+
+/* Slots, assigned as the engine does (lib/dom.c slot_of()): a host's
+ * child goes to the first slot of the shadow tree named as its slot
+ * attribute; text to the one without a name */
+function slotName(n) {
+	const t = api.type(n);
+	return t === S_TEXT ? '' : t === S_EL ? api.getAttr(n, 'slot') || '' :
+		null;
+}
+function slotNamed(root, name) {
+	return query(root, 'slot', 0).find((s) =>
+		(api.getAttr(s, 'name') || '') === name) || null;
+}
+/* Element and Text assignedSlot: none from a closed tree */
+function assignedSlot(n) {
+	const h = api.parent(n), r = h && api.shadowRoot(h);
+	const name = slotName(n);
+	return r && name !== null ? slotNamed(r, name) : null;
+}
+function assigned(slot, flatten, elements) {
+	const root = slot.getRootNode(), h = api.host(root);
+	let a = [];
+	if (h) {
+		const name = api.getAttr(slot, 'name') || '';
+		if (slotNamed(root, name) === slot)
+			a = api.children(h, false).filter((n) =>
+				slotName(n) === name);
+	}
+	if (flatten && h) {
+		/* nothing assigned: its own children; slots in it: theirs */
+		if (!a.length)
+			a = api.children(slot, false).filter((n) =>
+				slotName(n) !== null);
+		a = a.flatMap((n) => api.type(n) === S_EL &&
+			api.name(n) === 'slot' && api.host(n.getRootNode()) ?
+			assigned(n, true, false) : [n]);
+	}
+	return elements ? a.filter((n) => api.type(n) === S_EL) : a;
 }
 
 /* Attributes */
@@ -1712,22 +1798,22 @@ class Element extends Node {
 	scrollTo() {}
 	scrollBy() {}
 	attachShadow(init) {
-		let r;
+		const name = api.name(this);
 
-		if (this._shadow)
+		if (api.ns(this) !== NS_HTML || !(SHADOW_HOSTS.has(name) ||
+		    /^[a-z][^A-Z]*-/.test(name)))
+			throw new DOMException(name +
+				' cannot have a shadow root',
+				'NotSupportedError');
+		const r = api.attachShadow(this,
+			!init || init.mode !== 'closed');
+		if (!r)
 			throw new DOMException('already a shadow host',
 				'NotSupportedError');
-		r = api.createFragment();
-		Object.setPrototypeOf(r, ShadowRoot.prototype);
-		r.host = this;
-		r.mode = init && init.mode === 'closed' ? 'closed' : 'open';
-		this._shadow = r;
 		return r;
 	}
-	get shadowRoot() {
-		return this._shadow && this._shadow.mode === 'open' ?
-			this._shadow : null;
-	}
+	get shadowRoot() { return api.shadowRoot(this); }
+	get assignedSlot() { return assignedSlot(this); }
 	animate() {
 		return { finished: Promise.resolve(), cancel() {}, play() {},
 			pause() {}, finish() {}, onfinish: null,
@@ -2209,6 +2295,11 @@ class CSSStyleSheet {
 			this._own = t;
 		for (const el of this._adopted || [])
 			el.textContent = t;
+		for (const w of this._roots || []) {
+			const r = w.deref();
+			if (r && r._sheets.includes(this))
+				r._syncSheets();
+		}
 	}
 	insertRule(r, i) {
 		const rules = this.cssRules;
@@ -2372,9 +2463,10 @@ html('HTMLTemplateElement', ['template'], (B) => class extends B {
 	get content() { return api.content(this); }
 });
 html('HTMLSlotElement', ['slot'], (B) => class extends B {
-	assignedNodes() { return []; }
-	assignedElements() { return []; }
+	assignedNodes(o) { return assigned(this, o && o.flatten, false); }
+	assignedElements(o) { return assigned(this, o && o.flatten, true); }
 });
+reflect(HTMLSlotElement, ['name']);
 html('HTMLLabelElement', ['label'], (B) => class extends B {
 	get control() {
 		const f = api.getAttr(this, 'for');
@@ -3256,7 +3348,14 @@ function customsIn(n) {
 	if (!customSel)
 		customSel = [...customs.keys()].map(escapeIdent).join(', ') +
 			', [is]';
-	return query(n, customSel, 0);
+	return deepQuery(n, customSel);
+}
+/* query() in shadow trees too */
+function deepQuery(n, sel) {
+	const a = query(n, sel, 0);
+	for (const r of api.shadows(n))
+		a.push(...query(r, sel, 0));
+	return a;
 }
 const observed = new Map();	/* name: the attributes it observes */
 const built = new WeakSet();	/* custom elements constructed */
@@ -3275,7 +3374,7 @@ const customElements = {
 			report(e);
 		}
 		observed.set(name, new Set(Array.from(o, String)));
-		for (const el of document.querySelectorAll(name))
+		for (const el of deepQuery(document, escapeIdent(name)))
 			upgrade(el, cls);
 		const w = whenDefined.get(name);
 		if (w)
@@ -3425,7 +3524,8 @@ g.HTMLElement = HTMLElementCtor;
 api.protoFor = function (type, name, ns) {
 	switch (type) {
 	case S_DOC: return Document.prototype;
-	case S_FRAG: return DocumentFragment.prototype;
+	case S_FRAG: return name ? ShadowRoot.prototype :
+		DocumentFragment.prototype;
 	case S_DOCTYPE: return DocumentType.prototype;
 	case S_TEXT: return Text.prototype;
 	case S_COMMENT: return Comment.prototype;
@@ -3677,7 +3777,10 @@ class Document extends Node {
 		return c;
 	}
 	adoptNode(n) {
-		api.adopt(this, check(n));
+		if (check(n) instanceof ShadowRoot)
+			throw new DOMException('a shadow root goes with ' +
+				'its host', 'HierarchyRequestError');
+		api.adopt(this, n);
 		return n;
 	}
 	write(...s) { api.write(s.join('')); }

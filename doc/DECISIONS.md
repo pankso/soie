@@ -145,20 +145,67 @@ reversed, edit the entry and say why; do not leave stale rules here.
   and `document.write()` insertion points are deferred until the JS
   extension needs them; adding them will not change this function.
 - Sanitizer hooks of the spec are ignored (always null config).
-- attachShadow() returns a shadow root that is only a fragment kept
-  by its host (ShadowRoot, host, mode, shadowRoot, innerHTML): its
-  tree is not rendered, no slots, no style scoping. It threw before,
-  and that took whole pages down: every Next.js application hides its
-  route announcer in a shadow root, and React replaced the page by its
-  error screen (free.fr). A component's content stays unseen, as it
-  was. The real thing is a project of its own (doc/TODO.md).
+- Shadow DOM (2026-11-10; before, attachShadow() returned a fragment
+  that was never rendered). A shadow root is a document fragment of
+  the host's document, `u.el.shadow` on the host, `u.frag.host` on
+  the root (not `u.el.content`: clone, serialize and dump take that
+  for a template). Public: soie_attach_shadow(), soie_shadow_root(),
+  soie_shadow_host(), soie_shadow_open() (the mode lives in C, so a
+  closed root stays closed whatever happens to its wrapper) and
+  soie_shadow_css() (adopted sheets as one text). The root goes with
+  its host: freed (a root a script holds survives, without host),
+  adopted, never cloned nor serialized; adopting it alone fails.
+  node_above() (parent, else host) is "the node above" for connected
+  (lib/cascade.c, lib/script.c, the extension), the restyle marks'
+  depth and cover, the insertion cycle check and the wrappers' tree.
+- Flat tree: gen_children() of a host walks its root's children; of a
+  slot, the host's children of its name (first slot of that name in
+  tree order only), else its own (fallback). flat_parent() is the
+  parent for inheritance and for layout_touch(): a slotted node's
+  is its slot, so a change below it invalidates the kept boxes of
+  the slot's ancestors. Assignment is computed, not stored: walks of
+  the shadow tree, small in practice; a change of slots (insert,
+  remove, name) touches every slot and restyles the host's children.
+  docinfo.shadows (roots made) keeps all of this off pages without.
+- Style order: host, its shadow tree, its light children (they need
+  their slot's style). A rule keeps the shadow root of its sheet as
+  scope (a pointer only compared: the root may be gone before the
+  rules). In collect() a rule of el's own tree goes through the old
+  path; others (collect_other()) only for UA and user rules, a
+  shadow tree's :host rules on its host, ::slotted() rules on the
+  host's children, matched from their slot. Those crossing rules rank
+  under every layer (rank 0): the outer tree wins normal
+  declarations, the inner !important ones (CSS Cascade 5, context).
+  The selector matcher knows the rules' tree (selector_shadow()):
+  :host is its host, combinators step from the tree's top to the host
+  only for a compound with :host. The thread-local is read only at
+  the top of a fragment, never per compound: callgrind on a page of
+  3000 elements and 1500 rules without shadow roots counts 0.1% more
+  instructions than before (a first version, with a check per
+  compound, 3%).
+  sheet_signature() hashes a root only when it has sheets: adding
+  components keeps the parsed rules. Rules of identical adopted
+  sheets are not shared between roots: 200 Lit instances of one
+  component parse its CSS 200 times (a cache keyed by text would fix
+  it, when a page shows the cost).
+- Script side: the wrappers of a shadow tree belong to the tree of
+  its host (rehome() climbs through hosts, strengthen() enters
+  roots), so expandos on a root and its nodes live as long as the
+  host's tree. Adopted constructed sheets are kept in step through
+  WeakRefs of the roots that adopted them (a sheet shared by every
+  instance must not hold them). customElements: define(), upgrades and
+  connected/disconnected callbacks see shadow trees (api.shadows()).
+  attachShadow() takes the spec's elements only (custom elements,
+  div, span, p, section...): NotSupportedError for the others.
 - Element.removeAttributeNode(), and attributes.removeNamedItem():
   the map is a copy here, so the node taken out leaves the map it
   came from too. React empties html, head and body with "while
   (attrs.length) el.removeAttributeNode(attrs[0])", which never ends
   on a copy that stays full.
 - Declarative shadow DOM (`<template shadowrootmode>`) is not
-  implemented: such a template stays a plain template.
+  implemented in the parser: such a template stays a plain template.
+  tests/html5lib turns them into shadow roots after the parse for the
+  style and layout tests, as the parser will.
 
 ## CSS
 
@@ -220,10 +267,11 @@ reversed, edit the entry and say why; do not leave stale rules here.
   was read as unset: `div { display: revert }` was inline, `all:
   revert` took the defaults of headings and lists away.
 - Selectors: level 3, plus `:is()`, `:where()`, `:not()` with lists,
-  `:has()` and `:nth-child(An+B of S)`. Shadow DOM selectors
-  (`:host`, `::slotted()`, `::part()`) parse but never match: Tailwind
-  4 puts its theme on `:root, :host`, and an unknown pseudo-class
-  would drop the whole rule. Dynamic states (`:hover`, `:focus`...)
+  `:has()` and `:nth-child(An+B of S)`. `:host`, `:host()`,
+  `:host-context()` and `::slotted()` match in shadow trees (see
+  HTML parsing, shadow DOM); `::part()` parses but never matches:
+  Tailwind 4 puts its theme on `:root, :host`, and an unknown
+  pseudo-class would drop the whole rule. Dynamic states (`:hover`, `:focus`...)
   never match until the browser feeds element states in.
 - Media queries level 4 with range syntax and three-valued logic.
   The environment is a 1024x768 light screen unless the host says

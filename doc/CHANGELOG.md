@@ -7,6 +7,23 @@ each change are in [DECISIONS.md](DECISIONS.md).
 
 ## [Unreleased]
 
+### Added
+- Shadow DOM: shadow trees render in place of their host's children,
+  `<slot>` elements show the host's children (named, default,
+  fallback content). Their `<style>` and adopted constructed sheets
+  apply to them only, with `:host`, `:host()`, `:host-context()` and
+  `::slotted()`; the document's rules stay out. Custom elements
+  upgrade inside shadow trees. Scripts get `assignedNodes()`,
+  `assignedElements()`, `assignedSlot`, `getRootNode({ composed })`,
+  `isConnected` through hosts. Web components (Lit, Stencil...)
+  showed nothing. Library: `soie_attach_shadow()`,
+  `soie_shadow_root()`, `soie_shadow_host()`, `soie_shadow_open()`,
+  `soie_shadow_css()`.
+
+### Changed
+- `attachShadow()` throws `NotSupportedError` on elements that cannot
+  host a shadow root (`img`, `i`...), as browsers do.
+
 ## [0.1.4] - 2026-11-10
 
 ### Added

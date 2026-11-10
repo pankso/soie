@@ -14,7 +14,8 @@ var h = document.getElementById('h'), r = h.attachShadow({ mode: 'open' });
 r.appendChild(document.createElement('b'));
 o = [r instanceof ShadowRoot, r instanceof DocumentFragment, h.shadowRoot === r, r.host === h, r.mode, r.childNodes.length, r.firstChild.getRootNode() === r, h.childNodes.length];
 try { h.attachShadow({ mode: 'open' }); o.push('NO THROW'); } catch (e) { o.push(e.name); }
-o.push(document.createElement('i').attachShadow({ mode: 'closed' }).host.shadowRoot);
+o.push(document.createElement('span').attachShadow({ mode: 'closed' }).host.shadowRoot);
+try { document.createElement('i').attachShadow({ mode: 'open' }); o.push('NO THROW'); } catch (e) { o.push(e.name); }
 r.innerHTML = '<i>a</i>b'; o.push(r.innerHTML);
 console.log(o.join(' | '));
 </script>

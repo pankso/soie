@@ -79,6 +79,7 @@ struct docinfo {
 	unsigned long lstamp, lbuilt;
 	struct damage *damage;	/* soie_layout_damage() */
 	float zoom;		/* the style options', 1 */
+	int shadows;		/* shadow roots made: 0, no shadow work */
 };
 
 struct soie_node {
@@ -111,6 +112,7 @@ struct soie_node {
 			struct attr *attrs;
 			unsigned nattrs, cap;
 			struct soie_node *content;	/* <template> */
+			struct soie_node *shadow;	/* its shadow root */
 			const struct style *style;	/* computed */
 			const struct style *before, *after;
 			struct box *box;	/* its box in layout box_tree */
@@ -123,6 +125,13 @@ struct soie_node {
 		struct {
 			char *public_id, *system_id;
 		} doctype;
+		/* a document fragment: a shadow root has a host, and the
+		 * CSS of its adopted style sheets */
+		struct {
+			struct soie_node *host;
+			char *css;
+			unsigned char closed;
+		} frag;
 		/* a document's own (soie_document_new()), out of every
 		 * node's union */
 		struct docinfo *doc;
@@ -152,6 +161,27 @@ static inline int is_html(const struct soie_node *n, int tag)
 	return n->type == SOIE_ELEMENT && n->ns == SOIE_NS_HTML &&
 		n->tag == tag;
 }
+
+/* The node above n: its parent, or its host when n is a shadow root */
+static inline struct soie_node *node_above(const struct soie_node *n)
+{
+	return n->parent ? n->parent : n->type == SOIE_DOCUMENT_FRAGMENT ?
+		n->u.frag.host : NULL;
+}
+
+/* Shadow trees (dom.c). The root of n's tree when it is a shadow
+ * root, else NULL */
+struct soie_node *shadow_scope(const struct soie_node *n);
+/* What slot a light child of a host takes (its slot attribute, ""
+ * for text); NULL for nodes no slot takes */
+const char *slot_name(const struct soie_node *n);
+/* The first <slot> of shadow root s by that name */
+struct soie_node *slot_find(const struct soie_node *s, const char *name);
+/* The slot light child n is assigned to, else NULL */
+struct soie_node *slot_of(const struct soie_node *n);
+/* n's parent in the flat tree: its slot for a light child of a host
+ * (the host when it has none), the host for a shadow root's child */
+struct soie_node *flat_parent(const struct soie_node *n);
 
 void styledb_free(struct styledb *db);
 void layout_free(struct layout *l);
