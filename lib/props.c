@@ -1221,7 +1221,10 @@ static int sh_flex(struct cur *c, struct svec *out)
 	while ((v = cur_peek(c))) {
 		if (v->type == CT_NUMBER && grow.from < 0 && basis.from < 0 &&
 		    v->num != 0) {
-			try_at(P_FLEX_GROW, c, &grow);
+			/* a negative number is no flex-grow: invalid (it was
+			 * not taken, and asked again for ever) */
+			if (!try_at(P_FLEX_GROW, c, &grow))
+				return 0;
 			if ((v = cur_peek(c)) && v->type == CT_NUMBER)
 				try_at(P_FLEX_SHRINK, c, &shrink);
 		} else if (v->type == CT_NUMBER && grow.from < 0) {

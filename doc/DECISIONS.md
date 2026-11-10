@@ -2332,6 +2332,27 @@ true for a page's resources:
 - Checked sound: image decoders (fuzzed, no crash), HTTP framing,
   cookies, CORS, TLS verification, download names.
 
+A third pass (November 2026, 4,900 generated pages of hostile CSS
+values, each finding kept as a minimal page) found one memory error
+and loops that never ended, all from sizes no page means:
+
+- A page coordinate becomes a pixel index through ifloor() and
+  iceil() (paint.h), which bound it first: a box ten billion pixels
+  away does not fit an int, the conversion is undefined, and gave
+  clips wider than the canvas (a 6 px gradient tiled 100,000 times
+  each way). Tiles are counted in doubles and never past the clip.
+- Dashes and dots are walked in doubles and from the first one the
+  clip shows: at 1e10 px a float no longer moves by one dash, so the
+  loop stood still; before that, the whole side was painted dash by
+  dash.
+- paint_borders() read sd[-1] when no side had a width (the memory
+  error).
+- `flex: -1` was taken as a grow factor and the lines never
+  resolved: a negative number makes the declaration invalid.
+- Grid lines are clamped to 10,000 (as the specification allows) and
+  the track table stops growing there; text over 2,000 px is not
+  rasterized; a blur over 300 px is drawn at 300.
+
 Found while about:settings was attacked (October 2026, hostile pages
 over HTTP, real clicks, each test run again with the guard off to
 check it fails then):

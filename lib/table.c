@@ -144,7 +144,7 @@ struct tgrid {
 	struct box **rows;
 	int nrows;
 	struct tcell *cells;
-	int ncells;
+	int ncells, capcells;
 	int ncols;
 	float *cmin, *cmax, *cw, *cpct;
 	char *cfix;		/* column with a fixed width */
@@ -227,8 +227,11 @@ static void build_grid(struct box *t, struct tgrid *g)
 			for (k = r; k < r + rs; k++)
 				for (j = col; j < col + cs; j++)
 					occ[k * 1024 + j] = 1;
-			g->cells = xrealloc(g->cells, (size_t)(g->ncells + 1) *
-				sizeof(*g->cells));
+			if (g->ncells == g->capcells) {
+				g->capcells = g->capcells ? g->capcells * 2 : 64;
+				g->cells = xrealloc(g->cells,
+					(size_t)g->capcells * sizeof(*g->cells));
+			}
 			tc = &g->cells[g->ncells++];
 			tc->box = cell;
 			tc->row = r;

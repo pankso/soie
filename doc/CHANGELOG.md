@@ -113,6 +113,9 @@ each change are in [DECISIONS.md](DECISIONS.md).
   rule of more than 32767 selectors; endless loops and memory blow-ups
   on huge background positions, shadow blurs, `var()` chains, `<use>`
   trees, roman list markers and long descendant selectors.
+- Sizes no page means (boxes of 1e10 px, `flex: -1`, grid lines in
+  the millions, giant SVG text) froze the painter or the layout, and
+  one read a byte before an array: found by fuzzing, all bounded.
 
 ## [0.1.3] - 2026-11-04
 

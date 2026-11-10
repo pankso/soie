@@ -20,8 +20,8 @@ soie_node *paint_doc;
 static void clip_to(struct canvas *c, float x0, float y0, float x1,
 	float y1)
 {
-	int a = (int)floorf(x0 - c->ox), b = (int)floorf(y0 - c->oy);
-	int d = (int)ceilf(x1 - c->ox), e = (int)ceilf(y1 - c->oy);
+	int a = ifloor(x0 - c->ox), b = ifloor(y0 - c->oy);
+	int d = iceil(x1 - c->ox), e = iceil(y1 - c->oy);
 
 	if (x1 <= x0 || y1 <= y0) {
 		c->cx1 = c->cx0;	/* empty, not a pixel wide */
@@ -209,10 +209,10 @@ void fill_rect(struct canvas *c, float x, float y, float w, float h,
 
 	if (w <= 0 || h <= 0 || !rgba[3])
 		return;
-	ix0 = (int)floorf(x0);
-	iy0 = (int)floorf(y0);
-	ix1 = (int)ceilf(x1);
-	iy1 = (int)ceilf(y1);
+	ix0 = ifloor(x0);
+	iy0 = ifloor(y0);
+	ix1 = iceil(x1);
+	iy1 = iceil(y1);
 	if (ix0 < c->cx0)
 		ix0 = c->cx0;
 	if (iy0 < c->cy0)
@@ -222,10 +222,10 @@ void fill_rect(struct canvas *c, float x, float y, float w, float h,
 	if (iy1 > c->cy1)
 		iy1 = c->cy1;
 	/* the pixels inside the edges, filled by rows when solid */
-	fx0 = (int)ceilf(x0) > ix0 ? (int)ceilf(x0) : ix0;
-	fx1 = (int)floorf(x1) < ix1 ? (int)floorf(x1) : ix1;
-	fy0 = (int)ceilf(y0);
-	fy1 = solid(c, rgba) && fx0 < fx1 ? (int)floorf(y1) : fy0;
+	fx0 = iceil(x0) > ix0 ? iceil(x0) : ix0;
+	fx1 = ifloor(x1) < ix1 ? ifloor(x1) : ix1;
+	fy0 = iceil(y0);
+	fy1 = solid(c, rgba) && fx0 < fx1 ? ifloor(y1) : fy0;
 	for (j = iy0; j < iy1; j++) {
 		float cy = fminf(y1, (float)j + 1) - fmaxf(y0, (float)j);
 
@@ -354,10 +354,10 @@ static void fill_rrect(struct canvas *c, float x, float y, float w, float h,
 
 	if (w <= 0 || h <= 0 || !rgba[3])
 		return;
-	i0 = (int)floorf(x - c->ox);
-	j0 = (int)floorf(y - c->oy);
-	i1 = (int)ceilf(x + w - c->ox);
-	j1 = (int)ceilf(y + h - c->oy);
+	i0 = ifloor(x - c->ox);
+	j0 = ifloor(y - c->oy);
+	i1 = iceil(x + w - c->ox);
+	j1 = iceil(y + h - c->oy);
 	if (i0 < c->cx0)
 		i0 = c->cx0;
 	if (j0 < c->cy0)
@@ -371,11 +371,11 @@ static void fill_rrect(struct canvas *c, float x, float y, float w, float h,
 	if (solid(c, rgba) && (iw <= 0 || ih <= 0)) {
 		float top = fmaxf(r[4], r[5]), bottom = fmaxf(r[6], r[7]);
 
-		f0 = (int)ceilf(x - c->ox) > i0 ? (int)ceilf(x - c->ox) : i0;
-		f1 = (int)floorf(x + w - c->ox) < i1 ?
-			(int)floorf(x + w - c->ox) : i1;
-		g0 = (int)ceilf(y + top - c->oy);
-		g1 = f0 < f1 ? (int)floorf(y + h - bottom - c->oy) : g0;
+		f0 = iceil(x - c->ox) > i0 ? iceil(x - c->ox) : i0;
+		f1 = ifloor(x + w - c->ox) < i1 ?
+			ifloor(x + w - c->ox) : i1;
+		g0 = iceil(y + top - c->oy);
+		g1 = f0 < f1 ? ifloor(y + h - bottom - c->oy) : g0;
 	}
 	for (j = j0; j < j1; j++)
 		for (i = i0; i < i1; i++) {
@@ -520,7 +520,9 @@ static void draw_text(struct canvas *c, const struct style *st,
 		rgba[0] = rgba[1] = rgba[2] = 0;
 		rgba[3] = 255;
 	}
-	if (!rgba[3] || kw(st, P_VISIBILITY, "hidden"))
+	/* nor glyphs of thousands of pixels (an SVG's text under a huge
+	 * scale: gigabytes of bitmaps) */
+	if (!rgba[3] || kw(st, P_VISIBILITY, "hidden") || em > 2000)
 		return;
 	n = text_shape(st, s, len, &gs);
 	for (k = 0; k < n; k++) {
@@ -545,8 +547,8 @@ static void draw_text(struct canvas *c, const struct style *st,
 
 			if (!b)
 				continue;
-			x0 = (int)floorf(gx - c->ox + 0.5f) + b->left;
-			y0 = (int)floorf(base + g->y - c->oy + 0.5f) - b->top;
+			x0 = ifloor(gx - c->ox + 0.5f) + b->left;
+			y0 = ifloor(base + g->y - c->oy + 0.5f) - b->top;
 			for (j = 0; j < b->h; j++)
 				for (i = 0; i < b->w; i++) {
 					int cov = b->bits[j * b->pitch + i];
@@ -636,13 +638,32 @@ static void border_side(struct canvas *c, const struct box *b, int side,
 	dash = kw(st, sty[side], "dotted") ? w : w * 3;
 	gap = dash;
 	len = horiz ? sw : sh;
-	for (pos = 0; pos < len; pos += dash + gap) {
-		float d = pos + dash > len ? len - pos : dash;
+	/* from the first dash the clip shows to the last: a side of
+	 * 1e10 px was painted dash by dash, all of it. In doubles: that
+	 * far a float no longer moves by one dash, and the loop never
+	 * ended */
+	{
+		double step = (double)dash + gap, at;
+		double lo = horiz ? (double)c->ox + c->cx0 - x :
+			(double)c->oy + c->cy0 - y;
+		double hi = horiz ? (double)c->ox + c->cx1 - x :
+			(double)c->oy + c->cy1 - y;
+		double end = len;
 
-		if (horiz)
-			fill_rect(c, x + pos, y, d, sh, rgba);
-		else
-			fill_rect(c, x, y + pos, sw, d, rgba);
+		if (step <= 0)
+			return;
+		at = lo > 0 ? floor(lo / step) * step : 0;
+		if (hi < end)
+			end = hi;
+		for (; at < end; at += step) {
+			float d = at + dash > len ? (float)(len - at) : dash;
+
+			pos = (float)at;
+			if (horiz)
+				fill_rect(c, x + pos, y, d, sh, rgba);
+			else
+				fill_rect(c, x, y + pos, sw, d, rgba);
+		}
 	}
 }
 
@@ -733,10 +754,10 @@ static void paint_ring(struct canvas *c, const struct box *b, float x,
 	cr = fmaxf(b->b[1], fmaxf(r[1], r[2]));
 	ct = fmaxf(b->b[0], fmaxf(r[4], r[5]));
 	cb = fmaxf(b->b[2], fmaxf(r[6], r[7]));
-	i0 = (int)floorf(x - c->ox);
-	i1 = (int)ceilf(x1 - c->ox);
-	j0 = (int)floorf(y - c->oy);
-	j1 = (int)ceilf(y1 - c->oy);
+	i0 = ifloor(x - c->ox);
+	i1 = iceil(x1 - c->ox);
+	j0 = ifloor(y - c->oy);
+	j1 = iceil(y1 - c->oy);
 	if (i0 < c->cx0)
 		i0 = c->cx0;
 	if (i1 > c->cx1)
@@ -755,7 +776,7 @@ static void paint_ring(struct canvas *c, const struct box *b, float x,
 
 			/* between the side bands: nothing to paint */
 			if (!band && px >= x + cl && px + 1 <= x1 - cr) {
-				int to = (int)floorf(x1 - cr - c->ox) - 1;
+				int to = ifloor(x1 - cr - c->ox) - 1;
 
 				if (to > i)
 					i = to;
@@ -847,10 +868,10 @@ static int round_push(struct canvas *c, float x, float y, float w, float h,
 
 	if (!r[0] && !r[1] && !r[2] && !r[3])
 		return 0;
-	x0 = (int)floorf(x - c->ox);
-	y0 = (int)floorf(y - c->oy);
-	x1 = (int)ceilf(x + w - c->ox);
-	y1 = (int)ceilf(y + h - c->oy);
+	x0 = ifloor(x - c->ox);
+	y0 = ifloor(y - c->oy);
+	x1 = iceil(x + w - c->ox);
+	y1 = iceil(y + h - c->oy);
 	x0 = x0 < c->cx0 ? c->cx0 : x0;
 	y0 = y0 < c->cy0 ? c->cy0 : y0;
 	x1 = x1 > c->cx1 ? c->cx1 : x1;
@@ -922,8 +943,8 @@ static int text_mask_push(struct canvas *c, const struct box *b,
 	float x = b->x - b->p[3] - b->b[3], y = b->y - b->p[0] - b->b[0];
 	float w = b->w + b->p[1] + b->p[3] + b->b[1] + b->b[3];
 	float h = b->h + b->p[0] + b->p[2] + b->b[0] + b->b[2];
-	int x0 = (int)floorf(x - c->ox), y0 = (int)floorf(y - c->oy);
-	int x1 = (int)ceilf(x + w - c->ox), y1 = (int)ceilf(y + h - c->oy);
+	int x0 = ifloor(x - c->ox), y0 = ifloor(y - c->oy);
+	int x1 = iceil(x + w - c->ox), y1 = iceil(y + h - c->oy);
 	unsigned char *m;
 	int i, j;
 
@@ -1042,6 +1063,8 @@ static void paint_borders(struct canvas *c, const struct box *b, float x,
 			same = 0;
 		k = i;
 	}
+	if (k < 0)
+		return;		/* no side has a width (one of 1e10px: NaN) */
 	if (same && sd[k].kind != 'o' && !r[0] && !r[1] && !r[2] && !r[3]) {
 		for (i = 0; i < 4; i++)
 			border_side(c, b, i, x, y, w, h);
@@ -1219,7 +1242,7 @@ static void paint_shadow(struct canvas *c, const struct shadow *s,
 	float py, float pw, float ph, const float *pr)
 {
 	float sx, sy, sw, sh, sr[8];
-	int d = (int)floorf(s->blur / 2 * 1.87997f + 0.5f);
+	int d = ifloor(s->blur / 2 * 1.87997f + 0.5f);
 	int m = d < 2 ? 0 : (d * 3 + 1) / 2 + 1;
 	int i, j, i0, j0, i1, j1, b0, c0, b1, c1, bw, bh;
 	unsigned char *buf, *t;
@@ -1232,10 +1255,10 @@ static void paint_shadow(struct canvas *c, const struct shadow *s,
 		for (i = 0; i < 8; i++)
 			sr[i] = spread_r(pr[i], -s->spread);
 		/* painted: the padding box */
-		i0 = (int)floorf(px - c->ox);
-		j0 = (int)floorf(py - c->oy);
-		i1 = (int)ceilf(px + pw - c->ox);
-		j1 = (int)ceilf(py + ph - c->oy);
+		i0 = ifloor(px - c->ox);
+		j0 = ifloor(py - c->oy);
+		i1 = iceil(px + pw - c->ox);
+		j1 = iceil(py + ph - c->oy);
 	} else {
 		sx = x + s->x - s->spread;
 		sy = y + s->y - s->spread;
@@ -1246,10 +1269,10 @@ static void paint_shadow(struct canvas *c, const struct shadow *s,
 		for (i = 0; i < 8; i++)
 			sr[i] = spread_r(r[i], s->spread);
 		/* painted: the shape and its blur */
-		i0 = (int)floorf(sx - c->ox) - m;
-		j0 = (int)floorf(sy - c->oy) - m;
-		i1 = (int)ceilf(sx + sw - c->ox) + m;
-		j1 = (int)ceilf(sy + sh - c->oy) + m;
+		i0 = ifloor(sx - c->ox) - m;
+		j0 = ifloor(sy - c->oy) - m;
+		i1 = iceil(sx + sw - c->ox) + m;
+		j1 = iceil(sy + sh - c->oy) + m;
 	}
 	if (sw < 0)
 		sw = 0;
@@ -1587,10 +1610,10 @@ static int mask_push(struct canvas *c, const struct box *b,
 	y = b->y - b->p[0] - b->b[0];
 	w = b->w + b->p[1] + b->p[3] + b->b[1] + b->b[3];
 	h = b->h + b->p[0] + b->p[2] + b->b[0] + b->b[2];
-	x0 = (int)floorf(x - c->ox);
-	y0 = (int)floorf(y - c->oy);
-	x1 = (int)ceilf(x + w - c->ox);
-	y1 = (int)ceilf(y + h - c->oy);
+	x0 = ifloor(x - c->ox);
+	y0 = ifloor(y - c->oy);
+	x1 = iceil(x + w - c->ox);
+	y1 = iceil(y + h - c->oy);
 	x0 = x0 < c->cx0 ? c->cx0 : x0;
 	y0 = y0 < c->cy0 ? c->cy0 : y0;
 	x1 = x1 > c->cx1 ? c->cx1 : x1;
@@ -1885,10 +1908,10 @@ static int paint_transformed(struct canvas *c, struct box *b, const float *m)
 		if (qy > by1)
 			by1 = qy;
 	}
-	x0 = (int)floorf(bx0 - c->ox);
-	y0 = (int)floorf(by0 - c->oy);
-	x1 = (int)ceilf(bx1 - c->ox);
-	y1 = (int)ceilf(by1 - c->oy);
+	x0 = ifloor(bx0 - c->ox);
+	y0 = ifloor(by0 - c->oy);
+	x1 = iceil(bx1 - c->ox);
+	y1 = iceil(by1 - c->oy);
 	if (x0 < c->cx0)
 		x0 = c->cx0;
 	if (y0 < c->cy0)
@@ -1903,7 +1926,7 @@ static int paint_transformed(struct canvas *c, struct box *b, const float *m)
 			float py = (float)j + c->oy + 0.5f;
 			float sx = inv[0] * px + inv[2] * py + inv[4] - t.ox - 0.5f;
 			float sy = inv[1] * px + inv[3] * py + inv[5] - t.oy - 0.5f;
-			int ix = (int)floorf(sx), iy = (int)floorf(sy);
+			int ix = ifloor(sx), iy = ifloor(sy);
 			float fx = sx - (float)ix, fy = sy - (float)iy, f;
 			float o[4] = { 0, 0, 0, 0 };
 			unsigned char *d;

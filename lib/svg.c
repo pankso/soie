@@ -178,7 +178,7 @@ static void poly_fill(struct canvas *c, struct poly *p, int evenodd,
 	xs = xmalloc((size_t)p->n * sizeof(*xs));
 	if (!acc)
 		abort();
-	for (y = (int)floorf(ymin); y < (int)ceilf(ymax); y++) {
+	for (y = ifloor(ymin); y < iceil(ymax); y++) {
 		int any = 0;
 
 		for (s = 0; s < 4; s++) {
@@ -215,7 +215,7 @@ static void poly_fill(struct canvas *c, struct poly *p, int evenodd,
 					continue;
 				/* span [a, b) with fractional ends */
 				{
-					int ia = (int)floorf(a), ib = (int)floorf(b);
+					int ia = ifloor(a), ib = ifloor(b);
 
 					if (ia == ib) {
 						acc[ia] += (b - a) / 4;
@@ -505,7 +505,7 @@ static void pb_cubic(struct pb *b, float x1, float y1, float x2, float y2,
 	int i, n = 16;
 
 	if (m > n)
-		n = m < PB_MAX ? (int)ceilf(m) : PB_MAX;
+		n = m < PB_MAX ? iceil(m) : PB_MAX;
 
 	for (i = 1; i <= n; i++) {
 		float t = (float)i / (float)n, u = 1 - t;
@@ -568,7 +568,7 @@ static void pb_arc(struct pb *b, float rx, float ry, float rot, int large,
 			a = 2 * acosf(1 - PB_TOL / r);
 			a = fabsf(dt) / a;
 			if (a > n)
-				n = a < PB_MAX ? (int)ceilf(a) : PB_MAX;
+				n = a < PB_MAX ? iceil(a) : PB_MAX;
 		}
 	}
 	for (i = 1; i <= n; i++) {
@@ -1595,10 +1595,10 @@ static void nested(struct canvas *c, const soie_node *el, struct mat m,
 
 		tx(&m, x, y, &ax, &ay);
 		tx(&m, x + w, y + h, &bx, &by);
-		i0 = (int)floorf(ax < bx ? ax : bx);
-		j0 = (int)floorf(ay < by ? ay : by);
-		i1 = (int)ceilf(ax < bx ? bx : ax);
-		j1 = (int)ceilf(ay < by ? by : ay);
+		i0 = ifloor(ax < bx ? ax : bx);
+		j0 = ifloor(ay < by ? ay : by);
+		i1 = iceil(ax < bx ? bx : ax);
+		j1 = iceil(ay < by ? by : ay);
 		if (i0 > c->cx0)
 			c->cx0 = i0;
 		if (j0 > c->cy0)

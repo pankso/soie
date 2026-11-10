@@ -607,10 +607,10 @@ void draw_image(struct canvas *c, const struct image *im, float x, float y,
 	}
 	if (!im->w || !im->h)
 		return;
-	i0 = (int)floorf(x - c->ox);
-	j0 = (int)floorf(y - c->oy);
-	i1 = (int)ceilf(x + w - c->ox);
-	j1 = (int)ceilf(y + h - c->oy);
+	i0 = ifloor(x - c->ox);
+	j0 = ifloor(y - c->oy);
+	i1 = iceil(x + w - c->ox);
+	j1 = iceil(y + h - c->oy);
 	if (i0 < c->cx0)
 		i0 = c->cx0;
 	if (j0 < c->cy0)
@@ -623,7 +623,7 @@ void draw_image(struct canvas *c, const struct image *im, float x, float y,
 		return;
 	for (j = j0; j < j1; j++) {
 		float sy = ((float)j + c->oy + 0.5f - y) * (float)im->h / h - 0.5f;
-		int y0 = (int)floorf(sy), y1 = y0 + 1;
+		int y0 = ifloor(sy), y1 = y0 + 1;
 		float fy = sy - (float)y0;
 
 		/* the edges' neighbours: a shrunk image's first row maps
@@ -633,7 +633,7 @@ void draw_image(struct canvas *c, const struct image *im, float x, float y,
 		for (i = i0; i < i1; i++) {
 			float sx = ((float)i + c->ox + 0.5f - x) * (float)im->w /
 				w - 0.5f;
-			int x0 = (int)floorf(sx), x1 = x0 + 1, k;
+			int x0 = ifloor(sx), x1 = x0 + 1, k;
 			float fx = sx - (float)x0;
 			unsigned char o[4];
 			const unsigned char *a, *b, *cc, *d;
@@ -682,16 +682,16 @@ void draw_fitted(struct canvas *c, const struct box *b,
 		iw = w;		/* fill */
 		ih = h;
 	}
-	a = (int)floorf(x - c->ox);
-	bb = (int)floorf(y - c->oy);
+	a = ifloor(x - c->ox);
+	bb = ifloor(y - c->oy);
 	if (a > c->cx0)
 		c->cx0 = a;
 	if (bb > c->cy0)
 		c->cy0 = bb;
-	if ((int)ceilf(x + w - c->ox) < c->cx1)
-		c->cx1 = (int)ceilf(x + w - c->ox);
-	if ((int)ceilf(y + h - c->oy) < c->cy1)
-		c->cy1 = (int)ceilf(y + h - c->oy);
+	if (iceil(x + w - c->ox) < c->cx1)
+		c->cx1 = iceil(x + w - c->ox);
+	if (iceil(y + h - c->oy) < c->cy1)
+		c->cy1 = iceil(y + h - c->oy);
 	draw_image(c, im, x + (w - iw) / 2, y + (h - ih) / 2, iw, ih, cur,
 		st);
 	c->cx0 = cx0;
@@ -1298,9 +1298,9 @@ static int gradient_parse(const struct cv *f, const struct style *st,
 static void gradient_draw(struct canvas *c, const struct gradient *g,
 	float x, float y, float w, float h)
 {
-	int i0 = (int)floorf(x - c->ox + 0.5f), i1 = (int)floorf(x + w -
+	int i0 = ifloor(x - c->ox + 0.5f), i1 = ifloor(x + w -
 		c->ox + 0.5f);
-	int j0 = (int)floorf(y - c->oy + 0.5f), j1 = (int)floorf(y + h -
+	int j0 = ifloor(y - c->oy + 0.5f), j1 = ifloor(y + h -
 		c->oy + 0.5f);
 	float half = g->len / 2;
 	int i, j;
@@ -1408,26 +1408,33 @@ static void box_of(const struct box *b, const struct cv *v, int padding,
 static int tiles(int mode, float a, float as, float ts, float off, float c0,
 	float c1, float *first, float *gap)
 {
-	float p = a + off, n;
+	double p = (double)a + off, n, step;
 
 	*gap = 0;
-	*first = p;
+	*first = (float)p;
 	if (mode == 'n' || ts <= 0)
 		return 1;
 	if (mode == 's') {
-		int k = (int)floorf(as / ts + 0.001f);
+		int k = ifloor(as / ts + 0.001f);
 
 		if (k < 2)	/* one tile: where the position says */
 			return 1;
 		*gap = (as - (float)k * ts) / (float)(k - 1);
 		p = a;
 	}
-	/* back to the first tile that reaches c0, without counting */
-	n = ceilf((p - c0) / (ts + *gap));
-	p -= n * (ts + *gap);
-	*first = p;
-	n = ceilf((c1 - p) / (ts + *gap));
-	return n < 1 ? 1 : n > 100000 ? 100000 : (int)n;
+	/* back to the first tile that reaches c0, without counting; in
+	 * doubles: ten billion pixels away a float no longer tells one
+	 * tile from the next, and the tiles ran over the whole distance */
+	step = (double)ts + *gap;
+	n = ceil((p - c0) / step);
+	p -= n * step;
+	*first = (float)p;
+	n = ceil((c1 - p) / step);
+	if (!(n >= 1))
+		return 1;
+	/* no more than what is painted can hold */
+	step = (c1 - c0) / step + 2;
+	return n > step ? (int)step : n > 100000 ? 100000 : (int)n;
 }
 
 /*
@@ -1598,16 +1605,22 @@ static void paint_layers(struct canvas *c, const struct box *b, int img_p,
 			kw_ = (float)(cx1 - cx0);
 			kh = (float)(cy1 - cy0);
 		} else {
-			/* clip to its box */
-			int a0 = (int)floorf(kx - c->ox + 0.5f);
-			int b0 = (int)floorf(ky - c->oy + 0.5f);
-			int a1 = (int)floorf(kx + kw_ - c->ox + 0.5f);
-			int b1 = (int)floorf(ky + kh - c->oy + 0.5f);
+			/* clip to its box: bounded as floats first, a box ten
+			 * billion pixels away does not fit an int (its tiles
+			 * were then painted all the way to it) */
+			float fa0 = floorf(kx - c->ox + 0.5f);
+			float fb0 = floorf(ky - c->oy + 0.5f);
+			float fa1 = floorf(kx + kw_ - c->ox + 0.5f);
+			float fb1 = floorf(ky + kh - c->oy + 0.5f);
 
-			c->cx0 = a0 > cx0 ? a0 : cx0;
-			c->cy0 = b0 > cy0 ? b0 : cy0;
-			c->cx1 = a1 < cx1 ? a1 : cx1;
-			c->cy1 = b1 < cy1 ? b1 : cy1;
+			c->cx0 = fa0 > (float)cx0 ? fa0 >= (float)cx1 ? cx1 :
+				(int)fa0 : cx0;
+			c->cy0 = fb0 > (float)cy0 ? fb0 >= (float)cy1 ? cy1 :
+				(int)fb0 : cy0;
+			c->cx1 = fa1 < (float)cx1 ? fa1 <= (float)cx0 ? cx0 :
+				(int)fa1 : cx1;
+			c->cy1 = fb1 < (float)cy1 ? fb1 <= (float)cy0 ? cy0 :
+				(int)fb1 : cy1;
 			/* and what is painted of it, for the tiles to walk */
 			kx = c->ox + (float)c->cx0;
 			ky = c->oy + (float)c->cy0;

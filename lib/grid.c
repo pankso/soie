@@ -34,7 +34,7 @@ struct track {
 
 struct tracks {
 	struct track *t;
-	int n;
+	int n, cap;
 	char **names;		/* line names, "a b " per line */
 };
 
@@ -104,12 +104,18 @@ static void add_track(struct tracks *t, struct tsize mn, struct tsize mx)
 {
 	int fresh = !t->names;	/* else line 0 may have names already */
 
-	t->t = xrealloc(t->t, (size_t)(t->n + 1) * sizeof(*t->t));
+	/* room by doubling: ten thousand implicit tracks one by one were
+	 * as many copies of them all */
+	if (t->n + 2 > t->cap) {
+		t->cap = t->cap ? t->cap * 2 : 8;
+		t->t = xrealloc(t->t, (size_t)t->cap * sizeof(*t->t));
+		t->names = xrealloc(t->names, (size_t)t->cap *
+			sizeof(*t->names));
+	}
 	memset(&t->t[t->n], 0, sizeof(*t->t));
 	t->t[t->n].min = mn;
 	t->t[t->n].max = mx;
 	t->n++;
-	t->names = xrealloc(t->names, (size_t)(t->n + 1) * sizeof(*t->names));
 	t->names[t->n] = NULL;
 	if (fresh)
 		t->names[0] = NULL;

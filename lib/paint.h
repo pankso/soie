@@ -9,6 +9,7 @@
 #ifndef SOIE_PAINT_H
 #define SOIE_PAINT_H
 
+#include <math.h>
 #include "layout.h"
 
 struct canvas {
@@ -33,6 +34,21 @@ static inline int mask_at(const struct canvas *c, int x, int y)
 		return 0;
 	return c->mask[(size_t)(y - c->my0) * (size_t)(c->mx1 - c->mx0) +
 		(size_t)(x - c->mx0)];
+}
+
+/* A page coordinate as a pixel index: bounded first, a box ten
+ * billion pixels away does not fit an int (the conversion is then
+ * undefined, and gave clips larger than the canvas) */
+static inline int ifloor(float v)
+{
+	return v < -1e9f ? -1000000000 : v > 1e9f ? 1000000000 :
+		(int)floorf(v);
+}
+
+static inline int iceil(float v)
+{
+	return v < -1e9f ? -1000000000 : v > 1e9f ? 1000000000 :
+		(int)ceilf(v);
 }
 
 extern soie_node *paint_doc;
