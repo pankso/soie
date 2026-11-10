@@ -130,7 +130,8 @@ static int is_replaced(const soie_node *n)
 		return 1;
 	}
 	return !strcmp(n->name, "video") || !strcmp(n->name, "canvas") ||
-		!strcmp(n->name, "audio");
+		!strcmp(n->name, "audio") || !strcmp(n->name, "progress") ||
+		!strcmp(n->name, "meter");
 }
 
 static float attr_num(const soie_node *n, const char *name, float dflt)
@@ -180,16 +181,71 @@ static void intrinsic(struct box *b, const soie_node *n)
 					ascii_ieq(t, "submit") ? "Submit" : "";
 			b->iw = text_width(b->style, v, strlen(v));
 			b->ih = fm.normal_lh;
+		} else if (t && ascii_ieq(t, "range")) {
+			b->iw = 160 * z;
+			b->ih = 20 * z;
+		} else if (t && ascii_ieq(t, "color")) {
+			b->iw = 52 * z;
+			b->ih = 20 * z;
+		} else if (t && ascii_ieq(t, "file")) {
+			static const char label[] =
+				"Browse\xe2\x80\xa6  No file selected.";
+
+			b->iw = text_width(b->style, label, sizeof(label) - 1) +
+				10 * z;
+			b->ih = fm.normal_lh + 4 * z;
 		} else {
-			b->iw = attr_num(n, "size", 20) * em * 0.5f;
+			/* size characters as wide as a 0, and one em, as
+			 * Firefox: 191 px for 20 at 13.33 px */
+			b->iw = attr_num(n, "size", 20) * text_width(b->style,
+				"0", 1) + em;
 			b->ih = fm.normal_lh;
 		}
 	} else if (n->ns == SOIE_NS_HTML && n->tag == TAG_TEXTAREA) {
-		b->iw = attr_num(n, "cols", 20) * em * 0.5f + 4;
-		b->ih = attr_num(n, "rows", 2) * em * 1.25f + 2;
+		struct fontm fm;
+
+		font_metrics(b->style, &fm);
+		b->iw = attr_num(n, "cols", 20) * text_width(b->style, "0", 1) +
+			12 * z;
+		b->ih = attr_num(n, "rows", 2) * fm.normal_lh;
 	} else if (n->ns == SOIE_NS_HTML && n->tag == TAG_SELECT) {
-		b->iw = em * 5;
-		b->ih = em * 1.25f + 2;
+		/* as wide as its widest option, and its arrow; a list box
+		 * (multiple, size) shows that many rows */
+		struct fontm fm;
+		const soie_node *o = n->first;
+		float mw = 0;
+		int rows = (int)attr_num(n, "size", soie_element_get_attr(n,
+			"multiple") ? 4 : 1);
+
+		font_metrics(b->style, &fm);
+		while (o && o != n) {
+			if (is_html(o, TAG_OPTION)) {
+				const soie_node *t;
+				float w = 0;
+
+				for (t = o->first; t; t = t->next)
+					if (t->type == SOIE_TEXT)
+						w += text_width(b->style,
+							t->u.text.data, t->u.text.len);
+				if (w > mw)
+					mw = w;
+			}
+			if (o->first && !is_html(o, TAG_OPTION)) {
+				o = o->first;
+				continue;
+			}
+			while (o != n && !o->next)
+				o = o->parent;
+			if (o != n)
+				o = o->next;
+		}
+		b->iw = mw + (rows > 1 ? 20 : 18) * z;
+		b->ih = rows > 1 ? (float)(rows > 100 ? 100 : rows) *
+			(fm.normal_lh + 4 * z) : fm.normal_lh;
+	} else if (n->ns == SOIE_NS_HTML && (!strcmp(n->name, "progress") ||
+		   !strcmp(n->name, "meter"))) {
+		b->iw = (n->name[0] == 'p' ? 160 : 80) * z;
+		b->ih = 16 * z;
 	} else if (n->ns == SOIE_NS_HTML && !strcmp(n->name, "audio")) {
 		b->iw = 300 * z;
 		b->ih = 54 * z;

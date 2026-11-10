@@ -109,6 +109,33 @@ static int control(const struct box *b)
 		n->tag == TAG_BUTTON);
 }
 
+/* A form control whose border is still the user agent's: 2 px inset
+ * or outset all around, no radius, no image */
+static int native_control(const struct box *b)
+{
+	static const int bs[4] = { P_BORDER_TOP_STYLE, P_BORDER_RIGHT_STYLE,
+		P_BORDER_BOTTOM_STYLE, P_BORDER_LEFT_STYLE };
+	static const int br[4] = { P_BORDER_TOP_LEFT_RADIUS,
+		P_BORDER_TOP_RIGHT_RADIUS, P_BORDER_BOTTOM_RIGHT_RADIUS,
+		P_BORDER_BOTTOM_LEFT_RADIUS };
+	const struct style *st = b->style;
+	const char *im;
+	int i, inset;
+
+	if (!control(b) || !st)
+		return 0;
+	inset = kw(st, P_BORDER_TOP_STYLE, "inset");
+	if (!inset && !kw(st, P_BORDER_TOP_STYLE, "outset"))
+		return 0;
+	for (i = 0; i < 4; i++)
+		if (!kw(st, bs[i], inset ? "inset" : "outset") ||
+		    b->b[i] != b->b[0] || b->b[i] < 2 || b->b[i] > 3 ||
+		    st->v[br[i]].u.len.px || st->v[br[i]].u.len.pct)
+			return 0;
+	im = st->v[P_BACKGROUND_IMAGE].u.str;
+	return !im || !strcmp(im, "none");
+}
+
 /* What clips b's content: overflow (to its padding box) and clip */
 static void content_clip(struct canvas *c, const struct box *b)
 {
@@ -1294,6 +1321,21 @@ static void paint_decor(struct canvas *c, const struct box *b, float x,
 
 	if (text_mask_pass)
 		return;
+	if (native_control(b)) {
+		/* a control left with the style sheet's own border: as
+		 * browsers draw it, a thin rounded ring, not the 2 px inset
+		 * or outset bevel its computed style says */
+		static const unsigned char ring[4] = { 143, 143, 157, 255 };
+		unsigned char bg[4];
+
+		snap(c, &sx, &sy, &sw, &shh);
+		style_rgba(b->style, P_BACKGROUND_COLOR, bg);
+		if (!bg[3])
+			bg[0] = bg[1] = bg[2] = bg[3] = 255;
+		fill_round(c, sx, sy, sw, shh, 4, ring);
+		fill_round(c, sx + 1, sy + 1, sw - 2, shh - 2, 3, bg);
+		return;
+	}
 
 	if (n) {
 		snap(c, &sx, &sy, &sw, &shh);

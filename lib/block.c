@@ -894,7 +894,8 @@ static int has_ratio(const struct box *b)
 		return t && ascii_ieq(t, "image");
 	}
 	return strcmp(n->name, "textarea") && strcmp(n->name, "select") &&
-		strcmp(n->name, "audio") && strcmp(n->name, "iframe");
+		strcmp(n->name, "audio") && strcmp(n->name, "iframe") &&
+		strcmp(n->name, "progress") && strcmp(n->name, "meter");
 }
 
 /*

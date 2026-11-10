@@ -134,8 +134,8 @@ width=200
 | block <html> 0,0 200x40
 |   block <body> 0,0 200x40
 |     block <div> 0,0 200x40
-|       replaced <input> 0,0 133.3333x40
-|       replaced <img> 133.3333,0 20x10
+|       replaced <input> 0,0 146.6667x40
+|       replaced <img> 146.6667,0 20x10
 
 #data
 <!DOCTYPE html><body style="margin:0"><div style="display:flex;height:80px"><div style="width:50px"><div id=a style="height:50%;background:red"></div></div><div style="width:50px;height:20px"></div></div><div style="display:flex;flex-direction:column;height:80px"><div style="flex:1"><div id=b style="height:50%;background:blue"></div></div></div>

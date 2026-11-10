@@ -7,9 +7,8 @@ by RMSE (the 38 sites survey of 2026-11-03).
 
 ## Rendering, in the plan
 
-- Form controls: the width of a `<select>` from its options, the
-  default sizes of controls (rust-lang.org's language menu: its caret
-  covers the text).
+- Form controls: the pop-up list of a `<select>`, a `range` that
+  slides, a color picker, date fields.
 - Shadow DOM: decide whether to implement it (attachShadow, slots,
   declarative `<template shadowrootmode>`); web components show
   nothing without it.

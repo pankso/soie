@@ -8,6 +8,7 @@
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
+#include <stdlib.h>
 #include <string.h>
 #include "paint.h"
 
@@ -45,6 +46,19 @@ static const char *option_text(const soie_node *sel, struct buf *b)
 	}
 	buf_add(b, "", 0);
 	return b->s;
+}
+
+/* A number attribute of a control, dflt when missing or not one */
+static float control_num(const soie_node *n, const char *name, float dflt)
+{
+	const char *a = soie_element_get_attr(n, name);
+	char *e;
+	float v;
+
+	if (!a)
+		return dflt;
+	v = strtof(a, &e);
+	return e == a ? dflt : v;
 }
 
 void paint_control(struct canvas *c, const struct box *b)
@@ -101,11 +115,124 @@ void paint_control(struct canvas *c, const struct box *b)
 		}
 		return;
 	}
+	if (n->tag != TAG_INPUT && n->tag != TAG_SELECT &&
+	    n->tag != TAG_TEXTAREA) {
+		/* progress and meter: a rounded track, filled up to the
+		 * value (none: nothing filled) */
+		static const unsigned char track[4] = { 233, 233, 237, 255 },
+			edge[4] = { 143, 143, 157, 255 },
+			blue[4] = { 0, 96, 223, 255 },
+			green[4] = { 23, 163, 74, 255 };
+		float mn = n->name[0] == 'm' ? control_num(n, "min", 0) : 0;
+		float mx = control_num(n, "max", 1);
+		float val = control_num(n, "value", mn), f;
+
+		f = mx > mn ? (val - mn) / (mx - mn) : 0;
+		f = f < 0 ? 0 : f > 1 ? 1 : f;
+		fill_round(c, b->x, b->y, b->w, b->h, b->h / 2, edge);
+		fill_round(c, b->x + 1, b->y + 1, b->w - 2, b->h - 2,
+			b->h / 2 - 1, track);
+		if (f * b->w >= b->h)
+			fill_round(c, b->x, b->y, f * b->w, b->h, b->h / 2,
+				n->name[0] == 'm' ? green : blue);
+		return;
+	}
+	if (n->tag == TAG_INPUT && type && ascii_ieq(type, "range")) {
+		/* a track with its thumb where the value is */
+		static const unsigned char track[4] = { 233, 233, 237, 255 },
+			edge[4] = { 143, 143, 157, 255 },
+			blue[4] = { 0, 96, 223, 255 },
+			thumb[4] = { 103, 103, 116, 255 };
+		float mn = control_num(n, "min", 0), mx = control_num(n, "max",
+			100);
+		float val = control_num(n, "value", (mn + mx) / 2), f;
+		float th = b->h < 16 ? b->h : 16, ty = b->y + (b->h - 6) / 2;
+
+		f = mx > mn ? (val - mn) / (mx - mn) : 0;
+		f = f < 0 ? 0 : f > 1 ? 1 : f;
+		fill_round(c, b->x, ty, b->w, 6, 3, edge);
+		fill_round(c, b->x + 1, ty + 1, b->w - 2, 4, 2, track);
+		fill_round(c, b->x, ty, th / 2 + f * (b->w - th), 6, 3, blue);
+		fill_round(c, b->x + f * (b->w - th), b->y + (b->h - th) / 2,
+			th, th, th / 2, thumb);
+		return;
+	}
+	if (n->tag == TAG_INPUT && type && ascii_ieq(type, "color")) {
+		/* the color it holds, black by default */
+		static const unsigned char edge[4] = { 118, 118, 118, 255 };
+		unsigned char col[4] = { 0, 0, 0, 255 };
+
+		v = soie_element_get_attr(n, "value");
+		if (v && *v == '#' && strlen(v) == 7) {
+			unsigned long x24 = strtoul(v + 1, NULL, 16);
+
+			col[0] = (unsigned char)(x24 >> 16);
+			col[1] = (unsigned char)(x24 >> 8);
+			col[2] = (unsigned char)x24;
+		}
+		fill_rect(c, b->x, b->y, b->w, b->h, edge);
+		fill_rect(c, b->x + 1, b->y + 1, b->w - 2, b->h - 2, col);
+		return;
+	}
+	if (n->tag == TAG_INPUT && type && ascii_ieq(type, "file")) {
+		/* its button, then what is chosen: nothing here */
+		static const unsigned char face[4] = { 233, 233, 237, 255 },
+			edge[4] = { 143, 143, 157, 255 };
+		static const char label[] = "Browse\xe2\x80\xa6";
+		static const char none[] = "No file selected.";
+		float bw = text_width(st, label, sizeof(label) - 1) + 10;
+
+		fill_round(c, b->x, b->y, bw, b->h, 4, edge);
+		fill_round(c, b->x + 1, b->y + 1, bw - 2, b->h - 2, 3, face);
+		paint_text(c, st, label, sizeof(label) - 1, b->x + 5, base);
+		paint_text(c, st, none, sizeof(none) - 1, b->x + bw + 5, base);
+		return;
+	}
+	if (n->tag == TAG_SELECT && (soie_element_get_attr(n, "multiple") ||
+	    control_num(n, "size", 1) > 1)) {
+		/* a list box: its first options, one a row */
+		const soie_node *o = n->first;
+		float lh = m.normal_lh + 4, y = b->y;
+
+		while (o && o != n && y + lh <= b->y + b->h + 1) {
+			if (is_html(o, TAG_OPTION)) {
+				const soie_node *t;
+
+				text.len = 0;
+				for (t = o->first; t; t = t->next)
+					if (t->type == SOIE_TEXT)
+						buf_add(&text, t->u.text.data,
+							t->u.text.len);
+				paint_text(c, st, text.s ? text.s : "", text.len,
+					x + 4, y + 2 + m.ascent);
+				y += lh;
+			}
+			if (o->first && !is_html(o, TAG_OPTION)) {
+				o = o->first;
+				continue;
+			}
+			while (o != n && !o->next)
+				o = o->parent;
+			if (o != n)
+				o = o->next;
+		}
+		buf_free(&text);
+		return;
+	}
 	if (n->tag == TAG_SELECT) {
+		/* the chosen option and a chevron */
+		float ax = b->x + b->w - 11, ay = b->y + b->h / 2 - 2;
+		float p[12];
+
 		option_text(n, &text);
 		paint_text(c, st, text.s, text.len, x, base);
-		/* the drop-down arrow */
-		fill_rect(c, b->x + b->w - 8, base - m.ascent / 2, 6, 2, fg);
+		p[0] = ax, p[1] = ay;
+		p[2] = ax + 4, p[3] = ay + 4;
+		p[4] = ax + 8, p[5] = ay;
+		p[6] = ax + 8, p[7] = ay + 1.6f;
+		p[8] = ax + 4, p[9] = ay + 5.6f;
+		p[10] = ax, p[11] = ay + 1.6f;
+		fill_polygon(c, p, 6, fg);
 		buf_free(&text);
 		return;
 	}

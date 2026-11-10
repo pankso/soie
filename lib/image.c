@@ -717,6 +717,11 @@ void paint_replaced(struct canvas *c, const struct box *b)
 			return;
 		}
 	}
+	if (b->node->ns == SOIE_NS_HTML && (!strcmp(b->node->name, "progress") ||
+	    !strcmp(b->node->name, "meter"))) {
+		paint_control(c, b);
+		return;
+	}
 	if (b->node->ns == SOIE_NS_HTML && (!strcmp(b->node->name, "video") ||
 	    !strcmp(b->node->name, "audio"))) {
 		paint_media(c, b);

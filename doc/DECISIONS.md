@@ -721,6 +721,20 @@ reversed, edit the entry and say why; do not leave stale rules here.
   background of the next one (an image floated in a paragraph and the
   code block after it).
 
+- Form controls sized and drawn as browsers do (measured in Firefox,
+  equal to the pixel at two font sizes): a text field is its size in
+  characters as wide as a 0, and one em (191 px for 20, it was 141);
+  a select is as wide as its widest option and its arrow (it was 5
+  em: long options were cut, the arrow over the text), a list box
+  (multiple, size) shows its rows; buttons have 4 px of padding;
+  range, color and file inputs, progress and meter are drawn (they
+  were text fields, or nothing). A control whose border is still the
+  style sheet's 2 px inset or outset is drawn with the thin rounded
+  ring browsers give it (native_control()): its computed style is
+  unchanged, so pages that set a border, a radius or a background
+  image get exactly that. No pop-up list, no slider nor color
+  picker behind them yet.
+
 ## Images (phase 6)
 
 - Decoders: PNG (libpng), JPEG (libjpeg), GIF first frame (own LZW

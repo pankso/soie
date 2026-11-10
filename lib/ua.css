@@ -131,7 +131,17 @@ input[type=checkbox i], input[type=radio i] {
 }
 button, input[type=button i], input[type=submit i], input[type=reset i] {
   background-color: ButtonFace; color: ButtonText;
-  border: 2px outset ButtonBorder; padding: 1px 6px;
+  border: 2px outset ButtonBorder; padding: 1px 4px;
+}
+select { padding: 1px 4px; }
+/* drawn whole by the engine (forms.c) */
+input[type=range i], input[type=file i] {
+  background-color: initial; border: initial; padding: initial;
+}
+input[type=range i] { margin: 2px; }
+input[type=color i] {
+  background-color: ButtonFace; border: 2px outset ButtonBorder;
+  padding: 4px; box-sizing: border-box; width: 64px; height: 32px;
 }
 /* what browsers do: a button's or a select's size includes its border */
 button, select, input[type=button i], input[type=submit i],
