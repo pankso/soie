@@ -7,6 +7,8 @@ each change are in [DECISIONS.md](DECISIONS.md).
 
 ## [Unreleased]
 
+## [0.1.5] - 2026-11-11
+
 ### Added
 - Shadow DOM: shadow trees render in place of their host's children,
   `<slot>` elements show the host's children (named, default,
@@ -354,6 +356,8 @@ each change are in [DECISIONS.md](DECISIONS.md).
 - Browsers: xsoie (X11), wsoie (Wayland), SoieView (GTK 3 widget).
 - soie-render, a headless renderer for tests and screenshots.
 
+[0.1.5]: https://hg.slitaz.org/soie/rev/0.1.5
+[0.1.4]: https://hg.slitaz.org/soie/rev/0.1.4
 [0.1.3]: https://hg.slitaz.org/soie/rev/0.1.3
 [0.1.2]: https://hg.slitaz.org/soie/rev/0.1.2
 [0.1.1]: https://hg.slitaz.org/soie/rev/0.1.1
