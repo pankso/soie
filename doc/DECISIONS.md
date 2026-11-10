@@ -435,7 +435,10 @@ reversed, edit the entry and say why; do not leave stale rules here.
   its pieces on the lines (inline_rect()), so a badge or a tooltip in
   a `position: relative` span sits on the span, not on the page.
 - Line breaking (inline.c) knows more than spaces: a line may break
-  after a hyphen in a word, after a slash that is not a fraction's,
+  after a hyphen in a word (as Firefox does in running text: three
+  characters before it at least, two after, never before a digit, so
+  that dates, version numbers and CVE-2026-1234 stay whole), after a
+  slash that is not a fraction's,
   after ? ! | and dashes, at a zero width space, and between
   ideographs, kana and hangul except before closing punctuation and
   after opening brackets (break_between(), measured against Firefox;

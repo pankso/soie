@@ -717,8 +717,16 @@ static int alnum(unsigned c)
 		(c >= 'A' && c <= 'Z') || c >= 0xc0;
 }
 
-/* May a line break between p c and x, c and x not being spaces? */
-static int break_between(unsigned p, unsigned c, unsigned x)
+/*
+ * May a line break between c and x (p before c), neither a space?
+ * done and left: the characters of the word since the last place it
+ * could break, x not counted, and those from x to its end. Hyphens as
+ * Firefox takes them in running text: not near the ends of the word,
+ * never before a digit (dates, version numbers and CVE-2026-1234 stay
+ * whole).
+ */
+static int break_between(unsigned p, unsigned c, unsigned x, size_t done,
+	size_t left)
 {
 	if (c == 0x200b)			/* zero width space */
 		return 1;
@@ -731,10 +739,11 @@ static int break_between(unsigned p, unsigned c, unsigned x)
 		return 1;
 	if (!alnum(x))
 		return 0;
-	if (c == '-')		/* a hyphen in a word, not a minus sign */
-		return alnum(p) || p == '-';
 	if (c == '/')		/* a path, not a fraction */
 		return x > '9' || x < '0';
+	if (c == '-')		/* a hyphen in a word, not a minus sign */
+		return (alnum(p) || p == '-') && (x > '9' || x < '0') &&
+			done >= 3 && left >= 2;
 	return c == '?' || c == '!' || c == '|' || c == 0x2013 || c == 0x2026;
 }
 
@@ -743,7 +752,7 @@ static int break_between(unsigned p, unsigned c, unsigned x)
 static size_t piece_end(const char *t, size_t i, size_t n)
 {
 	unsigned p = 0, c, x;
-	size_t k, nx;
+	size_t k, nx, done = 1, e;
 
 	if (i >= n || t[i] == ' ' || t[i] == '\n')
 		return i;
@@ -751,12 +760,20 @@ static size_t piece_end(const char *t, size_t i, size_t n)
 	while (k < n && t[k] != ' ' && t[k] != '\n') {
 		x = cp_at(t, k, n, &nx);
 		/* ASCII letters and digits in a row: the common case */
-		if (!(c < 0x80 && x < 0x80 && alnum(c) && alnum(x)) &&
-		    break_between(p, c, x))
-			return k;
+		if (!(c < 0x80 && x < 0x80 && alnum(c) && alnum(x))) {
+			size_t left = 0;
+
+			if (c == '-')
+				for (e = k; e < n && t[e] != ' ' && t[e] != '\n';
+				     e++)
+					left += ((unsigned char)t[e] & 0xc0) != 0x80;
+			if (break_between(p, c, x, done, left))
+				return k;
+		}
 		p = c;
 		c = x;
 		k = nx;
+		done++;
 	}
 	return k;
 }

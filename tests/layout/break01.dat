@@ -48,24 +48,30 @@ width=200
 |         text ", n" 56,22 24x16
 
 #data
-<!DOCTYPE html><body style="margin:0"><div style="width:48px">aaa-bbb-ccc a/b/c -5 x?y</div>
+<!DOCTYPE html><body style="margin:0"><div style="width:64px">aaa-bbb-ccc a-b 2026-10-21 x?y http://ex.org/some/path 1/2</div>
 #errors
 #layout
 width=200
 #document
-| block <html> 0,0 200x100
-|   block <body> 0,0 200x100
-|     block <div> 0,0 48x100
-|       line 0,0 48x20
-|         text "aaa-" 0,2 32x16
-|       line 0,20 48x20
-|         text "bbb-" 0,22 32x16
-|       line 0,40 48x20
-|         text "ccc a/" 0,42 48x16
-|       line 0,60 48x20
-|         text "b/c -5" 0,62 48x16
-|       line 0,80 48x20
-|         text "x?y" 0,82 24x16
+| block <html> 0,0 200x160
+|   block <body> 0,0 200x160
+|     block <div> 0,0 64x160
+|       line 0,0 64x20
+|         text "aaa-bbb-" 0,2 64x16
+|       line 0,20 64x20
+|         text "ccc a-b" 0,22 56x16
+|       line 0,40 64x20
+|         text "2026-10-21" 0,42 80x16
+|       line 0,60 64x20
+|         text "x?y" 0,62 24x16
+|       line 0,80 64x20
+|         text "http://" 0,82 56x16
+|       line 0,100 64x20
+|         text "ex.org/" 0,102 56x16
+|       line 0,120 64x20
+|         text "some/" 0,122 40x16
+|       line 0,140 64x20
+|         text "path 1/2" 0,142 64x16
 
 #data
 <!DOCTYPE html><body style="margin:0"><div style="width:20px">日本語。「あ」</div><div style="float:left">a-b <b>c</b>d</div><div style="float:left;width:min-content">ab <b>c</b>d</div>
