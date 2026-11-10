@@ -107,13 +107,17 @@ struct srule {
 	const void *scope;
 };
 
+enum { X_IN = 1, X_OUT, X_FAR };
+
 struct entry {
 	struct srule *r;
 	short sel;
 	unsigned char pseudo;
 	unsigned char multi;	/* in several buckets: matched once */
-	unsigned char cross;	/* matched: a shadow tree's rule of its host
-				 * or a slotted node, outside that tree */
+	/* matched: a shadow tree's rule of its host or of a slotted node,
+	 * outside that tree (X_IN); a ::part() rule of a tree out of the
+	 * part's (X_OUT, X_FAR further out); else 0 */
+	unsigned char cross;
 	unsigned spec;
 };
 
@@ -155,6 +159,8 @@ struct styledb {
 	int nsels, capsels;
 	struct bucket ids, classes, tags;
 	struct bucket attrs;	/* by attribute name, when nothing else */
+	struct bucket parts;	/* ::part() rules, by their first name */
+	int nparts;
 	struct evec root;	/* :root and nothing else */
 	struct evec universal;
 	struct layer roots[3];
@@ -368,6 +374,7 @@ void styledb_free(struct styledb *db)
 	bucket_free(&db->classes);
 	bucket_free(&db->tags);
 	bucket_free(&db->attrs);
+	bucket_free(&db->parts);
 	free(db->root.v);
 	free(db->universal.v);
 	for (i = 0; i < 3; i++)
@@ -596,6 +603,7 @@ static void index_rule(struct styledb *db, struct srule *r)
 		struct entry e;
 		struct bucket *b;
 		struct evec *root = NULL;
+		const struct simple *p;
 		const char *key = NULL;
 		int j;
 
@@ -615,7 +623,18 @@ static void index_rule(struct styledb *db, struct srule *r)
 		e.spec = x->spec;
 		if (never(c))
 			continue;
-		if ((b = compound_key(db, c, &key, &root)))
+		if ((p = selector_part(r->sel, i))) {
+			/* matched from the part, by collect_parts() */
+			char one[128];
+			size_t n = strcspn(p->value, " ");
+
+			if (n >= sizeof(one))
+				continue;
+			memcpy(one, p->value, n);
+			one[n] = '\0';
+			evec_add(bucket_get(&db->parts, one, 1), &e);
+			db->nparts++;
+		} else if ((b = compound_key(db, c, &key, &root)))
 			add_entry(db, b, key, &e);
 		else if (!index_is(db, c, &e))
 			evec_add(root ? root : &db->universal, &e);
@@ -1598,22 +1617,35 @@ static void hints(const soie_node *el, struct svec *out)
 
 typedef unsigned long long ckey;
 
-static ckey make_key(int origin, int important, int inl, unsigned rank,
-	unsigned spec, unsigned order)
+/*
+ * Origin and importance, tree context, inline, layer, specificity,
+ * order. cross is the entry's (see struct entry): for normal
+ * declarations the outer tree wins, the inner one for !important, and
+ * this comes before the style attribute (CSS Cascade 5, 6.1): a page's
+ * ::part() rule beats the part's own style="", a component's
+ * :host rule loses to the host's.
+ */
+static ckey make_key(int origin, int important, int inl, int cross,
+	unsigned rank, unsigned spec, unsigned order)
 {
 	unsigned a = spec >> 20, b = spec >> 10 & 1023, c = spec & 1023;
 	unsigned oi = important ? (unsigned)(5 - origin) : (unsigned)origin;
+	/* by cross: its own tree, X_IN, X_OUT, X_FAR */
+	static const unsigned char ctxs[] = { 1, 0, 2, 3 };
+	unsigned ctx = ctxs[cross & 3];
 
 	if (a > 511) a = 511;
 	if (b > 511) b = 511;
 	if (c > 511) c = 511;
-	if (rank > 16383)
-		rank = 16383;
-	if (important)
-		rank = 16383 - rank;
+	if (rank > 4095)
+		rank = 4095;
+	if (important) {
+		rank = 4095 - rank;
+		ctx = 3 - ctx;
+	}
 	if (order > 524287)
 		order = 524287;
-	return (ckey)oi << 61 | (ckey)(inl ? 1 : 0) << 60 |
+	return (ckey)oi << 61 | (ckey)ctx << 59 | (ckey)(inl ? 1 : 0) << 58 |
 		(ckey)rank << 46 | (ckey)(a << 18 | b << 9 | c) << 19 | order;
 }
 
@@ -1667,21 +1699,12 @@ struct rkey {
 	int cross;
 };
 
-/* The layer rank of a rule; a shadow tree's rule matched outside it
- * (:host, ::slotted()) ranks under every layer of the tree it is
- * matched in: the outer tree wins, but for !important (CSS Cascade 5,
- * 6.1, context) */
-static unsigned rank_of(const struct srule *r, int cross)
-{
-	return cross ? 0 : r->layer->rank;
-}
-
 static ckey rule_key(const struct sval *sv, const void *data)
 {
 	const struct rkey *k = data;
 
 	return make_key(k->r ? k->r->origin : O_AUTHOR, sv->important, k->inl,
-		k->r ? rank_of(k->r, k->cross) : 0, k->spec,
+		k->cross, k->r ? k->r->layer->rank : 0, k->spec,
 		k->r ? k->r->order : 0);
 }
 
@@ -2331,13 +2354,129 @@ static void collect_other(const struct entry *e, const soie_node *scope,
 		return;
 	}
 	if (root) {
-		x.cross = 1;
+		x.cross = X_IN;
 		x.pseudo = PE_NONE;	/* ::slotted(): the element's own */
 	}
 	selector_shadow(root);
 	if (selector_match(e->r->sel, e->sel, at) &&
 	    (!e->multi || !in_evec(out, e)))
 		evec_add(out, &x);
+	selector_shadow(scope);
+}
+
+/* Are rules of scope s (see struct srule) of tree t (a shadow root, or
+ * NULL for the document)? */
+static int of_tree(const soie_node *t, const void *s)
+{
+	return t ? of_root(t, s) : !s;
+}
+
+/* The names of out (space separated, up to size) that host h's
+ * exportparts gives to h's own tree: "a, b:c" exports a as a, b as c */
+static void export_parts(const soie_node *h, const char *names, char *out,
+	size_t size)
+{
+	const char *x = soie_element_get_attr(h, "exportparts"), *p, *e, *c;
+	char in[128];
+	size_t n, len = 0, ol;
+
+	*out = '\0';
+	for (p = x; p && *p; p = *e ? e + 1 : e) {
+		e = p + strcspn(p, ",");
+		while (p < e && (*p == ' ' || *p == '\t' || *p == '\n'))
+			p++;
+		c = memchr(p, ':', (size_t)(e - p));
+		n = (size_t)((c ? c : e) - p);
+		while (n && (p[n - 1] == ' ' || p[n - 1] == '\t' ||
+		       p[n - 1] == '\n'))
+			n--;
+		if (!n || n >= sizeof(in))
+			continue;
+		memcpy(in, p, n);
+		in[n] = '\0';
+		if (!word_in(names, in, 0))
+			continue;
+		if (c) {
+			/* the outer name */
+			for (p = c + 1; p < e && (*p == ' ' || *p == '\t' ||
+			     *p == '\n'); p++)
+				;
+			for (ol = (size_t)(e - p); ol && (p[ol - 1] == ' ' ||
+			     p[ol - 1] == '\t' || p[ol - 1] == '\n'); ol--)
+				;
+		} else {
+			ol = n;
+		}
+		if (!ol || len + ol + 2 > size)
+			continue;
+		if (len)
+			out[len++] = ' ';
+		memcpy(out + len, p, ol);
+		len += ol;
+		out[len] = '\0';
+	}
+}
+
+/*
+ * The ::part() rules matching el, a part (its part attribute: names)
+ * of the host of its tree (scope). Each tree out from el's: its rules
+ * `h::part(x)` matched from the host h of the tree within, and that
+ * tree's own `:host::part(x)` (the host's tree styling its parts, of
+ * the same context). Then up, the names h's exportparts forwards.
+ */
+static void collect_parts(struct styledb *db, const soie_node *el,
+	const soie_node *scope, const char *names, struct evec *out)
+{
+	char buf[2][512];
+	const soie_node *s = scope, *h, *t;
+	struct entry x;
+	struct evec *e;
+	const char *w, *end;
+	char one[128];
+	int i, level = 0;
+
+	snprintf(buf[0], sizeof(buf[0]), "%s", names);
+	names = buf[0];
+	while (s && (h = s->u.frag.host) && *names) {
+		t = shadow_scope(h);
+		for (w = names; *w; w = *end ? end + 1 : end) {
+			end = w + strcspn(w, " \t\n\f\r");
+			if (end == w || (size_t)(end - w) >= sizeof(one))
+				continue;
+			memcpy(one, w, (size_t)(end - w));
+			one[end - w] = '\0';
+			if (!(e = bucket_get(&db->parts, one, 0)))
+				continue;
+			for (i = 0; i < e->n; i++) {
+				const struct srule *r = e->v[i].r;
+				int in = r->scope && of_root(s, r->scope);
+
+				if (r->origin != O_AUTHOR || (!in &&
+				    !of_tree(t, r->scope)) || (in &&
+				    !selector_has_host(r->sel, e->v[i].sel)) ||
+				    !selector_part_match(r->sel, e->v[i].sel,
+				    names, el))
+					continue;
+				selector_shadow(in ? s : t);
+				if (selector_match(r->sel, e->v[i].sel, h) &&
+				    !in_evec(out, &e->v[i])) {
+					/* how many trees out of el's */
+					int d = level + !in;
+
+					x = e->v[i];
+					if (x.pseudo == PE_PART)
+						x.pseudo = PE_NONE;
+					x.cross = (unsigned char)(!d ? 0 :
+						d == 1 ? X_OUT : X_FAR);
+					evec_add(out, &x);
+				}
+			}
+		}
+		/* el is a part of the next host up under these names */
+		export_parts(h, names, buf[++level & 1], sizeof(buf[0]));
+		names = buf[level & 1];
+		s = t;
+	}
 	selector_shadow(scope);
 }
 
@@ -2414,6 +2553,9 @@ static void collect(struct styledb *db, const soie_node *el,
 		ADD(&db->root);
 	ADD(&db->universal);
 #undef ADD
+	/* a part of its host: only in a shadow tree, only with rules */
+	if (scope && db->nparts && (a = soie_element_get_attr(el, "part")))
+		collect_parts(db, el, scope, a, out);
 	if (scope)
 		selector_shadow(NULL);
 }
@@ -2451,7 +2593,7 @@ static ckey anim_key(const struct sval *sv, const void *data)
 	(void)data;
 	/* over the author's declarations, inline ones too, under the
 	 * important ones (CSS Cascade 4, 6.1) */
-	return make_key(O_AUTHOR, 0, 1, 16383, ~0u, 524287);
+	return make_key(O_AUTHOR, 0, 1, X_FAR, 4095, ~0u, 524287);
 }
 
 /*
@@ -2577,8 +2719,8 @@ static void style_element(struct styledb *db, soie_node *el,
 			for (j = 0; j < r->ncustom; j++)
 				cascade_custom(db, cs, r->custom[j].name,
 					r->custom[j].value, make_key(r->origin,
-					r->custom[j].important, 0,
-					rank_of(r, k.cross), m.v[i].spec,
+					r->custom[j].important, 0, k.cross,
+					r->layer->rank, m.v[i].spec,
 					r->order));
 		}
 		if (!pseudo) {
@@ -2590,7 +2732,8 @@ static void style_element(struct styledb *db, soie_node *el,
 			for (j = 0; j < inl.ncustom; j++)
 				cascade_custom(db, cs, inl.custom[j].name,
 					inl.custom[j].value, make_key(O_AUTHOR,
-					inl.custom[j].important, 1, 0, 0, 0));
+					inl.custom[j].important, 1, 0, 0, 0,
+					0));
 		}
 		st = compute_style(db, cs, base, root && !pseudo, rem);
 		if (db->nkfs && animated(db, cs, st))

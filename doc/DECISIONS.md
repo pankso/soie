@@ -179,8 +179,13 @@ reversed, edit the entry and say why; do not leave stale rules here.
   element is ever defined, as in a browser without scripts: a page
   that hides undefined components hides them there too.
 - ElementInternals keeps what the element gives it (states, validity,
-  form value) and nothing reads it: `:state()` never matches, a form
-  does not take the value. Components only need the object to exist.
+  form value); a form does not take the value. Its states are a
+  CustomStateSet (a Set) that gives the engine the names as one string
+  at each change (soie_element_set_states()): few elements have
+  states, so a list in the document holds them and a byte of the node
+  says whether to look (`:state()` costs nothing to the others, and
+  no node grew a pointer). `:--x` is the state "--x", as Chrome had
+  it first.
 - import.meta.url is set on a module after it is compiled and before
   it runs (module_meta()): the script's address, the page's for an
   inline module.
@@ -190,9 +195,9 @@ reversed, edit the entry and say why; do not leave stale rules here.
   rules). In collect() a rule of el's own tree goes through the old
   path; others (collect_other()) only for UA and user rules, a
   shadow tree's :host rules on its host, ::slotted() rules on the
-  host's children, matched from their slot. Those crossing rules rank
-  under every layer (rank 0): the outer tree wins normal
-  declarations, the inner !important ones (CSS Cascade 5, context).
+  host's children, matched from their slot. Those crossing rules
+  lose to the outer tree's normal declarations and win with
+  !important (CSS Cascade 5, context: see tree context below).
   The selector matcher knows the rules' tree (selector_shadow()):
   :host is its host, combinators step from the tree's top to the host
   only for a compound with :host. The thread-local is read only at
@@ -213,6 +218,28 @@ reversed, edit the entry and say why; do not leave stale rules here.
   whose text changes restyles its host's subtree. Shadow trees'
   `<style>` elements are still per root (rare in components).
   `:host` counts inside `:is()` and `:where()` (has_host()).
+- Tree context is a field of the cascade key above the style
+  attribute (CSS Cascade 5, 6.1: context comes before element-attached
+  styles), two bits taken from the layer rank (4095 layers, was
+  16383): an inner tree's rule matched outside it (:host, ::slotted())
+  is under the tree's own rules, an outer tree's ::part() rule over
+  them, one from further out (exportparts) over that; !important
+  turns it upside down. Before, the crossing rules took layer rank 0,
+  under the style attribute: the host's style="x !important" beat
+  the component's :host { x !important }, wrong.
+- `::part()`: its rules go to a bucket of their own (by their first
+  name), not the host's buckets, and are matched from the part: in
+  collect(), only for an element of a shadow tree with a part
+  attribute when the rules have any (pages without shadow roots pay
+  one NULL test). collect_parts() walks out: in each tree it matches
+  the compound before ::part() from the host (that tree's rules), and
+  `:host::part()` of the tree within (the component styling its own
+  parts: the part's own context, as its other rules); then
+  exportparts maps the names to the next host's. What follows
+  ::part() (`:hover`, `:state()`) is matched on the part,
+  `::part(x)::before` is the part's ::before. A ::part() rule's
+  subject compound is the host, so its dependencies count as deep
+  for incremental restyling (sellist_flags()).
 - Script side: the wrappers of a shadow tree belong to the tree of
   its host (rehome() climbs through hosts, strengthen() enters
   roots), so expandos on a root and its nodes live as long as the

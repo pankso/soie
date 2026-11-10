@@ -81,6 +81,13 @@ struct docinfo {
 	float zoom;		/* the style options', 1 */
 	int shadows;		/* shadow roots made: 0, no shadow work */
 	struct shadow_css *css;	/* adopted sheets of its shadow roots */
+	/* the custom states of its elements (soie_element_set_states()):
+	 * few, found from the node's flag */
+	struct cstates {
+		struct soie_node *el;
+		char *names;
+	} *states;
+	int nstates;
 };
 
 /* The text of a shadow root's adopted style sheets, shared by the roots
@@ -104,6 +111,7 @@ struct soie_node {
 	unsigned char vp;	/* its style has viewport units (vw...) */
 	unsigned char sheet;	/* <link>: its style sheet came (1), failed (2) */
 	unsigned char defined;	/* a custom element, upgraded: :defined */
+	unsigned char states;	/* it has custom states: :state() */
 	unsigned char anim;	/* bit 0: an animation of it began, for
 				 * soie_animations() to tell scripts; the
 				 * others: a hash of its animation-name */
@@ -195,6 +203,8 @@ struct soie_node *slot_find(const struct soie_node *s, const char *name);
 struct soie_node *slot_of(const struct soie_node *n);
 /* May HTML element el have a shadow root (DOM attachShadow())? */
 int shadow_host_ok(const struct soie_node *el);
+/* The custom states of el, space separated (el->states set) */
+const char *element_states(const struct soie_node *el);
 /* n's parent in the flat tree: its slot for a light child of a host
  * (the host when it has none), the host for a shadow root's child */
 struct soie_node *flat_parent(const struct soie_node *n);

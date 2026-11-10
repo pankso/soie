@@ -9,11 +9,12 @@ by RMSE (the 38 sites survey of 2026-11-03).
 
 - Form controls: the pop-up list of a `<select>`, a `range` that
   slides, a color picker, date fields.
-- Shadow DOM, what is left: `::part()` and `exportparts`,
-  `delegatesFocus`, `slot.assign()` (manual assignment),
+- Shadow DOM, what is left: `delegatesFocus`, `slot.assign()` (manual assignment),
   `setHTMLUnsafe()` / `parseHTMLUnsafe()` with declarative roots,
   `<script>` inside declarative shadow trees (never run),
-  `slotchange` for changes made by the parser.
+  `slotchange` for changes made by the parser, `link.sheet` (null,
+  in shadow trees and out), the `::before` mapping of `exportparts`,
+  `cookieStore` change events.
 
 ## Rendering, small
 

@@ -27,6 +27,17 @@ each change are in [DECISIONS.md](DECISIONS.md).
   loader resolved its lazy chunks against `undefined`.
 - `attachInternals()` and a minimal `ElementInternals` (states,
   validity, the shadow root): Material's components threw without it.
+  Its `states` is a `CustomStateSet`: `:state(x)` and the older
+  `:--x` match them. Library: `soie_element_set_states()`.
+- `::part()` (CSS Shadow Parts), the styling interface of Shoelace,
+  Web Awesome, Ionic and Material components: `x-tab::part(base)`,
+  several names, `::part(x)::before` / `::after`, `:host::part(x)`
+  from the component itself, and `exportparts` to forward the parts
+  of nested components. An outer tree's `::part()` declarations win
+  over the component's own, its `style` attributes included, and lose
+  for `!important`. Scripts get `element.part`.
+- `window.cookieStore` (get, getAll, set, delete) over
+  `document.cookie`, without change events.
 - Shadow DOM events: the path goes through the slots of slotted nodes
   and from a shadow root to its host for composed events (the user's
   clicks, keys, focus, input...; `composed: true` for scripts'),
@@ -51,6 +62,9 @@ each change are in [DECISIONS.md](DECISIONS.md).
 - Events at their target run their capturing listeners first, as
   browsers do now (they ran in the order they were added);
   `composedPath()` is empty once the event was dispatched.
+- Tree context in the cascade comes before the style attribute, as
+  CSS Cascade 5 says: a component's `:host { x !important }` wins over
+  the host's `style="x !important"` (it lost).
 - Shadow roots that adopt the same style sheets (every instance of a
   Lit component) share one parse of them: 300 instances added one by
   one took over 5 s (the script was stopped), now 0.1 s.

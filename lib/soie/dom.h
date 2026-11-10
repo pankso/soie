@@ -103,6 +103,9 @@ soie_node *soie_assigned_slot(const soie_node *n);
  * matches :defined from now on. The script extension says so; without
  * one no custom element ever is, as in a browser without scripts. */
 void soie_element_set_defined(soie_node *el);
+/* The custom states of el (ElementInternals.states), space separated,
+ * NULL or "" for none: :state(x) matches el while x is among them */
+void soie_element_set_states(soie_node *el, const char *names);
 
 /* Text and comments. Data may contain NUL bytes, hence the length. */
 soie_node *soie_text_new(soie_node *doc, const char *s, size_t len);

@@ -1,0 +1,4 @@
+<!doctype html><script>
+(async()=>{console.log(typeof cookieStore.addEventListener,await cookieStore.get('z'),(await cookieStore.getAll()).length);
+await cookieStore.set('a','1');await cookieStore.delete({name:'a'});console.log('done');})();
+</script>

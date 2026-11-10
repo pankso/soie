@@ -1392,10 +1392,34 @@ function assigned(slot, flatten, elements) {
 	return elements ? a.filter((n) => api.type(n) === S_EL) : a;
 }
 
+/* ElementInternals.states: a Set that tells the engine, for :state() */
+class CustomStateSet extends Set {
+	constructor(el) {
+		super();
+		this._el = el;
+	}
+	_sync() { api.states(this._el, [...this].join(' ')); }
+	add(v) {
+		super.add(String(v));
+		this._sync();
+		return this;
+	}
+	delete(v) {
+		const r = super.delete(String(v));
+		this._sync();
+		return r;
+	}
+	clear() {
+		super.clear();
+		this._sync();
+	}
+	has(v) { return super.has(String(v)); }
+}
+
 class ElementInternals {
 	constructor(el) {
 		this._el = el;
-		this.states = new Set();
+		this.states = new CustomStateSet(el);
 		this.validationMessage = '';
 		this.validity = { valid: true };
 		this.role = null;
@@ -1736,6 +1760,12 @@ class Element extends Node {
 			(this._classList = new DOMTokenList(this, 'class'));
 	}
 	set classList(v) { this.className = v; }
+	/* CSS Shadow Parts: what ::part() of its host names it */
+	get part() {
+		return this._part ||
+			(this._part = new DOMTokenList(this, 'part'));
+	}
+	set part(v) { this.setAttribute('part', String(v)); }
 	get attributes() {
 		const a = api.attrs(this).map(([n, v, ns]) =>
 			new Attr(this, n, v, ns));
@@ -1988,10 +2018,10 @@ class Element extends Node {
 	scrollTo() {}
 	scrollBy() {}
 	/* What a custom element keeps to itself: its shadow root even
-	 * closed, its states, its value in a form. The states and the
-	 * validity are kept and nothing more: :state() never matches,
-	 * and a form does not take the value (Material's components ask
-	 * for the object when they are built, and threw without it) */
+	 * closed, its states (:state()), its value in a form. The
+	 * validity is kept and nothing more, a form does not take the
+	 * value (Material's components ask for the object when they are
+	 * built, and threw without it) */
 	attachInternals() {
 		if (this._internals)
 			throw new DOMException('internals attached already',
@@ -6745,6 +6775,42 @@ if (typeof g.Intl === 'undefined') {
 	});
 }
 
+/* Cookie Store API over document.cookie: what pages call, with no
+ * change events */
+function cookieList(name) {
+	const s = api.cookie() || '';
+	const l = s ? s.split(/;\s*/).map((c) => {
+		const i = c.indexOf('=');
+		return i < 0 ? { name: '', value: c } :
+			{ name: c.slice(0, i), value: c.slice(i + 1) };
+	}) : [];
+	return name === undefined ? l : l.filter((c) => c.name === name);
+}
+const cookieName = (o) => o === undefined ? undefined :
+	String(o && typeof o === 'object' ? o.name : o);
+const cookieStore = {
+	async get(o) { return cookieList(cookieName(o))[0] || null; },
+	async getAll(o) { return cookieList(cookieName(o)); },
+	async set(n, v) {
+		const o = n && typeof n === 'object' ? n :
+			{ name: n, value: v };
+		let s = `${o.name}=${o.value}; path=${o.path || '/'}`;
+		if (o.expires != null)
+			s += '; expires=' + new Date(o.expires).toUTCString();
+		if (o.domain)
+			s += '; domain=' + o.domain;
+		api.cookie(s);
+	},
+	delete(o) {
+		o = o && typeof o === 'object' ? o : { name: o };
+		return this.set(Object.assign({}, o,
+			{ value: '', expires: 0 }));
+	},
+	addEventListener() {},
+	removeEventListener() {},
+	onchange: null
+};
+
 /* Globals */
 const globals = {
 	window: g, self: g, top: g, parent: g, frames: g, opener: null,
@@ -6756,7 +6822,8 @@ const globals = {
 	CSSFontFaceRule: CSSRule, CSSKeyframesRule: CSSRule,
 	CSSSupportsRule: CSSRule, CSSImportRule: CSSRule,
 	CSSGroupingRule: CSSRule, StyleSheet: CSSStyleSheet,
-	customElements, ElementInternals, NodeFilter,
+	customElements, ElementInternals, CustomStateSet, NodeFilter,
+	cookieStore,
 	localStorage: new Proxy(new Storage(), storageHandler),
 	sessionStorage: new Proxy(new Storage(), storageHandler),
 	EventTarget, Event, CustomEvent, UIEvent, MouseEvent, PointerEvent,

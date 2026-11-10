@@ -1,0 +1,14 @@
+log: rgb(0, 128, 0) 400 normal lab 1
+log: 700
+log: italic lab big true
+log: rgb(0, 128, 0)
+log: rgb(0, 0, 0) normal
+log: true rgb(0, 0, 0) 16px
+log: true 1 rgb(0, 0, 255) 30px 2px
+log: underline on,--legacy
+log: rgb(0, 0, 0) 16px normal
+log: none 0
+log: on,x
+log: rgb(0, 0, 0)
+log: rgb(255, 0, 0)
+log: rgb(0, 0, 0)

@@ -264,8 +264,18 @@ static int parse_pseudo_fn(struct sp *p, const struct cv *f,
 		s->args = parse_list(&f->kids, 0, f->kids.n, NULL, 0, 0, 0);
 		return s->args && s->args->n == 1 && s->args->c[0].n == 1;
 	}
-	if (ascii_ieq(n, "state") ||
-	    ascii_ieq(n, "active-view-transition-type")) {
+	if (ascii_ieq(n, "state")) {
+		const struct cv *v;
+
+		cur_init(&c, &f->kids);
+		v = cur_next(&c);
+		if (!v || v->type != CT_IDENT || !cur_end(&c))
+			return 0;
+		s->pseudo = PC_STATE;
+		s->value = xstrndup(v->str, strlen(v->str));
+		return 1;
+	}
+	if (ascii_ieq(n, "active-view-transition-type")) {
 		/* custom states: valid, never matching */
 		s->pseudo = PC_FALSE;
 		return 1;
@@ -283,6 +293,29 @@ static int parse_pseudo_fn(struct sp *p, const struct cv *f,
 		return 1;	/* only the first lang() range is used */
 	}
 	return 0;
+}
+
+/* The names of ::part(a b): idents, kept space separated */
+static char *part_names(const struct cvlist *l)
+{
+	struct buf b = { NULL, 0, 0 };
+	int i;
+
+	for (i = 0; i < l->n; i++) {
+		if (l->v[i].type == CT_WS)
+			continue;
+		if (l->v[i].type != CT_IDENT) {
+			buf_free(&b);
+			return NULL;
+		}
+		if (b.len)
+			buf_putc(&b, ' ');
+		buf_add(&b, l->v[i].str, strlen(l->v[i].str));
+	}
+	if (!b.len)
+		return NULL;
+	buf_putc(&b, '\0');
+	return b.s;
 }
 
 /* One compound selector; returns 0 if there is none here. */
@@ -381,11 +414,25 @@ static int parse_compound(struct sp *p, struct compound *c, int *pe)
 				    (id == PE_BEFORE || id == PE_AFTER ||
 				     ascii_ieq(v->str, "first-line") ||
 				     ascii_ieq(v->str, "first-letter")))) {
-					if (id == PE_NONE || *pe != PE_NONE)
+					/* ::part(x)::before is the part's */
+					int after_part = *pe == PE_PART &&
+						(id == PE_BEFORE ||
+						 id == PE_AFTER);
+
+					if (id == PE_NONE || (*pe != PE_NONE &&
+					    !after_part))
 						goto bad;
 					s.type = SEL_PSEUDO_ELEMENT;
 					s.pseudo = (unsigned char)id;
 					*pe = id;
+				} else if (v->str[0] == '-' &&
+					   v->str[1] == '-') {
+					/* :--x, the custom state "--x" of
+					 * the first versions */
+					s.type = SEL_PSEUDO;
+					s.pseudo = PC_STATE;
+					s.value = xstrndup(v->str,
+						strlen(v->str));
 				} else {
 					id = find_pseudo_class(v->str);
 					if (id == PC_NONE)
@@ -415,6 +462,10 @@ static int parse_compound(struct sp *p, struct compound *c, int *pe)
 						simple_free(&s);
 						goto bad;
 					}
+				} else if (ascii_ieq(v->str, "part")) {
+					s.pseudo = PE_PART;
+					if (!(s.value = part_names(&v->kids)))
+						goto bad;
 				}
 				*pe = s.pseudo;
 			} else if (v->type == CT_FUNCTION && !element) {
@@ -700,8 +751,9 @@ int sellist_flags(const struct sellist *l)
 			if (c->comb == COMB_NEXT || c->comb == COMB_SUBSEQ)
 				g |= SF_FORWARD;
 			/* the subject is the last compound; further left,
-			 * everything is deep */
-			if (j == l->c[i].n - 1)
+			 * everything is deep, and in a ::part() rule the
+			 * subject is the host: its shadow tree depends */
+			if (j == l->c[i].n - 1 && !selector_part(l, i))
 				f |= g;
 			else
 				f |= (g & 0xff) << SF_DEEP | (g & ~0xff);
@@ -807,6 +859,53 @@ int selector_slotted(const struct sellist *l, int i, const soie_node *el)
 		    c->s[j].pseudo == PE_SLOTTED)
 			return matches_outside(c->s[j].args, el);
 	return 0;
+}
+
+const struct simple *selector_part(const struct sellist *l, int i)
+{
+	const struct compound *c = &l->c[i].c[l->c[i].n - 1];
+	int j;
+
+	if (l->c[i].pseudo_element != PE_PART &&
+	    l->c[i].pseudo_element != PE_BEFORE &&
+	    l->c[i].pseudo_element != PE_AFTER)
+		return NULL;
+	for (j = 0; j < c->n; j++)
+		if (c->s[j].type == SEL_PSEUDO_ELEMENT &&
+		    c->s[j].pseudo == PE_PART)
+			return &c->s[j];
+	return NULL;
+}
+
+static int match_compound(const struct compound *c, const soie_node *el,
+	const struct sellist *parent);
+
+int selector_part_match(const struct sellist *l, int i, const char *names,
+	const soie_node *el)
+{
+	const struct compound *c = &l->c[i].c[l->c[i].n - 1];
+	const struct simple *p = selector_part(l, i);
+	struct compound rest;
+	const char *w, *e;
+	char one[128];
+
+	if (!p)
+		return 0;
+	/* every name of ::part(a b) */
+	for (w = p->value; *w; w = *e ? e + 1 : e) {
+		for (e = w; *e && *e != ' '; e++)
+			;
+		if ((size_t)(e - w) >= sizeof(one))
+			return 0;
+		memcpy(one, w, (size_t)(e - w));
+		one[e - w] = '\0';
+		if (!word_in(names, one, 0))
+			return 0;
+	}
+	rest.s = (struct simple *)p + 1;
+	rest.n = (int)(c->s + c->n - rest.s);
+	rest.comb = COMB_NONE;
+	return match_compound(&rest, el, l->parent);
 }
 
 static const char *attr(const soie_node *el, const char *name)
@@ -1135,6 +1234,8 @@ static int match_pseudo(const struct simple *s, const soie_node *el)
 		 * class came is not: pages hide components until then */
 		return el->defined || el->ns != SOIE_NS_HTML ||
 			!strchr(el->name, '-');
+	case PC_STATE:
+		return el->states && word_in(element_states(el), s->value, 0);
 	case PC_TRUE:
 		return 1;
 	case PC_VALID:
@@ -1159,8 +1260,12 @@ static int match_compound(const struct compound *c, const soie_node *el,
 			    strcmp(el->name, s->value))
 				return 0;
 			break;
-		case SEL_UNIVERSAL:
 		case SEL_PSEUDO_ELEMENT:
+			/* what follows ::part() is the part's */
+			if (s->pseudo == PE_PART)
+				return 1;
+			break;
+		case SEL_UNIVERSAL:
 			break;
 		case SEL_ID:
 			if (!(v = attr(el, "id")) || !str_eq(v, s->value, quirks))

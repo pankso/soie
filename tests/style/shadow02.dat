@@ -1,0 +1,359 @@
+#data
+<!DOCTYPE html><style>x-a::part(panel){color:green;font-size:20px}x-a::part(panel big){font-weight:700}x-a::part(nope){color:red}x-a.o::part(base)::before{content:"B";color:blue}x-a::part(panel):hover{color:red}x-a::part(imp){color:green!important}</style><x-a class=o><template shadowrootmode=open><style>p{color:red;font-size:30px}:host::part(own){color:purple}.imp{color:orange!important}</style><p part="panel big" style="color:red">P</p><p part=base>base</p><p part=own style="color:navy">own</p><p part=imp class=imp>imp</p></template></x-a>
+#errors
+#properties
+color,font-size,font-weight,content
+#document
+| <!DOCTYPE html>
+| <html>
+|   @color: rgb(0, 0, 0)
+|   @font-size: 16px
+|   @font-weight: 400
+|   @content: normal
+|   <head>
+|     @color: rgb(0, 0, 0)
+|     @font-size: 16px
+|     @font-weight: 400
+|     @content: normal
+|     <style>
+|       @color: rgb(0, 0, 0)
+|       @font-size: 16px
+|       @font-weight: 400
+|       @content: normal
+|       "x-a::part(panel){color:green;font-size:20px}x-a::part(panel big){font-weight:700}x-a::part(nope){color:red}x-a.o::part(base)::before{content:"B";color:blue}x-a::part(panel):hover{color:red}x-a::part(imp){color:green!important}"
+|   <body>
+|     @color: rgb(0, 0, 0)
+|     @font-size: 16px
+|     @font-weight: 400
+|     @content: normal
+|     <x-a>
+|       class="o"
+|       @color: rgb(0, 0, 0)
+|       @font-size: 16px
+|       @font-weight: 400
+|       @content: normal
+|       #shadow-root
+|         <style>
+|           @color: rgb(0, 0, 0)
+|           @font-size: 16px
+|           @font-weight: 400
+|           @content: normal
+|           "p{color:red;font-size:30px}:host::part(own){color:purple}.imp{color:orange!important}"
+|         <p>
+|           part="panel big"
+|           style="color:red"
+|           @color: rgb(0, 128, 0)
+|           @font-size: 20px
+|           @font-weight: 700
+|           @content: normal
+|           "P"
+|         <p>
+|           part="base"
+|           @color: rgb(255, 0, 0)
+|           @font-size: 30px
+|           @font-weight: 400
+|           @content: normal
+|           ::before
+|             @color: rgb(0, 0, 255)
+|             @font-size: 30px
+|             @font-weight: 400
+|             @content: "B"
+|           "base"
+|         <p>
+|           part="own"
+|           style="color:navy"
+|           @color: rgb(0, 0, 128)
+|           @font-size: 30px
+|           @font-weight: 400
+|           @content: normal
+|           "own"
+|         <p>
+|           class="imp"
+|           part="imp"
+|           @color: rgb(255, 165, 0)
+|           @font-size: 30px
+|           @font-weight: 400
+|           @content: normal
+|           "imp"
+
+#data
+<!DOCTYPE html><style>x-b::part(label){color:green}x-b::part(base){font-weight:700}x-b::part(inner){font-size:30px}x-d::part(base){color:red}</style><x-b><template shadowrootmode=open><style>x-d::part(base){font-size:20px}</style><x-d exportparts="base:label, base, tip :  base"><template shadowrootmode=open><span part=base>deep</span><span part=tip>tip</span><span part=inner>no</span></template></x-d></template></x-b>
+#errors
+#properties
+color,font-weight,font-size
+#document
+| <!DOCTYPE html>
+| <html>
+|   @color: rgb(0, 0, 0)
+|   @font-weight: 400
+|   @font-size: 16px
+|   <head>
+|     @color: rgb(0, 0, 0)
+|     @font-weight: 400
+|     @font-size: 16px
+|     <style>
+|       @color: rgb(0, 0, 0)
+|       @font-weight: 400
+|       @font-size: 16px
+|       "x-b::part(label){color:green}x-b::part(base){font-weight:700}x-b::part(inner){font-size:30px}x-d::part(base){color:red}"
+|   <body>
+|     @color: rgb(0, 0, 0)
+|     @font-weight: 400
+|     @font-size: 16px
+|     <x-b>
+|       @color: rgb(0, 0, 0)
+|       @font-weight: 400
+|       @font-size: 16px
+|       #shadow-root
+|         <style>
+|           @color: rgb(0, 0, 0)
+|           @font-weight: 400
+|           @font-size: 16px
+|           "x-d::part(base){font-size:20px}"
+|         <x-d>
+|           exportparts="base:label, base, tip :  base"
+|           @color: rgb(0, 0, 0)
+|           @font-weight: 400
+|           @font-size: 16px
+|           #shadow-root
+|             <span>
+|               part="base"
+|               @color: rgb(0, 128, 0)
+|               @font-weight: 700
+|               @font-size: 20px
+|               "deep"
+|             <span>
+|               part="tip"
+|               @color: rgb(0, 0, 0)
+|               @font-weight: 700
+|               @font-size: 16px
+|               "tip"
+|             <span>
+|               part="inner"
+|               @color: rgb(0, 0, 0)
+|               @font-weight: 400
+|               @font-size: 16px
+|               "no"
+
+#data
+<!DOCTYPE html><style>.dark{--x:rgb(1,2,3)}x-h{--y:4px}</style><div class=dark><x-h open><template shadowrootmode=open><style>:host([open]){color:green}:host(:not([disabled])){font-weight:700}::slotted(*){font-style:italic}::slotted([slot=prefix]){text-decoration-line:underline}:host-context(.dark) i{color:var(--x)}slot[name=suffix]::slotted(span){font-size:30px}i{letter-spacing:var(--y)}@media (min-width:1px){b{font-size:11px}}@media (max-width:1px){b{font-size:99px}}</style><i>i</i><b>b</b><slot name=prefix></slot><slot></slot><slot name=suffix></slot></template><span slot=prefix>pre</span><span>def</span><span slot=suffix>suf</span><em slot=suffix>em</em></x-h></div>
+#errors
+#properties
+color,font-weight,font-style,text-decoration-line,font-size,letter-spacing
+#document
+| <!DOCTYPE html>
+| <html>
+|   @color: rgb(0, 0, 0)
+|   @font-weight: 400
+|   @font-style: normal
+|   @text-decoration-line: none
+|   @font-size: 16px
+|   @letter-spacing: normal
+|   <head>
+|     @color: rgb(0, 0, 0)
+|     @font-weight: 400
+|     @font-style: normal
+|     @text-decoration-line: none
+|     @font-size: 16px
+|     @letter-spacing: normal
+|     <style>
+|       @color: rgb(0, 0, 0)
+|       @font-weight: 400
+|       @font-style: normal
+|       @text-decoration-line: none
+|       @font-size: 16px
+|       @letter-spacing: normal
+|       ".dark{--x:rgb(1,2,3)}x-h{--y:4px}"
+|   <body>
+|     @color: rgb(0, 0, 0)
+|     @font-weight: 400
+|     @font-style: normal
+|     @text-decoration-line: none
+|     @font-size: 16px
+|     @letter-spacing: normal
+|     <div>
+|       class="dark"
+|       @color: rgb(0, 0, 0)
+|       @font-weight: 400
+|       @font-style: normal
+|       @text-decoration-line: none
+|       @font-size: 16px
+|       @letter-spacing: normal
+|       <x-h>
+|         open=""
+|         @color: rgb(0, 128, 0)
+|         @font-weight: 700
+|         @font-style: normal
+|         @text-decoration-line: none
+|         @font-size: 16px
+|         @letter-spacing: normal
+|         #shadow-root
+|           <style>
+|             @color: rgb(0, 128, 0)
+|             @font-weight: 700
+|             @font-style: normal
+|             @text-decoration-line: none
+|             @font-size: 16px
+|             @letter-spacing: normal
+|             ":host([open]){color:green}:host(:not([disabled])){font-weight:700}::slotted(*){font-style:italic}::slotted([slot=prefix]){text-decoration-line:underline}:host-context(.dark) i{color:var(--x)}slot[name=suffix]::slotted(span){font-size:30px}i{letter-spacing:var(--y)}@media (min-width:1px){b{font-size:11px}}@media (max-width:1px){b{font-size:99px}}"
+|           <i>
+|             @color: rgb(1, 2, 3)
+|             @font-weight: 700
+|             @font-style: italic
+|             @text-decoration-line: none
+|             @font-size: 16px
+|             @letter-spacing: 4px
+|             "i"
+|           <b>
+|             @color: rgb(0, 128, 0)
+|             @font-weight: 900
+|             @font-style: normal
+|             @text-decoration-line: none
+|             @font-size: 11px
+|             @letter-spacing: normal
+|             "b"
+|           <slot>
+|             name="prefix"
+|             @color: rgb(0, 128, 0)
+|             @font-weight: 700
+|             @font-style: normal
+|             @text-decoration-line: none
+|             @font-size: 16px
+|             @letter-spacing: normal
+|           <slot>
+|             @color: rgb(0, 128, 0)
+|             @font-weight: 700
+|             @font-style: normal
+|             @text-decoration-line: none
+|             @font-size: 16px
+|             @letter-spacing: normal
+|           <slot>
+|             name="suffix"
+|             @color: rgb(0, 128, 0)
+|             @font-weight: 700
+|             @font-style: normal
+|             @text-decoration-line: none
+|             @font-size: 16px
+|             @letter-spacing: normal
+|         <span>
+|           slot="prefix"
+|           @color: rgb(0, 128, 0)
+|           @font-weight: 700
+|           @font-style: italic
+|           @text-decoration-line: underline
+|           @font-size: 16px
+|           @letter-spacing: normal
+|           "pre"
+|         <span>
+|           @color: rgb(0, 128, 0)
+|           @font-weight: 700
+|           @font-style: italic
+|           @text-decoration-line: none
+|           @font-size: 16px
+|           @letter-spacing: normal
+|           "def"
+|         <span>
+|           slot="suffix"
+|           @color: rgb(0, 128, 0)
+|           @font-weight: 700
+|           @font-style: italic
+|           @text-decoration-line: none
+|           @font-size: 30px
+|           @letter-spacing: normal
+|           "suf"
+|         <em>
+|           slot="suffix"
+|           @color: rgb(0, 128, 0)
+|           @font-weight: 700
+|           @font-style: italic
+|           @text-decoration-line: none
+|           @font-size: 16px
+|           @letter-spacing: normal
+|           "em"
+
+#data
+<!DOCTYPE html><x-n><template shadowrootmode=open><style>:host{display:none}:host([open]){display:block}</style>x</template></x-n><x-n open><template shadowrootmode=open><style>:host{display:none}:host([open]){display:block}</style>x</template></x-n><x-c style="display:contents;color:red"><template shadowrootmode=open><p>c</p></template></x-c><div style="color:red;font-weight:700;--z:1px"><x-r><template shadowrootmode=open><style>:host{all:initial;display:block}p{width:var(--z)}</style><p>r</p></template></x-r></div>
+#errors
+#properties
+display,color,font-weight,width
+#document
+| <!DOCTYPE html>
+| <html>
+|   @display: block
+|   @color: rgb(0, 0, 0)
+|   @font-weight: 400
+|   @width: auto
+|   <head>
+|     @display: none
+|     @color: rgb(0, 0, 0)
+|     @font-weight: 400
+|     @width: auto
+|   <body>
+|     @display: block
+|     @color: rgb(0, 0, 0)
+|     @font-weight: 400
+|     @width: auto
+|     <x-n>
+|       @display: none
+|       @color: rgb(0, 0, 0)
+|       @font-weight: 400
+|       @width: auto
+|       #shadow-root
+|         <style>
+|           @display: none
+|           @color: rgb(0, 0, 0)
+|           @font-weight: 400
+|           @width: auto
+|           ":host{display:none}:host([open]){display:block}"
+|         "x"
+|     <x-n>
+|       open=""
+|       @display: block
+|       @color: rgb(0, 0, 0)
+|       @font-weight: 400
+|       @width: auto
+|       #shadow-root
+|         <style>
+|           @display: none
+|           @color: rgb(0, 0, 0)
+|           @font-weight: 400
+|           @width: auto
+|           ":host{display:none}:host([open]){display:block}"
+|         "x"
+|     <x-c>
+|       style="display:contents;color:red"
+|       @display: contents
+|       @color: rgb(255, 0, 0)
+|       @font-weight: 400
+|       @width: auto
+|       #shadow-root
+|         <p>
+|           @display: block
+|           @color: rgb(255, 0, 0)
+|           @font-weight: 400
+|           @width: auto
+|           "c"
+|     <div>
+|       style="color:red;font-weight:700;--z:1px"
+|       @display: block
+|       @color: rgb(255, 0, 0)
+|       @font-weight: 700
+|       @width: auto
+|       <x-r>
+|         @display: block
+|         @color: rgb(0, 0, 0)
+|         @font-weight: 400
+|         @width: auto
+|         #shadow-root
+|           <style>
+|             @display: none
+|             @color: rgb(0, 0, 0)
+|             @font-weight: 400
+|             @width: auto
+|             ":host{all:initial;display:block}p{width:var(--z)}"
+|           <p>
+|             @display: block
+|             @color: rgb(0, 0, 0)
+|             @font-weight: 400
+|             @width: 1px
+|             "r"

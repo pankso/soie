@@ -1057,7 +1057,7 @@ static JSValue n_shadow_open(JSContext *js, JSValueConst this, int argc,
 	return JS_NewBool(js, soie_shadow_open(n));
 }
 
-/* shadowCss(root, text): its adopted style sheets */
+/* defined(el): its custom element class came, :defined */
 static JSValue n_defined(JSContext *js, JSValueConst this, int argc,
 	JSValueConst *argv)
 {
@@ -1068,6 +1068,20 @@ static JSValue n_defined(JSContext *js, JSValueConst this, int argc,
 	return JS_UNDEFINED;
 }
 
+/* states(el, "a b"): its custom states, for :state() */
+static JSValue n_states(JSContext *js, JSValueConst this, int argc,
+	JSValueConst *argv)
+{
+	NODE(0, n);
+	STR(1, names);
+
+	(void)this;
+	soie_element_set_states(n, names);
+	JS_FreeCString(js, names);
+	return JS_UNDEFINED;
+}
+
+/* shadowCss(root, text): its adopted style sheets */
 static JSValue n_shadow_css(JSContext *js, JSValueConst this, int argc,
 	JSValueConst *argv)
 {
@@ -3185,6 +3199,7 @@ static const JSCFunctionListEntry natives[] = {
 	JS_CFUNC_DEF("shadowOpen", 1, n_shadow_open),
 	JS_CFUNC_DEF("shadowCss", 2, n_shadow_css),
 	JS_CFUNC_DEF("defined", 1, n_defined),
+	JS_CFUNC_DEF("states", 2, n_states),
 	JS_CFUNC_DEF("shadows", 1, n_shadows),
 	JS_CFUNC_DEF("connected", 1, n_connected),
 	JS_CFUNC_DEF("newDocument", 1, n_new_document),

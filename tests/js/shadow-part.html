@@ -1,0 +1,47 @@
+<!doctype html><style>
+x-p::part(lab){color:rgb(0,128,0)}
+x-p[open]::part(lab){font-weight:700}
+x-p::part(lab big){font-style:italic}
+x-p:state(on){color:rgb(0,0,255)}
+x-p:--legacy{text-decoration-line:underline}
+x-p:state(on)::part(lab){font-size:30px}
+x-o::part(out){color:rgb(255,0,0)}
+</style><x-p></x-p><script>
+class P extends HTMLElement{constructor(){super();this.i=this.attachInternals();
+const r=this.attachShadow({mode:'open'});
+r.innerHTML='<style>:host(:state(on)) span{letter-spacing:2px}</style><span part=lab>x</span><i>y</i>';}}
+customElements.define('x-p',P);
+const p=document.querySelector('x-p'),b=p.shadowRoot.querySelector("span"),i=p.shadowRoot.querySelector('i');
+const cs=(e,k)=>getComputedStyle(e)[k];
+console.log(cs(b,'color'),cs(b,'fontWeight'),cs(b,'fontStyle'),b.part.value,b.part.length);
+p.setAttribute('open','');
+console.log(cs(b,'fontWeight'));
+b.part.add('big');
+console.log(cs(b,'fontStyle'),b.getAttribute('part'),b.part.contains('big'));
+i.part='lab';
+console.log(cs(i,'color'));
+b.part.remove('lab');
+console.log(cs(b,'color'),cs(b,'fontStyle'));
+console.log(p.i.states instanceof CustomStateSet,cs(p,'color'),cs(i,'fontSize'));
+p.i.states.add('on');
+console.log(p.i.states.has('on'),p.i.states.size,cs(p,'color'),cs(i,'fontSize'),cs(b,'letterSpacing'));
+p.i.states.add('--legacy');
+console.log(cs(p,'textDecorationLine'),[...p.i.states].join());
+p.i.states.delete('on');
+console.log(cs(p,'color'),cs(i,'fontSize'),cs(b,'letterSpacing'));
+p.i.states.clear();
+console.log(cs(p,'textDecorationLine'),p.i.states.size);
+document.body.removeChild(p);
+const d=document.implementation.createHTMLDocument('');
+p.i.states.add('on');d.adoptNode(p);p.i.states.add('x');
+console.log([...p.i.states].join());
+const o=document.createElement('x-o');document.body.appendChild(o);
+const ir=o.attachShadow({mode:'open'});ir.innerHTML='<x-q><template></template></x-q>';
+const q=ir.firstChild,qs=q.attachShadow({mode:'open'});qs.innerHTML='<u part=in>u</u>';
+const u=qs.firstChild;
+console.log(cs(u,'color'));
+q.setAttribute('exportparts','in:out');
+console.log(cs(u,'color'));
+q.setAttribute('exportparts','in');
+console.log(cs(u,'color'));
+</script>

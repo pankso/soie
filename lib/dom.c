@@ -569,6 +569,60 @@ void soie_element_set_defined(soie_node *el)
 	if (el->type != SOIE_ELEMENT || el->defined)
 		return;
 	el->defined = 1;
+	el->doc->u.doc->gen++;
+	style_changed(el, CH_ATTR);
+}
+
+static int states_find(const soie_node *el)
+{
+	const struct docinfo *d = el->doc->u.doc;
+	int i;
+
+	for (i = 0; i < d->nstates && d->states[i].el != el; i++)
+		;
+	return i;
+}
+
+const char *element_states(const soie_node *el)
+{
+	int i = states_find(el);
+
+	return i < el->doc->u.doc->nstates ? el->doc->u.doc->states[i].names :
+		"";
+}
+
+/* el's entry out of its document's list */
+static void states_drop(soie_node *el)
+{
+	struct docinfo *d = el->doc->u.doc;
+	int i = states_find(el);
+
+	if (i < d->nstates) {
+		free(d->states[i].names);
+		d->states[i] = d->states[--d->nstates];
+	}
+	el->states = 0;
+}
+
+void soie_element_set_states(soie_node *el, const char *names)
+{
+	struct docinfo *d = el->doc->u.doc;
+
+	if (el->type != SOIE_ELEMENT || (!el->states && (!names || !*names)))
+		return;
+	if (el->states && names && !strcmp(element_states(el), names))
+		return;
+	if (el->states)
+		states_drop(el);
+	if (names && *names) {
+		d->states = xrealloc(d->states, (size_t)(d->nstates + 1) *
+			sizeof(*d->states));
+		d->states[d->nstates].el = el;
+		d->states[d->nstates++].names = xstrndup(names,
+			strlen(names));
+		el->states = 1;
+	}
+	d->gen++;
 	style_changed(el, CH_ATTR);
 }
 
@@ -834,8 +888,15 @@ soie_node *soie_node_clone(const soie_node *n, int deep)
  * the styles of from, a player. */
 static void move_one(soie_node *n, soie_node *from, soie_node *to)
 {
+	char *states = NULL;
+
 	if (n->dirty)
 		style_forget(n);
+	if (n->states) {
+		/* its states go with it: into to's list */
+		states = xstrndup(element_states(n), strlen(element_states(n)));
+		states_drop(n);
+	}
 	if (n->type == SOIE_ELEMENT) {
 		if (from->u.doc->media)
 			media_forget(n);
@@ -855,6 +916,10 @@ static void move_one(soie_node *n, soie_node *from, soie_node *to)
 		n->anext->aprev = n;
 	to->u.doc->all = n;
 	n->doc = to;
+	if (states) {
+		soie_element_set_states(n, states);
+		free(states);
+	}
 }
 
 /* n's subtree, template contents and shadow trees included */
@@ -1002,6 +1067,8 @@ static void node_free_one(soie_node *n)
 
 	if (n->dirty)
 		style_forget(n);
+	if (n->states)
+		states_drop(n);
 	switch (n->type) {
 	case SOIE_ELEMENT:
 		for (i = 0; i < n->u.el.nattrs; i++) {
@@ -1054,6 +1121,7 @@ static void node_free_one(soie_node *n)
 				a->u.frag.host = NULL;
 		while (n->u.doc->all)
 			node_free_one(n->u.doc->all);
+		free(n->u.doc->states);
 		break;
 	default:
 		break;

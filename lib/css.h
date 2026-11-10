@@ -143,6 +143,7 @@ struct simple {
 	char *value;
 	struct sellist *args;	/* :is() :not() :has() :nth-*(of S)
 				 * :host() ::slotted() */
+	/* value: ::part()'s names (space separated), :state()'s name */
 };
 
 struct compound {
@@ -165,7 +166,8 @@ struct sellist {
 	const struct sellist *parent;	/* what & stands for */
 };
 
-enum { PE_NONE, PE_BEFORE, PE_AFTER, PE_MARKER, PE_OTHER, PE_SLOTTED };
+enum { PE_NONE, PE_BEFORE, PE_AFTER, PE_MARKER, PE_OTHER, PE_SLOTTED,
+	PE_PART };
 
 /* Pseudo-classes (the cascade indexes rules by some) */
 enum {
@@ -178,6 +180,7 @@ enum {
 	PC_REQUIRED, PC_OPTIONAL, PC_READ_ONLY, PC_READ_WRITE,
 	PC_PLACEHOLDER_SHOWN, PC_OPEN, PC_DEFINED, PC_VALID,
 	PC_HOST, PC_HOST_CONTEXT,	/* :host, :host(S), :host-context(S) */
+	PC_STATE,	/* :state(x), :--x: ElementInternals' states */
 	PC_TRUE,	/* always matches: :scope... handled as root */
 	PC_FALSE	/* states the engine does not have yet */
 };
@@ -196,6 +199,12 @@ void selector_shadow(const soie_node *root);
  * ::slotted() argument (the rest is matched from el's slot)? */
 int selector_has_host(const struct sellist *l, int i);
 int selector_slotted(const struct sellist *l, int i, const soie_node *el);
+/* The ::part() of selector i of l (NULL if none); does el, a part
+ * named names (space separated) of the host, match it and the
+ * pseudo-classes after it? The rest is matched from the host */
+const struct simple *selector_part(const struct sellist *l, int i);
+int selector_part_match(const struct sellist *l, int i, const char *names,
+	const soie_node *el);
 unsigned sellist_max_spec(const struct sellist *s, const soie_node *el);
 /*
  * What a change can affect beyond the changed element's subtree. The
