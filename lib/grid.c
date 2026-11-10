@@ -1033,6 +1033,10 @@ float layout_grid(struct box *gb, float cbh)
 	int n, i, nav = 0;
 
 	n = place(gb, W, H, &cols, &rows, &v, cg, rg, &av, &nav);
+	for (i = 0; i < rows.n; i++)
+		if (rows.t[i].min.kind == TK_PCT || rows.t[i].max.kind == TK_PCT ||
+		    rows.t[i].max.kind == TK_FR)
+			box_pct_seen();	/* fr rows share a definite height */
 	rasc = xmalloc(((size_t)rows.n * 4 + 4) * sizeof(*rasc));
 	memset(rasc, 0, ((size_t)rows.n * 4 + 4) * sizeof(*rasc));
 	column_contributions(&cols, v, n, W, cg);

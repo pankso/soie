@@ -111,6 +111,7 @@ static struct {
 	int trial;		/* in a table's trial layouts (sizes) */
 	struct box *measured;	/* box_content_height(): its height
 				 * property is not used */
+	unsigned pct;		/* percentage heights met, resolved or not */
 	/* the static positions those met, as they were before */
 	struct saved {
 		struct box *b;
@@ -310,8 +311,11 @@ static float spec_height(const struct box *b, int prop, float cbh)
 
 	if (is_auto(st, prop))
 		return -1;
-	if (cbh < 0 && is_pct(st, prop))
-		return -1;
+	if (is_pct(st, prop)) {
+		g.pct++;
+		if (cbh < 0)
+			return -1;
+	}
 	h = len_val(&st->v[prop], cbh);
 	if (border_box(st))
 		h -= vedges(b);
@@ -1394,7 +1398,8 @@ static void layout_alone(struct box *b, float x, float y, float w,
 	struct bfc own;
 	struct strut s = { 0, 0 };
 	float h, hspec, rh = -1;
-	int first;
+	unsigned pct;
+	int first, hown;
 
 	if (b->type == B_REPLACED) {
 		b->x = x;
@@ -1406,8 +1411,14 @@ static void layout_alone(struct box *b, float x, float y, float w,
 		translate(b, x, y);
 		return;
 	}
-	if (b->lok && b->lw == w && b->lcbh == cbh && b->ldefh == defh &&
-	    !g.trial) {
+	/* ...or with a height from outside that is the height it has
+	 * anyway (or had, and none is given now), nothing in it depending
+	 * on a percentage: a column's item is measured, then laid out at
+	 * that very height, and each level of nested flex containers laid
+	 * its content out twice (22 levels: 4.5 s) */
+	if (b->lok && b->lw == w && b->lcbh == cbh && !g.trial &&
+	    (b->ldefh == defh || (b->lsame && (defh < 0 ||
+	    fabsf(defh - b->lh) < 0.01f)))) {
 		/* laid out the same way before (incremental layout): its
 		 * subtree is where lx, ly say (abs_static() set x, y) */
 		int i;
@@ -1424,7 +1435,9 @@ static void layout_alone(struct box *b, float x, float y, float w,
 	b->x = x;
 	b->y = y;
 	b->w = w;
+	pct = g.pct;
 	hspec = b == g.measured ? -1 : spec_height(b, P_HEIGHT, cbh);
+	hown = hspec >= 0;
 	if (hspec < 0)
 		hspec = defh;
 	if (hspec < 0 && b != g.measured)
@@ -1454,7 +1467,18 @@ static void layout_alone(struct box *b, float x, float y, float w,
 	free(own.v);
 	if (rh >= 0 && h > rh && ratio_grows(b))
 		hspec = h;
-	b->h = clamp_h(b, hspec >= 0 ? hspec : h, cbh);
+	{
+		/* the height its content alone gives it */
+		float nat = clamp_h(b, hown ? hspec : rh >= 0 && !(h > rh &&
+			ratio_grows(b)) ? rh : h, cbh);
+
+		b->h = clamp_h(b, hspec >= 0 ? hspec : h, cbh);
+		/* a flex or grid container given a height says that
+		 * height, not its content's: only known without one */
+		b->lsame = b != g.measured && g.pct == pct && !hown &&
+			fabsf(nat - b->h) < 0.01f &&
+			(defh < 0 || !is_flexgrid(b));
+	}
 	b->lok = !g.trial;	/* without its absolute boxes */
 	b->lw = w;
 	b->lcbh = cbh;
@@ -1494,6 +1518,14 @@ void layout_cell(struct box *c, float x, float y, float w)
 }
 
 /* For flex and grid */
+
+/* A size that depends on whether the height around it is definite was
+ * used (a percentage flex basis, a percentage row): the layout of the
+ * boxes being laid out is not the same with and without one */
+void box_pct_seen(void)
+{
+	g.pct++;
+}
 
 int box_has_ratio(const struct box *b)
 {

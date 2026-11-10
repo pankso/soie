@@ -95,6 +95,9 @@ struct box {
 	 * tree, fixed up); laid out alone again with the same width and
 	 * containing block height (lw, lcbh, ldefh, lok), it only moves. */
 	unsigned char kept, lok;
+	unsigned char lsame;	/* that layout is the same with a height
+				 * from outside or without, when that height is
+				 * the one it has: no percentage in it */
 	float lw, lcbh, ldefh, lh;
 	float lx, ly;		/* where its content was, translate() too */
 	unsigned abs_pass;	/* in the absolute boxes of that layout */
@@ -171,6 +174,7 @@ void abs_rect(struct box *b, float x, float y, float w, float h, int ax,
 void abs_area(struct box *b, float x, float y, float w, float h);
 float box_baseline(const struct box *b, int last);
 float box_content_height(struct box *b, float w);
+void box_pct_seen(void);
 int box_has_ratio(const struct box *b);
 /* through the preferred aspect ratio: a content size from the other */
 float box_ratio_w(const struct box *b, float h);

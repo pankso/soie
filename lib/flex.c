@@ -159,8 +159,11 @@ static void base_size(struct item *it, int row, float W, float H,
 	float mn, mx, sz = -1, cw = -1;
 	int content = 0;
 
-	if (!fb->kw)
+	if (!fb->kw) {
 		sz = len_val(fb, row ? W : (H >= 0 ? H : 0));
+		if (!row && (fb->u.len.pct || fb->u.len.calc))
+			box_pct_seen();
+	}
 	if (sz >= 0 && kw(st, P_BOX_SIZING, "border-box"))
 		sz -= row ? it->mbefore + it->mafter -
 			(b->m[3] + b->m[1]) : 0;
@@ -400,6 +403,9 @@ float layout_flex(struct box *f, float cbh)
 		box_edges(c, W);
 		it->grow = (float)c->style->v[P_FLEX_GROW].u.num;
 		it->shrink = (float)c->style->v[P_FLEX_SHRINK].u.num;
+		/* a column's items only flex in a definite height */
+		if (!row && it->grow > 0)
+			box_pct_seen();
 		if (row) {
 			it->mbefore = c->m[3] + c->b[3] + c->p[3];
 			it->mafter = c->m[1] + c->b[1] + c->p[1];

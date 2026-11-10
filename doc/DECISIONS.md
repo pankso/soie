@@ -506,6 +506,22 @@ reversed, edit the entry and say why; do not leave stale rules here.
   inline boxes around it (finish_line()); the line itself does not
   change. python.org's Donate link (inline, top: 38px) sat 38 px too
   high, over the logo row.
+- Nested flex containers were laid out in exponential time: a
+  column's item is measured without a height, then laid out at that
+  very height as a definite one, a different layout for the cache of
+  layout_alone(), so each level did its content twice (22 levels: 4.5
+  s). A layout made without a height from outside now also answers
+  for one made with a height that is the height it has, and the
+  reverse for a plain block container, when nothing in it depended on
+  whether a height is definite (lsame): no percentage height, flex
+  basis or grid row, no fr row, no growing item of a column
+  (box_pct_seen(), counted while the box is laid out). A flex or grid
+  container given a height reports that height as its content's, so
+  its layout with one never answers for one without. 22 levels: 4 ms.
+  Checked by the differential test of incremental layout (28 runs of
+  60 random changes on 7 site copies, no difference; it caught two
+  wrong versions of this rule) and by the layouts of 11 site copies
+  at two widths, the same with the rule on and off.
 - Bounds found by a review: grid lines are clamped to 10000 as in
   Firefox (the occupancy grid is rows x columns; line 50000 on both
   axes overflowed its index); display: contents counts as a level of
