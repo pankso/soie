@@ -42,6 +42,13 @@ each change are in [DECISIONS.md](DECISIONS.md).
 - `flex-direction: row-reverse` and `column-reverse` start from the
   other edge.
 - Tabs in preformatted text.
+- Tables: a cell's `height` is a minimum (text ran over the next
+  row), the table's `height`, `<col>` and `<colgroup>` widths.
+- Grid: heights in percent or from outside, `min-height`, items
+  spanning several tracks, images as items, `calc()` and viewport
+  units in track sizes.
+- Floats: a shrink-to-fit box holds its floats side by side; a box
+  that does not fit beside a float goes below it.
 - Absolute boxes centred with `margin: auto` between their offsets
   (modals, spinners) stayed in the corner.
 - `:is()` and `:where()` with arguments of different kinds (a class

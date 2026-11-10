@@ -1,0 +1,67 @@
+#data
+<!DOCTYPE html><body style="margin:0"><table style="border-spacing:0"><tr><td style="height:10px;width:40px;padding:0">a b c d e f</td></tr><tr><td style="padding:0">n</td></tr></table><table style="border-spacing:0;height:100px"><tr><td style="padding:0">a</td></tr><tr><td style="padding:0">b</td></tr></table>
+#errors
+#layout
+width=200
+#document
+| block <html> 0,0 200x160
+|   block <body> 0,0 200x160
+|     block <table> 0,0 40x60
+|       block <tbody> 0,0 40x60
+|         block <tr> 0,0 40x40
+|           block <td> 0,0 40x40
+|             line 0,0 40x20
+|               text "a b c" 0,2 40x16
+|             line 0,20 40x20
+|               text "d e f" 0,22 40x16
+|         block <tr> 0,40 40x20
+|           block <td> 0,40 40x20
+|             line 0,40 40x20
+|               text "n" 0,42 8x16
+|     block <table> 0,60 8x100
+|       block <tbody> 0,60 8x100
+|         block <tr> 0,60 8x50
+|           block <td> 0,60 8x50
+|             line 0,75 8x20
+|               text "a" 0,77 8x16
+|         block <tr> 0,110 8x50
+|           block <td> 0,110 8x50
+|             line 0,125 8x20
+|               text "b" 0,127 8x16
+
+#data
+<!DOCTYPE html><body style="margin:0"><table style="border-spacing:0;width:200px"><col style="width:150px"><col><tr><td style="padding:0">a</td><td style="padding:0">b</td></tr></table><table style="border-spacing:0;width:200px"><colgroup><col width=30><col span=2 width=60></colgroup><tr><td style="padding:0">a</td><td style="padding:0">b</td><td style="padding:0">c</td></tr></table>
+#errors
+#layout
+width=200
+#document
+| block <html> 0,0 200x40
+|   block <body> 0,0 200x40
+|     block <table> 0,0 200x20
+|       block <colgroup> 0,0 0x0
+|         block <col> 0,0 0x0
+|         block <col> 0,0 0x0
+|       block <tbody> 0,0 200x20
+|         block <tr> 0,0 200x20
+|           block <td> 0,0 150x20
+|             line 0,0 150x20
+|               text "a" 0,2 8x16
+|           block <td> 150,0 50x20
+|             line 150,0 50x20
+|               text "b" 150,2 8x16
+|     block <table> 0,20 200x20
+|       block <colgroup> 0,20 0x0
+|         block <col> 0,20 0x0
+|         block <col> 0,20 0x0
+|       block <tbody> 0,20 200x20
+|         block <tr> 0,20 200x20
+|           block <td> 0,20 40x20
+|             line 0,20 40x20
+|               text "a" 0,22 8x16
+|           block <td> 40,20 80x20
+|             line 40,20 80x20
+|               text "b" 40,22 8x16
+|           block <td> 120,20 80x20
+|             line 120,20 80x20
+|               text "c" 120,22 8x16
+

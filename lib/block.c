@@ -431,12 +431,24 @@ void content_sizes(struct box *b, float *mn, float *mx)
 	} else if (b->flags & BF_INLINE_KIDS) {
 		inline_sizes(b, mn, mx);
 	} else {
+		/* floats in a row sit side by side: their max-content
+		 * widths add up until one clears them (two floated columns
+		 * and a clearfix in a shrink-to-fit box were one under the
+		 * other); not with the blocks beside them, as Firefox */
+		float fl = 0;
+
 		for (c = b->first; c; c = c->next) {
 			if (c->flags & BF_ABS)
 				continue;
 			box_sizes(c, &cmin, &cmax);
 			if (cmin > *mn)
 				*mn = cmin;
+			if (!kw(c->style, P_CLEAR, "none"))
+				fl = 0;
+			if (c->flags & BF_FLOAT) {
+				fl += cmax;
+				cmax = fl;
+			}
 			if (cmax > *mx)
 				*mx = cmax;
 		}
@@ -1005,11 +1017,34 @@ static float layout_block(struct box *b, struct bfc *f, float cbx, float cbw,
 		}
 	}
 	if (bfc && f && f->n) {
-		/* BFC roots sit beside floats */
-		float ty = y + strut_val(s);
+		/* BFC roots sit beside floats, or below them when they do
+		 * not fit there (CSS 2 9.5): a width of their own, a
+		 * replaced box, a table's smallest width */
+		float ty = y + strut_val(s), want = -1, mn, mx, next;
 
 		avail_x = bfc_left(f, ty, 1, cbx);
 		avail_w = bfc_right(f, ty, 1, cbx + cbw) - avail_x;
+		if (avail_w < cbw) {
+			if (b->role == R_TABLE) {
+				box_sizes(b, &mn, &mx);
+				want = mn;
+			} else if (b->type == B_REPLACED) {
+				replaced_size(b, cbw, cbh);
+				want = b->w + hedges(b) + b->m[1] + b->m[3];
+			} else if ((want = spec_width(b, P_WIDTH, cbw)) >= 0) {
+				want = clamp_w(b, want, cbw) + hedges(b) + b->m[1] +
+					b->m[3];
+			}
+		}
+		while (want > avail_w + 0.01f && avail_w < cbw &&
+		       (next = bfc_next(f, ty)) > ty) {
+			ty = next;
+			avail_x = bfc_left(f, ty, 1, cbx);
+			avail_w = bfc_right(f, ty, 1, cbx + cbw) - avail_x;
+			y = ty;
+			s->pos = s->neg = 0;
+			b->m[0] = 0;	/* cleared: its margin is in the move */
+		}
 	}
 	if (b->role == R_TABLE) {
 		/* tables size themselves, then sit like a fixed width */
@@ -1103,7 +1138,7 @@ static float layout_flow(struct box *b, struct bfc *f, float y,
 		}
 		if (c->flags & BF_FLOAT) {
 			place_float(c, f, y + strut_val(s), b->x, b->x + b->w,
-				b->w);
+				b->w, cbh);
 			continue;
 		}
 		y = layout_block(c, f, b->x, b->w, cbh, y, s);
@@ -1113,7 +1148,7 @@ static float layout_flow(struct box *b, struct bfc *f, float y,
 
 /* Floats (CSS 2 9.5.1, simplified): as high as possible, then sideways. */
 void place_float(struct box *b, struct bfc *f, float y, float x0, float x1,
-	float cbw)
+	float cbw, float cbh)
 {
 	int left = !kw(b->style, P_FLOAT, "right") &&
 		!kw(b->style, P_FLOAT, "inline-end");
@@ -1123,12 +1158,12 @@ void place_float(struct box *b, struct bfc *f, float y, float x0, float x1,
 
 	edges(b, cbw);
 	if (b->type == B_REPLACED) {
-		replaced_size(b, cbw, -1);
+		replaced_size(b, cbw, cbh);
 		w = b->w;
 	} else {
 		w = spec_width(b, P_WIDTH, cbw);
 		if (w < 0)
-			w = ratio_width(b, -1);
+			w = ratio_width(b, cbh);
 		if (w < 0)
 			w = keyword_width(b, cbw - b->m[1] - b->m[3] -
 				hedges(b));
@@ -1138,7 +1173,7 @@ void place_float(struct box *b, struct bfc *f, float y, float x0, float x1,
 		w = clamp_w(b, w, cbw);
 	}
 	mw = w + hedges(b) + b->m[1] + b->m[3];
-	layout_alone(b, 0, 0, w, -1, -1);
+	layout_alone(b, 0, 0, w, cbh, -1);
 	mh = b->h + vedges(b) + b->m[0] + b->m[2];
 	if (side && (cy = bfc_clear(f, side)) > y)
 		y = cy;
@@ -1282,8 +1317,19 @@ void layout_cell(struct box *c, float x, float y, float w)
 	}
 	c->m[0] = c->m[1] = c->m[2] = c->m[3] = 0;
 	w -= hedges(c);
-	layout_alone(c, x + c->b[3] + c->p[3], y + c->b[0] + c->p[0],
-		w < 0 ? 0 : w, -1, -1);
+	{
+		/* its content's height: the height property is a minimum
+		 * for the row (table.c), not the cell's height (a cell of
+		 * height: 20px with six lines was 20 px, the next row over
+		 * its text) */
+		struct box *save = g.measured;
+
+		g.measured = c;
+		c->lok = 0;
+		layout_alone(c, x + c->b[3] + c->p[3], y + c->b[0] + c->p[0],
+			w < 0 ? 0 : w, -1, -1);
+		g.measured = save;
+	}
 }
 
 /* For flex and grid */

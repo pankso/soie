@@ -1380,6 +1380,7 @@ static void hints(const soie_node *el, struct svec *out)
 	if (tag == TAG_TABLE || tag == TAG_TD || tag == TAG_TH ||
 	    tag == TAG_IMG || tag == TAG_IFRAME || tag == TAG_OBJECT ||
 	    tag == TAG_EMBED || tag == TAG_HR || tag == TAG_COL ||
+	    tag == TAG_COLGROUP ||
 	    (tag == TAG_INPUT && (a = soie_element_get_attr(el, "type")) &&
 	     ascii_ieq(a, "image"))) {
 		if ((a = soie_element_get_attr(el, "width")) &&

@@ -447,6 +447,31 @@ reversed, edit the entry and say why; do not leave stale rules here.
 - Flex items of row-reverse and column-reverse are placed from the
   other edge of the line: only their order was reversed, the row
   stayed at the left.
+- Floats in a row add up in their container's max-content width,
+  until one clears them: two floated columns and a clearfix in a
+  shrink-to-fit box were one under the other. Not with the blocks
+  beside them, as Firefox. A box that starts a formatting context
+  (overflow, a table, a replaced box) and does not fit beside a float
+  goes below it (CSS 2 9.5): it overflowed. Floats get their
+  containing block's height: percentage heights in them resolve.
+- Grid, from the same review: the container's definite height is the
+  one it is given (it was resolved a second time against itself:
+  height: 50% sized the rows for a quarter; a height from top and
+  bottom was ignored), and an automatic height within min-height and
+  max-height sizes the rows for the one that holds (min-height:
+  100vh with rows auto 1fr auto: the footer at the bottom). Items
+  over several tracks contribute to them (span_contribution(): what
+  they exceed is shared by the tracks sized by content; a tall item
+  spanning two rows overflowed a 40 px grid). A replaced item takes
+  its CSS size. calc(100% - 200px) as a track size keeps its length
+  (only the percentage was read), and vw, vh and rem in tracks are
+  the real ones (doc_units(): they were 1024, 768 and 16 px).
+- Tables: a cell's height is a minimum for its row, not the cell's
+  height (six lines in a cell of height: 20px ran over the next row),
+  and vertical-align works in it; the table's height is a minimum
+  shared by the rows; `<col>` and `<colgroup>` widths size the
+  columns, in the automatic layout as a cell's width would, in the
+  fixed layout before the first row (their boxes were thrown away).
 - Bounds found by a review: grid lines are clamped to 10000 as in
   Firefox (the occupancy grid is rows x columns; line 50000 on both
   axes overflowed its index); display: contents counts as a level of

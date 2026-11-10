@@ -253,6 +253,7 @@ struct ls {
 	int content;		/* the line has something visible */
 	struct openbox open[64];
 	int nopen;
+	float cbh;		/* the container's height when definite */
 	struct box **pending;	/* floats for the next line */
 	int npending, cappending;
 	/* a line may break before what comes next: the text before
@@ -556,7 +557,7 @@ static void place_pending(struct ls *s)
 
 	for (i = 0; i < s->npending; i++)
 		place_float(s->pending[i], s->f, s->y, s->x0, s->x0 + s->w0,
-			s->w0);
+			s->w0, s->cbh);
 	if (s->npending) {
 		s->npending = 0;
 		edges_at(s);
@@ -910,6 +911,7 @@ float layout_inline(struct box *b, struct bfc *f, float x, float y, float w,
 	s.x0 = x;
 	s.w0 = w;
 	s.y = y;
+	s.cbh = cbh;
 	s.first = 1;
 	font_metrics(b->style, &m);
 	s.strut_h = line_height(b->style, &m);
@@ -1014,7 +1016,7 @@ float layout_inline(struct box *b, struct bfc *f, float x, float y, float w,
 			if (!s.content || s.pen + mx <= s.lr) {
 				float old = s.lx, pen = s.pen;
 
-				place_float(c, f, s.y, x, x + w, w);
+				place_float(c, f, s.y, x, x + w, w, cbh);
 				edges_at(&s);
 				s.pen = pen + s.lx - old;
 				if (s.lx != old) {

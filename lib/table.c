@@ -276,6 +276,55 @@ static float cell_hedges(struct box *c, float cbw)
 	return c->b[1] + c->b[3] + c->p[1] + c->p[3];
 }
 
+/*
+ * The widths of <col> and <colgroup> (their width attribute is a hint
+ * of the property): a column's width as its cells' would be. With
+ * fixed set (table-layout: fixed, room the width for percentages) they
+ * are the columns' widths, before the first row's cells.
+ */
+static void col_one(const struct box *c, struct tgrid *g, int *col, int fixed,
+	float room)
+{
+	const struct cval *w = &c->style->v[P_WIDTH];
+	int n = span_attr(c, "span"), k;
+
+	for (k = *col; k < *col + n && k < g->ncols; k++) {
+		if (w->kw || w->u.len.calc)
+			continue;
+		if (fixed) {
+			g->cw[k] = len_val(w, room);
+		} else if (w->u.len.pct) {
+			if (w->u.len.pct > g->cpct[k])
+				g->cpct[k] = w->u.len.pct;
+		} else {
+			if (w->u.len.px > g->cmin[k])
+				g->cmin[k] = w->u.len.px;
+			if (g->cmin[k] > g->cmax[k] || !g->cfix[k])
+				g->cmax[k] = g->cmin[k];
+			g->cfix[k] = 1;
+		}
+	}
+	*col += n;
+}
+
+static void col_widths(const struct box *t, struct tgrid *g, int fixed,
+	float room)
+{
+	const struct box *c, *k;
+	int col = 0;
+
+	for (c = t->first; c; c = c->next) {
+		if (c->role == R_COL) {
+			col_one(c, g, &col, fixed, room);
+		} else if (c->role == R_COLGROUP && c->first) {
+			for (k = c->first; k; k = k->next)
+				col_one(k, g, &col, fixed, room);
+		} else if (c->role == R_COLGROUP) {
+			col_one(c, g, &col, fixed, room);
+		}
+	}
+}
+
 /* Column minimum and maximum widths (17.5.2.2, simplified). */
 static void column_sizes(struct box *t, struct tgrid *g, float avail)
 {
@@ -333,10 +382,10 @@ static void column_sizes(struct box *t, struct tgrid *g, float avail)
 					g->cmax[k] += (mx - smx) * share;
 			}
 		}
+	col_widths(t, g, 0, 0);
 	for (i = 0; i < g->ncols; i++)
 		if (g->cmax[i] < g->cmin[i])
 			g->cmax[i] = g->cmin[i];
-	(void)t;
 }
 
 /* The used width of every column for a content width W. */
@@ -381,13 +430,14 @@ static void distribute(struct tgrid *g, float W)
 }
 
 /* table-layout: fixed (17.5.2.1): the first row decides. */
-static void fixed_columns(struct tgrid *g, float W)
+static void fixed_columns(const struct box *t, struct tgrid *g, float W)
 {
 	float room = W - g->hs * (float)(g->ncols + 1), used = 0;
 	int i, k, free_cols = 0;
 
 	for (i = 0; i < g->ncols; i++)
 		g->cw[i] = -1;
+	col_widths(t, g, 1, room);
 	for (i = 0; i < g->ncells && g->cells[i].row == 0; i++) {
 		struct tcell *tc = &g->cells[i];
 		const struct cval *w = &tc->box->style->v[P_WIDTH];
@@ -395,8 +445,9 @@ static void fixed_columns(struct tgrid *g, float W)
 		if (w->kw)
 			continue;
 		for (k = tc->col; k < tc->col + tc->cspan; k++)
-			g->cw[k] = (len_val(w, room) + cell_hedges(tc->box,
-				room)) / (float)tc->cspan;
+			if (g->cw[k] < 0)
+				g->cw[k] = (len_val(w, room) + cell_hedges(
+					tc->box, room)) / (float)tc->cspan;
 	}
 	for (i = 0; i < g->ncols; i++)
 		if (g->cw[i] < 0)
@@ -407,6 +458,21 @@ static void fixed_columns(struct tgrid *g, float W)
 		if (g->cw[i] < 0)
 			g->cw[i] = free_cols && room > used ?
 				(room - used) / (float)free_cols : 0;
+}
+
+/* A laid out cell's border box height: its content's, or its height
+ * property when larger (a minimum for the row) */
+static float cell_height(const struct box *c)
+{
+	const struct cval *v = &c->style->v[P_HEIGHT];
+	float h = c->h + c->p[0] + c->p[2] + c->b[0] + c->b[2];
+
+	float want = !v->kw && !v->u.len.pct && !v->u.len.calc ? v->u.len.px :
+		-1;
+
+	if (want >= 0 && !kw(c->style, P_BOX_SIZING, "border-box"))
+		want += c->p[0] + c->p[2] + c->b[0] + c->b[2];
+	return want > h ? want : h;
 }
 
 static float span_width(const struct tgrid *g, const struct tcell *tc)
@@ -480,7 +546,7 @@ void layout_table(struct box *t, float avail)
 		W = mx < avail ? mx : avail > mn ? avail : mn;
 	if (kw(st, P_TABLE_LAYOUT, "fixed") && spec >= 0) {
 		W = spec;
-		fixed_columns(&g, W);
+		fixed_columns(t, &g, W);
 	} else {
 		distribute(&g, W);
 	}
@@ -505,8 +571,7 @@ void layout_table(struct box *t, float avail)
 			x += g.cw[k] + g.hs;
 		cell_hedges(tc->box, W);
 		layout_cell(tc->box, x, 0, span_width(&g, tc));
-		h = tc->box->h + tc->box->p[0] + tc->box->p[2] +
-			tc->box->b[0] + tc->box->b[2];
+		h = cell_height(tc->box);
 		if (tc->rspan == 1 && h > g.rh[tc->row])
 			g.rh[tc->row] = h;
 	}
@@ -518,8 +583,7 @@ void layout_table(struct box *t, float avail)
 	}
 	for (i = 0; i < g.ncells; i++) {
 		struct tcell *tc = &g.cells[i];
-		float h = tc->box->h + tc->box->p[0] + tc->box->p[2] +
-			tc->box->b[0] + tc->box->b[2], have = 0;
+		float h = cell_height(tc->box), have = 0;
 		int k;
 
 		if (tc->rspan == 1)
@@ -529,6 +593,26 @@ void layout_table(struct box *t, float avail)
 		have += g.vs * (float)(tc->rspan - 1);
 		if (h > have)
 			g.rh[tc->row + tc->rspan - 1] += h - have;
+	}
+	{
+		/* the table's height is a minimum for its rows: what is
+		 * missing is shared by them, by their heights */
+		const struct cval *th = &st->v[P_HEIGHT];
+		float want = !th->kw && !th->u.len.pct && !th->u.len.calc ?
+			th->u.len.px : -1, have = g.vs, extra;
+
+		for (r = 0; r < g.nrows; r++)
+			have += g.rh[r] + g.vs;
+		if (want >= 0 && !kw(st, P_BOX_SIZING, "content-box"))
+			want -= t->b[0] + t->b[2] + t->p[0] + t->p[2];
+		extra = want - have - (cap_top - 0);
+		if (extra > 0 && g.nrows) {
+			float sum = have - g.vs * (float)(g.nrows + 1);
+
+			for (r = 0; r < g.nrows; r++)
+				g.rh[r] += sum > 0 ? extra * g.rh[r] / sum :
+					extra / (float)g.nrows;
+		}
 	}
 	y += g.vs;
 	for (r = 0; r < g.nrows; r++) {

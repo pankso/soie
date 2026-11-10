@@ -763,12 +763,32 @@ static void fixup(struct styledb *db, struct box *b)
 	int blocks = 0;
 
 	if (b->role == R_COL || b->role == R_COLGROUP) {
+		/* nothing in them but a column group's columns: they give
+		 * the table's columns their widths (table.c) */
+		struct box *keep = NULL, *kl = NULL;
+
 		while (b->first) {
 			c = b->first;
 			b->first = c->next;
-			box_drop(c);
+			c->next = NULL;
+			if (b->role == R_COLGROUP && c->role == R_COL) {
+				if (kl)
+					kl->next = c;
+				else
+					keep = c;
+				kl = c;
+				while (c->first) {
+					n = c->first;
+					c->first = n->next;
+					box_drop(n);
+				}
+				c->last = NULL;
+			} else {
+				box_drop(c);
+			}
 		}
-		b->last = NULL;
+		b->first = keep;
+		b->last = kl;
 		return;
 	}
 	table_fixup(db, b);

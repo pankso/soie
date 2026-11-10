@@ -1,0 +1,82 @@
+#data
+<!DOCTYPE html><body style="margin:0"><div style="float:left"><div style="float:left;width:50px">A</div><div style="float:left;width:50px">B</div><div style="clear:both"></div></div>
+#errors
+#layout
+width=200
+#document
+| block <html> 0,0 200x20
+|   block <body> 0,0 200x0
+|     block float <div> 0,0 100x20
+|       block float <div> 0,0 50x20
+|         line 0,0 50x20
+|           text "A" 0,2 8x16
+|       block float <div> 50,0 50x20
+|         line 50,0 50x20
+|           text "B" 50,2 8x16
+|       block <div> 0,20 100x0
+
+#data
+<!DOCTYPE html><body style="margin:0"><div style="width:150px"><div style="float:left;width:100px;height:30px"></div><div style="overflow:hidden;width:80px">x</div></div>
+#errors
+#layout
+width=200
+#document
+| block <html> 0,0 200x50
+|   block <body> 0,30 200x20
+|     block <div> 0,30 150x20
+|       block float <div> 0,0 100x30
+|       block <div> 0,30 80x20
+|         line 0,30 80x20
+|           text "x" 0,32 8x16
+
+#data
+<!DOCTYPE html><body style="margin:0"><div style="display:grid;grid-template-columns:60px 60px;width:120px"><div style="grid-row:span 2;height:90px"></div><div>b</div><div>c</div></div><div style="display:grid;width:200px;grid-template-columns:50px calc(100% - 50px)"><div>a</div><div>b</div></div><div style="display:grid;min-height:100px;grid-template-rows:auto 1fr auto"><div>h</div><div>m</div><div>f</div></div>
+#errors
+#layout
+width=200
+#document
+| block <html> 0,0 200x210
+|   block <body> 0,0 200x210
+|     block <div> 0,0 120x90
+|       block <div> 0,0 60x90
+|       block <div> 60,0 60x45
+|         line 60,0 60x20
+|           text "b" 60,2 8x16
+|       block <div> 60,45 60x45
+|         line 60,45 60x20
+|           text "c" 60,47 8x16
+|     block <div> 0,90 200x20
+|       block <div> 0,90 50x20
+|         line 0,90 50x20
+|           text "a" 0,92 8x16
+|       block <div> 50,90 150x20
+|         line 50,90 150x20
+|           text "b" 50,92 8x16
+|     block <div> 0,110 200x100
+|       block <div> 0,110 200x20
+|         line 0,110 200x20
+|           text "h" 0,112 8x16
+|       block <div> 0,130 200x60
+|         line 0,130 200x20
+|           text "m" 0,132 8x16
+|       block <div> 0,190 200x20
+|         line 0,190 200x20
+|           text "f" 0,192 8x16
+
+#data
+<!DOCTYPE html><body style="margin:0"><div style="position:relative;height:100px"><div style="position:absolute;top:0;bottom:0;width:50px;display:grid;grid-template-rows:1fr 30px"><div>a</div><div>b</div></div></div>
+#errors
+#layout
+width=200
+#document
+| block <html> 0,0 200x100
+|   block <body> 0,0 200x100
+|     block <div> 0,0 200x100
+|       block abs <div> 0,0 50x100
+|         block <div> 0,0 50x70
+|           line 0,0 50x20
+|             text "a" 0,2 8x16
+|         block <div> 0,70 50x30
+|           line 0,70 50x20
+|             text "b" 0,72 8x16
+

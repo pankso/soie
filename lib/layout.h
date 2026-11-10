@@ -159,7 +159,7 @@ void translate_flow(struct box *b, float dx, float dy);
 void box_sizes(struct box *b, float *min, float *max);
 void layout_atomic(struct box *b, float cbw, float cbh);
 void place_float(struct box *b, struct bfc *f, float y, float x0, float x1,
-	float cbw);
+	float cbw, float cbh);
 float bfc_left(const struct bfc *f, float y, float h, float x0);
 float bfc_right(const struct bfc *f, float y, float h, float x1);
 float bfc_next(const struct bfc *f, float y);

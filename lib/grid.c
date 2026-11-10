@@ -20,6 +20,7 @@ enum { TK_LEN, TK_PCT, TK_FR, TK_AUTO, TK_MIN, TK_MAX };
 struct tsize {
 	int kind;
 	float v;
+	float px;	/* TK_PCT: the length added, calc(100% - 200px) */
 };
 
 struct track {
@@ -46,6 +47,7 @@ struct gitem {
 	struct box *b;
 	int r0, r1, c0, c1;	/* lines, 0-based, end exclusive */
 	int rdef, cdef;		/* definite position in that axis */
+	float oh;		/* its outer height at its column width */
 	int bl;			/* baseline aligned in its row: 1 first,
 				 * 2 last */
 	float asc;		/* its margin box top to that baseline */
@@ -91,6 +93,7 @@ static int track_size(struct cur *c, const struct style *st,
 			calc_release(r.calc);
 		s->kind = r.pct ? TK_PCT : TK_LEN;
 		s->v = r.pct ? r.pct : r.px;
+		s->px = r.pct ? r.px : 0;
 		return 1;
 	}
 	cur_next(c);
@@ -173,8 +176,11 @@ static float fixed_size(const struct tsize *s, float avail)
 {
 	if (s->kind == TK_LEN)
 		return s->v;
-	if (s->kind == TK_PCT)
-		return avail > 0 ? s->v * avail / 100 : 0;
+	if (s->kind == TK_PCT) {
+		float v = avail > 0 ? s->v * avail / 100 + s->px : 0;
+
+		return v < 0 ? 0 : v;
+	}
 	return 0;
 }
 
@@ -471,7 +477,7 @@ static void extend(struct tracks *t, int n, const char *autos,
 
 	parse_tracks(autos, st, 0, 0, &a);
 	while (t->n < n) {
-		struct tsize s = { TK_AUTO, 0 };
+		struct tsize s = { TK_AUTO, 0, 0 };
 
 		if (a.n)
 			add_track(t, a.t[0].min, a.t[0].max);
@@ -930,7 +936,60 @@ static int place(struct box *gb, float W, float H, struct tracks *cols,
 	return n;
 }
 
-static void column_contributions(struct tracks *cols, struct gitem *v, int n)
+/*
+ * An item over several tracks, a to b: what its min and max
+ * contributions exceed of those tracks (their fixed sizes, else their
+ * content sizes so far) and of the gutters between is shared equally
+ * by the tracks sized by their content (CSS Grid 12.5, step 3,
+ * simplified: no order by span, no growth limits).
+ */
+static void span_contribution(struct tracks *t, int a, int b, float mn,
+	float mx, float avail, float g)
+{
+	float smin = 0, smax = 0, e, emax;
+	int i, n = 0, nl = 0;
+
+	for (i = a; i < b && i < t->n; i++) {
+		struct track *k = &t->t[i];
+
+		if (k->gone)
+			continue;
+		nl++;
+		if (k->min.kind == TK_LEN || k->min.kind == TK_PCT) {
+			float f = fixed_size(&k->min, avail);
+
+			if ((k->max.kind == TK_LEN || k->max.kind == TK_PCT) &&
+			    fixed_size(&k->max, avail) > f)
+				f = fixed_size(&k->max, avail);
+			smin += f;
+			smax += f;
+		} else {
+			smin += k->cmin;
+			smax += k->cmax > k->cmin ? k->cmax : k->cmin;
+			n++;
+		}
+	}
+	if (!n)
+		return;
+	g *= (float)(nl > 1 ? nl - 1 : 0);
+	e = (mn - smin - g) / (float)n;
+	emax = (mx - smax - g) / (float)n;
+	for (i = a; i < b && i < t->n; i++) {
+		struct track *k = &t->t[i];
+
+		if (k->gone || k->min.kind == TK_LEN || k->min.kind == TK_PCT)
+			continue;
+		if (emax > 0)
+			k->cmax = (k->cmax > k->cmin ? k->cmax : k->cmin) + emax;
+		if (e > 0)
+			k->cmin += e;
+		if (k->cmax < k->cmin)
+			k->cmax = k->cmin;
+	}
+}
+
+static void column_contributions(struct tracks *cols, struct gitem *v, int n,
+	float avail, float g)
 {
 	int i;
 
@@ -945,6 +1004,14 @@ static void column_contributions(struct tracks *cols, struct gitem *v, int n)
 		if (mx > cols->t[v[i].c0].cmax)
 			cols->t[v[i].c0].cmax = mx;
 	}
+	for (i = 0; i < n; i++) {
+		float mn, mx;
+
+		if (v[i].c1 - v[i].c0 < 2)
+			continue;
+		box_sizes(v[i].b, &mn, &mx);
+		span_contribution(cols, v[i].c0, v[i].c1, mn, mx, avail, g);
+	}
 }
 
 float layout_grid(struct box *gb, float cbh)
@@ -952,7 +1019,13 @@ float layout_grid(struct box *gb, float cbh)
 	const struct style *st = gb->style;
 	struct tracks cols, rows;
 	struct gitem *v;
-	float W = gb->w, H = box_spec_h(gb, P_HEIGHT, cbh);
+	/* cbh is the grid's own content height when definite, as
+	 * layout_contents() passes it: its height, or one set from
+	 * outside (it was resolved again against itself: height: 50% gave
+	 * rows for a quarter) */
+	float W = gb->w, H = cbh;
+	float lo = box_spec_h(gb, P_MIN_HEIGHT, cbh);
+	float hi = box_spec_h(gb, P_MAX_HEIGHT, cbh);
 	float cg = gapv(st, P_COLUMN_GAP, W), rg = gapv(st, P_ROW_GAP, 0);
 	float total, xoff = 0, yoff = 0, xs = 0, ys = 0;
 	struct gitem *av = NULL;
@@ -962,7 +1035,7 @@ float layout_grid(struct box *gb, float cbh)
 	n = place(gb, W, H, &cols, &rows, &v, cg, rg, &av, &nav);
 	rasc = xmalloc(((size_t)rows.n * 4 + 4) * sizeof(*rasc));
 	memset(rasc, 0, ((size_t)rows.n * 4 + 4) * sizeof(*rasc));
-	column_contributions(&cols, v, n);
+	column_contributions(&cols, v, n, W, cg);
 	size_tracks(&cols, W, cg);
 	/* items at their column widths give the row contributions */
 	for (i = 0; i < n; i++) {
@@ -971,17 +1044,20 @@ float layout_grid(struct box *gb, float cbh)
 
 		box_edges(b, aw);
 		w = box_spec_w(b, P_WIDTH, aw);
-		if (w < 0 || b->type == B_REPLACED)
-			w = b->type == B_REPLACED ? -1 : aw - b->m[1] - b->m[3] -
-				b->b[1] - b->b[3] - b->p[1] - b->p[3];
-		if (b->type == B_REPLACED)
-			w = b->iw > 0 ? b->iw : 0;
-		layout_item(b, 0, 0, box_clamp_w(b, w, aw),
-			box_spec_h(b, P_HEIGHT, -1));
-		if (b->type == B_REPLACED && b->ih > 0)
-			b->h = b->ih;
+		h = box_spec_h(b, P_HEIGHT, -1);
+		if (w < 0 && b->type == B_REPLACED) {
+			/* its width, through its ratio from its height, else
+			 * its natural one */
+			w = h >= 0 && box_has_ratio(b) ? box_ratio_w(b, h) :
+				b->iw > 0 ? b->iw : 0;
+		} else if (w < 0) {
+			w = aw - b->m[1] - b->m[3] - b->b[1] - b->b[3] -
+				b->p[1] - b->p[3];
+		}
+		layout_item(b, 0, 0, box_clamp_w(b, w, aw), h);
 		h = b->h + b->m[0] + b->m[2] + b->b[0] + b->b[2] + b->p[0] +
 			b->p[2];
+		v[i].oh = h;
 		if (v[i].r1 - v[i].r0 == 1) {
 			baseline_item(&v[i], st, h, rasc + 4 * v[i].r0);
 			if (h > rows.t[v[i].r0].cmin)
@@ -1001,7 +1077,23 @@ float layout_grid(struct box *gb, float cbh)
 		if (g > rows.t[i].cmax)
 			rows.t[i].cmax = g;
 	}
+	for (i = 0; i < n; i++)
+		if (v[i].r1 - v[i].r0 > 1)
+			span_contribution(&rows, v[i].r0, v[i].r1, v[i].oh,
+				v[i].oh, H, rg);
 	size_tracks(&rows, H, rg);
+	if (H < 0 && (lo >= 0 || hi >= 0)) {
+		/* an automatic height within min-height and max-height:
+		 * the rows are sized for the one that holds (min-height:
+		 * 100vh; rows auto 1fr auto: the footer at the bottom) */
+		total = span_size(&rows, 0, rows.n, rg);
+		if (lo >= 0 && total < lo)
+			H = lo;
+		else if (hi >= 0 && total > hi)
+			H = hi;
+		if (H >= 0)
+			size_tracks(&rows, H, rg);
+	}
 	/* content alignment of the whole grid */
 	total = span_size(&cols, 0, cols.n, cg);
 	if (total < W)
@@ -1118,7 +1210,7 @@ void grid_sizes(struct box *gb, float *mn, float *mx)
 	int n, i;
 
 	n = place(gb, -1, -1, &cols, &rows, &v, cg, 0, NULL, NULL);
-	column_contributions(&cols, v, n);
+	column_contributions(&cols, v, n, -1, cg);
 	*mn = *mx = 0;
 	/* flexible tracks share one size per fr: the largest max-content
 	 * per fr of them (CSS Grid 1, 12.7.1), four 1fr columns of cards
