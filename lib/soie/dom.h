@@ -82,8 +82,10 @@ soie_node *soie_template_content(const soie_node *n);
  * Shadow DOM. soie_attach_shadow() gives element el a shadow root: a
  * document fragment of el's document whose children render in place
  * of el's own, which only <slot> elements of it show. NULL when el has
- * one already or is not an element. The root goes with el: freed,
- * adopted with it (never alone), never cloned nor serialized. open is
+ * one already or may not have one (DOM attachShadow(): HTML custom
+ * elements, div, span, p, section...). The root goes with el: freed
+ * (soie_node_free() of the root alone does nothing), adopted with it
+ * (never alone), never cloned nor serialized. open is
  * the mode scripts see (Element.shadowRoot). soie_shadow_css() sets the
  * text of the root's adopted style sheets (NULL for none), copied: its
  * rules apply to that tree only, as those of a <style> in it.
@@ -95,6 +97,9 @@ soie_node *soie_shadow_root(const soie_node *el);
 soie_node *soie_shadow_host(const soie_node *n);
 /* 1 for a shadow root attached open */
 int soie_shadow_open(const soie_node *root);
+/* 1 once for a root the parser made (declarative shadow DOM), 0 after
+ * and for others: a script's attachShadow() takes such a root over */
+int soie_shadow_claim(soie_node *root);
 void soie_shadow_css(soie_node *root, const char *css);
 /* The <slot> of its host's shadow tree that shows n, a child of a
  * shadow host, whatever the mode; NULL when no slot takes it */

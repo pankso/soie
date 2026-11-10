@@ -349,27 +349,40 @@ static void sweep(struct sctx *c)
 			rehome(c, soie_node_user(c->wrapped[i]));
 }
 
+/* The node after n below top in tree order, shadow trees included (a
+ * host's right after it): without recursion, shadow trees nest as
+ * deep as a page likes */
+static soie_node *next_deep(soie_node *n, soie_node *top)
+{
+	soie_node *h;
+
+	if ((h = soie_shadow_root(n)) || (h = soie_node_first_child(n)))
+		return h;
+	for (; n != top; n = h) {
+		if ((h = soie_node_next_sibling(n)))
+			return h;
+		if ((h = soie_node_parent(n)))
+			continue;
+		/* out of a shadow tree: its host's children */
+		if (!(h = soie_shadow_host(n)))
+			break;
+		if (soie_node_first_child(h))
+			return soie_node_first_child(h);
+	}
+	return NULL;
+}
+
 /* Nodes inserted: their wrappers, and those below, in the new tree at
  * once (left in the old one, they could go with it before the sweep);
  * those of shadow trees below too */
 static void strengthen(struct sctx *c, soie_node *top)
 {
-	soie_node *n = top, *s;
+	soie_node *n;
 	struct wref *w;
 
-	while (n) {
+	for (n = top; n; n = next_deep(n, top))
 		if ((w = soie_node_user(n)))
 			rehome(c, w);
-		if ((s = soie_shadow_root(n)))
-			strengthen(c, s);
-		if (soie_node_first_child(n)) {
-			n = soie_node_first_child(n);
-			continue;
-		}
-		while (n != top && !soie_node_next_sibling(n))
-			n = soie_node_parent(n);
-		n = n == top ? NULL : soie_node_next_sibling(n);
-	}
 }
 
 static JSValue wrap(struct sctx *c, soie_node *n)
@@ -1057,6 +1070,16 @@ static JSValue n_shadow_open(JSContext *js, JSValueConst this, int argc,
 	return JS_NewBool(js, soie_shadow_open(n));
 }
 
+/* shadowClaim(root): true once for a declarative root */
+static JSValue n_shadow_claim(JSContext *js, JSValueConst this, int argc,
+	JSValueConst *argv)
+{
+	NODE(0, n);
+
+	(void)this;
+	return JS_NewBool(js, soie_shadow_claim(n));
+}
+
 /* defined(el): its custom element class came, :defined */
 static JSValue n_defined(JSContext *js, JSValueConst this, int argc,
 	JSValueConst *argv)
@@ -1097,21 +1120,11 @@ static JSValue n_shadow_css(JSContext *js, JSValueConst this, int argc,
 static void shadows_in(struct sctx *c, soie_node *top, JSValue a,
 	uint32_t *i)
 {
-	soie_node *k = top, *s;
+	soie_node *k;
 
-	while (k) {
-		if ((s = soie_shadow_root(k))) {
-			JS_SetPropertyUint32(c->js, a, (*i)++, wrap(c, s));
-			shadows_in(c, s, a, i);
-		}
-		if (soie_node_first_child(k)) {
-			k = soie_node_first_child(k);
-			continue;
-		}
-		while (k != top && !soie_node_next_sibling(k))
-			k = soie_node_parent(k);
-		k = k == top ? NULL : soie_node_next_sibling(k);
-	}
+	for (k = top; k; k = next_deep(k, top))
+		if (k != top && soie_shadow_host(k))
+			JS_SetPropertyUint32(c->js, a, (*i)++, wrap(c, k));
 }
 
 /* shadows(n): the shadow roots of n and below, theirs too, in tree
@@ -3197,6 +3210,7 @@ static const JSCFunctionListEntry natives[] = {
 	JS_CFUNC_MAGIC_DEF("shadow", 1, n_rel, 11),
 	JS_CFUNC_DEF("attachShadow", 2, n_attach_shadow),
 	JS_CFUNC_DEF("shadowOpen", 1, n_shadow_open),
+	JS_CFUNC_DEF("shadowClaim", 1, n_shadow_claim),
 	JS_CFUNC_DEF("shadowCss", 2, n_shadow_css),
 	JS_CFUNC_DEF("defined", 1, n_defined),
 	JS_CFUNC_DEF("states", 2, n_states),

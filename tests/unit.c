@@ -274,12 +274,39 @@ static void test_shadow(void)
 	v = soie_computed_value(soie_node_first_child(r2), NULL, "color");
 	CHECK(v && !strcmp(v, "rgb(0, 0, 255)"));
 	free(v);
+	/* a root alone is not freed: its host's boxes would keep it */
+	soie_node_free(r);
+	CHECK(soie_shadow_root(h) == r && soie_node_first_child(r) == p);
 	soie_node_free(doc);
 	/* freed with its host, the host with its document */
 	c = soie_element_new(other, SOIE_NS_HTML, "span");
 	CHECK(soie_attach_shadow(c, 0) != NULL);
 	soie_node_free(c);
+	/* DOM's hosts only: a <details> would show its summary */
+	c = soie_element_new(other, SOIE_NS_HTML, "details");
+	CHECK(soie_attach_shadow(c, 1) == NULL);
+	soie_node_free(c);
+	c = soie_element_new(other, SOIE_NS_SVG, "g");
+	CHECK(soie_attach_shadow(c, 1) == NULL);
+	soie_node_free(c);
 	soie_node_free(other);
+}
+
+/* A declarative shadow root is a script's to take over, once */
+static void test_shadow_claim(void)
+{
+	static const char html[] = "<x-a><template shadowrootmode=open>"
+		"<p>ssr</p></template></x-a><x-b></x-b>";
+	soie_node *doc = soie_html_parse(html, sizeof(html) - 1, NULL);
+	soie_node *b = soie_node_last_child(soie_node_last_child(
+		soie_document_element(doc)));
+	soie_node *a = soie_node_prev_sibling(b), *r;
+
+	CHECK(a && (r = soie_shadow_root(a)) != NULL);
+	CHECK(soie_shadow_claim(r) == 1 && soie_shadow_claim(r) == 0);
+	CHECK(soie_shadow_claim(a) == 0);
+	CHECK((r = soie_attach_shadow(b, 1)) && soie_shadow_claim(r) == 0);
+	soie_node_free(doc);
 }
 
 static void test_charsets(void)
@@ -675,13 +702,17 @@ static void test_hostile_depth(void)
 		{ "<p style=\"width:calc(", "(", "1px\">t" },
 		{ "<style>", ":not(", "p{color:red}</style><p>t" },
 		{ "<svg width=20 height=20>", "<g>", "<rect width=9 height=9>" },
+		/* shadow trees in shadow trees: every walk of the cascade
+		 * and the free went into each by recursion */
+		{ "", "<x-a><template shadowrootmode=open><style>b{}</style>",
+		  "t" },
 		{ "", "<div>", "t" },
 	};
 	unsigned char px[20 * 20 * 4];
 	size_t i, len;
 
 	for (i = 0; i < sizeof(pages) / sizeof(pages[0]); i++) {
-		char *s = repeat(pages[i][0], pages[i][1], i < 4 ? 200000 :
+		char *s = repeat(pages[i][0], pages[i][1], i < 5 ? 200000 :
 			5000, pages[i][2], &len);
 		soie_node *doc = soie_html_parse(s, len, NULL);
 
@@ -689,6 +720,18 @@ static void test_hostile_depth(void)
 		soie_layout_document(doc, 20, 20);
 		soie_paint(doc, px, 20, 20, 20 * 4, 0, 0);
 		soie_hit_test(doc, 5, 5);
+		if (i == 4) {
+			/* adopted, freed: the deep host alone */
+			soie_node *other = soie_document_new();
+			soie_node *h = soie_node_first_child(
+				soie_node_last_child(
+				soie_document_element(doc)));
+
+			CHECK(h && soie_shadow_root(h));
+			CHECK(soie_node_adopt(other, h) == 0);
+			soie_node_free(h);
+			soie_node_free(other);
+		}
 		soie_node_free(doc);
 		free(s);
 	}
@@ -768,6 +811,7 @@ int main(void)
 	soie_fonts_stub(1);
 	test_dom();
 	test_shadow();
+	test_shadow_claim();
 	test_parse_api();
 	test_charsets();
 	test_entities();

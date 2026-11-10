@@ -11,12 +11,6 @@
 #include <string.h>
 #include "css.h"
 
-#if defined(__GNUC__)
-#define THREAD_LOCAL __thread	/* workers match selectors too */
-#else
-#define THREAD_LOCAL
-#endif
-
 static const struct {
 	const char *name;
 	int id;
@@ -832,7 +826,7 @@ static int top_of_fragment(const soie_node *el)
 
 int selector_has_host(const struct sellist *l, int i)
 {
-	return has_host(&l->c[i].c[l->c[i].n - 1]);
+	return l->c[i].n == 1 && has_host(&l->c[i].c[0]);
 }
 
 /* An argument of :host(), :host-context(), ::slotted(): el is matched
@@ -1627,12 +1621,14 @@ static int match_rec(const struct complex *c, int idx, const soie_node *el,
 		for (n = el; (p = parent_el(n)); )
 			if ((r = match_rec(c, idx - 1, n = p, anchor, parent)))
 				return r;
-		/* past the top of a shadow tree, its host */
-		n = top_of_fragment(n) ? host_up(n, c, idx - 1) : NULL;
-		return n ? match_rec(c, idx - 1, n, anchor, parent) : -1;
+		/* past the top of a shadow tree, its host: the first
+		 * compound, the host has no ancestors nor siblings for the
+		 * tree's rules (CSS Scoping 3.2) */
+		n = idx == 1 && top_of_fragment(n) ? host_up(n, c, 0) : NULL;
+		return n ? match_rec(c, 0, n, anchor, parent) : -1;
 	case COMB_CHILD:
-		if (!(n = parent_el(el)) && top_of_fragment(el))
-			n = host_up(el, c, idx - 1);
+		if (!(n = parent_el(el)) && idx == 1 && top_of_fragment(el))
+			n = host_up(el, c, 0);
 		return n ? match_rec(c, idx - 1, n, anchor, parent) : -1;
 	case COMB_NEXT:
 		n = prev_el(el);

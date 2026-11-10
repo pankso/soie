@@ -100,20 +100,21 @@ static struct sval *svec_add(struct svec *v, int prop)
 	return s;
 }
 
+/* 1 for a var() or env(), 2 for a light-dark() (its color is the
+ * element's to choose, by color-scheme, not the rule's), or'ed */
 int has_var(const struct cv *v, int n)
 {
-	int i;
+	int i, r = 0;
 
 	for (i = 0; i < n; i++)
-		/* light-dark() too: its color is the element's to choose
-		 * (color-scheme), not the rule's */
-		if ((v[i].type == CT_FUNCTION && (ascii_ieq(v[i].str, "var") ||
-		     ascii_ieq(v[i].str, "env") ||
-		     ascii_ieq(v[i].str, "light-dark"))) ||
-		    ((v[i].type == CT_FUNCTION || v[i].type == CT_BLOCK) &&
-		     has_var(v[i].kids.v, v[i].kids.n)))
-			return 1;
-	return 0;
+		if (v[i].type == CT_FUNCTION && (ascii_ieq(v[i].str, "var") ||
+		    ascii_ieq(v[i].str, "env")))
+			r |= 1;
+		else if (v[i].type == CT_FUNCTION || v[i].type == CT_BLOCK)
+			r |= (v[i].type == CT_FUNCTION &&
+			      ascii_ieq(v[i].str, "light-dark") ? 2 : 0) |
+				has_var(v[i].kids.v, v[i].kids.n);
+	return r;
 }
 
 static char *serialize_text(const struct cv *v, int n)
@@ -1675,7 +1676,7 @@ static int wide_keyword(const struct cvlist *value)
 int parse_declaration(const char *name, const struct cvlist *value,
 	int important, struct svec *out)
 {
-	int prop, sh = -1, start = out->n, wide, i, lh[NPROPS + 1];
+	int prop, sh = -1, start = out->n, wide, var, i, lh[NPROPS + 1];
 
 	for (i = 0; aliases[i][0]; i++)
 		if (ascii_ieq(name, aliases[i][0])) {
@@ -1686,7 +1687,21 @@ int parse_declaration(const char *name, const struct cvlist *value,
 	if (prop < 0 && (sh = shorthand_lookup(name)) < 0)
 		return 0;
 	wide = wide_keyword(value);
-	if (wide || has_var(value->v, value->n)) {
+	var = wide ? 0 : has_var(value->v, value->n);
+	if (var == 2) {
+		/* light-dark() alone: kept for each element as var(), but
+		 * a value invalid in any scheme is dropped now, as browsers
+		 * do (the declaration before stays, @supports says no) */
+		struct svec t = { NULL, 0, 0 };
+		struct sval *d = prop >= 0 ? svec_add(&t, prop) : NULL;
+		int ok = d ? parse_longhand_value(prop, value, d) :
+			parse_shorthand_value(sh, value, &t);
+
+		svec_free(&t);
+		if (!ok)
+			return 0;
+	}
+	if (wide || var) {
 		char *text = wide ? NULL : serialize_text(value->v, value->n);
 
 		if (prop >= 0) {

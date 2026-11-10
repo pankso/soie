@@ -431,6 +431,8 @@ function invoke(node, ev, phase, capture) {
 			} catch (e) {
 				report(e);
 			}
+			if (ev._stopNow)
+				return;
 		}
 	}
 	const m = node[LISTENERS];
@@ -485,9 +487,11 @@ function retarget(a, b) {
  * composed or did not start in that tree, then the window. Listeners
  * outside a shadow tree see the host as target: at[i] is the target at
  * path[i] when it changes there (at target phase), else null; at stays
- * null on a path that crosses no shadow boundary. ev._closed[i]: 1 a
- * closed root, 2 a slot of a closed tree, for composedPath().
+ * null on a path that crosses no shadow boundary. closed[i]: 1 a
+ * closed root, 2 a slot of a closed tree, for composedPath(). Both in
+ * evPaths, not on the event: a page would read closed trees there.
  */
+const evPaths = new WeakMap();
 function dispatch(target, ev) {
 	const path = [target], rel = ev.relatedTarget;
 	/* a relatedTarget in a shadow tree: retargeted as target is */
@@ -512,9 +516,11 @@ function dispatch(target, ev) {
 				if (depth)
 					depth--;
 				else if ((!ev.composed && !moved) ||
-				    (inner && retarget(rel, p) === p))
+				    (rel instanceof Node &&
+				     retarget(rel, p) === p))
 					break;	/* its target's root, or a
-						 * move inside p */
+						 * move inside p (or from
+						 * p itself) */
 				else
 					t = p, moved = true;
 			} else if (p instanceof SLOT &&
@@ -539,8 +545,7 @@ function dispatch(target, ev) {
 			}
 		}
 	}
-	ev._path = path;
-	ev._closed = closed;
+	evPaths.set(ev, { path, closed });
 	ev._stop = ev._stopNow = false;
 	/* a move inside one element's shadow tree: not for it */
 	if (inner && rel !== target && retarget(rel, target) === target)
@@ -589,15 +594,17 @@ function dispatch(target, ev) {
 		const r = path.length ? rels[path.length - 1] : rel;
 		ev.relatedTarget = rootOf(r) instanceof ShadowRoot ? null : r;
 	}
+	evPaths.delete(ev);
 	return !ev.defaultPrevented;
 }
 
 /* Event.composedPath() (DOM 2.9): from the current target, what it
  * may see of the path; nothing once dispatched */
 function composedPath(ev) {
-	const path = ev._path, closed = ev._closed, cur = ev.currentTarget;
-	if (!path || !cur)
+	const p = evPaths.get(ev), cur = ev.currentTarget;
+	if (!p || !cur)
 		return [];
+	const path = p.path, closed = p.closed;
 	if (!closed)
 		return path.slice();
 	let i = path.length - 1, level = 0;
@@ -858,9 +865,14 @@ function insert(parent, node, ref) {
 		throw new DOMException('reference is not a child', 'NotFoundError');
 	const nodes = api.type(node) === S_FRAG ? api.children(node, true) :
 		[node];
+	/* a move: out of the page, then in again */
+	const moved = customs.size && api.type(node) === S_EL &&
+		node.isConnected;
 	if (!api.insert(parent, node, ref || null))
 		throw new DOMException('cannot insert there',
 			'HierarchyRequestError');
+	if (moved)
+		disconnected(node);
 	if (customs.size)
 		connected(nodes);
 	for (const n of nodes)
@@ -1282,6 +1294,74 @@ class DocumentFragment extends Node {
 }
 mixin(DocumentFragment, parentNode);
 
+/*
+ * Closed shadow roots: no property a page can read or set (on a node,
+ * an event, a sheet, a root) leads into one or changes what it does.
+ * What dom.js keeps about roots, sheets and events is in these maps
+ * and in private fields, never in `_x` properties.
+ */
+/* attachShadow()'s options of a root: delegatesFocus... */
+const rootInit = new WeakMap();
+/* adoptedStyleSheets of a root: { list, view }, the list the engine
+ * reads and the one object scripts get and change (ObservableArray) */
+const rootSheets = new WeakMap();
+/* the roots that adopted a sheet, to be told when it changes: a Set of
+ * WeakRefs (a sheet shared by every instance must not hold them), one
+ * WeakRef per root (rootRef): adopting again adds nothing */
+const sheetRoots = new WeakMap(), rootRef = new WeakMap();
+/* the elements that called attachInternals() */
+const hasInternals = new WeakSet();
+/* the constructors of ElementInternals and CustomStateSet take it:
+ * pages cannot make one */
+const PRIVATE = {};
+
+/* An ObservableArray of style sheets over a: changed() after a change */
+function sheetView(a, changed) {
+	return new Proxy(a, {
+		set: (o, k, x) => {
+			if (typeof k === 'string' && /^\d+$/.test(k) &&
+			    !(x instanceof CSSStyleSheet))
+				throw new TypeError('not a CSSStyleSheet');
+			o[k] = x;
+			changed(o.slice());
+			return true;
+		},
+	});
+}
+function sheetsOf(root) {
+	let o = rootSheets.get(root);
+	if (!o) {
+		const list = [];
+		o = { list, view: sheetView(list, (v) => adoptRoot(root, v)) };
+		rootSheets.set(root, o);
+	}
+	return o;
+}
+/* root's adopted sheets are now v, in place (scripts keep the view) */
+function adoptRoot(root, v) {
+	if (v.some((s) => !(s instanceof CSSStyleSheet)))
+		throw new TypeError('not a CSSStyleSheet');
+	const list = sheetsOf(root).list;
+	let ref = rootRef.get(root);
+	if (!ref)
+		rootRef.set(root, ref = new WeakRef(root));
+	list.length = 0;
+	list.push(...v);
+	for (const s of v) {
+		let set = sheetRoots.get(s);
+		if (!set)
+			sheetRoots.set(s, set = new Set());
+		set.add(ref);
+	}
+	syncRoot(root);
+}
+function initOf(root) { return rootInit.get(root) || {}; }
+/* the engine's text of root's adopted sheets, in their order */
+function syncRoot(root) {
+	api.shadowCss(root, sheetsOf(root).list.map((s) => s._read())
+		.join('\n'));
+}
+
 /* A shadow root: the engine's (soie_attach_shadow()), rendered in
  * place of its host's children, which its slots show. Its wrapper
  * lives as long as its host's tree, what scripts put on it too. */
@@ -1291,10 +1371,10 @@ class ShadowRoot extends DocumentFragment {
 	}
 	get host() { return api.host(this); }
 	get mode() { return api.shadowOpen(this) ? 'open' : 'closed'; }
-	get delegatesFocus() { return false; }
+	get delegatesFocus() { return !!initOf(this).delegatesFocus; }
 	get slotAssignment() { return 'named'; }
-	get clonable() { return false; }
-	get serializable() { return false; }
+	get clonable() { return !!initOf(this).clonable; }
+	get serializable() { return !!initOf(this).serializable; }
 	get innerHTML() { return api.serialize(this, false); }
 	/* parsed as the host's children would be; scripts in it never
 	 * run (api.parse) */
@@ -1305,6 +1385,10 @@ class ShadowRoot extends DocumentFragment {
 		if (v !== '')
 			insert(this, api.parse(api.host(this), v), null);
 	}
+	/* without its own shadow roots: options asking for them are not
+	 * done, nor declarative ones in setHTMLUnsafe() */
+	getHTML() { return this.innerHTML; }
+	setHTMLUnsafe(v) { this.innerHTML = v; }
 	/* the focused element, or the host of the shadow tree in this
 	 * one that holds it */
 	get activeElement() {
@@ -1315,37 +1399,8 @@ class ShadowRoot extends DocumentFragment {
 		return list(list(query(this, 'style', 0)).map(styleSheet));
 	}
 	/* push() and the like change it too, as an ObservableArray */
-	get adoptedStyleSheets() {
-		if (!this._sheetsView)
-			this.adoptedStyleSheets = [];
-		return this._sheetsView;
-	}
-	set adoptedStyleSheets(v) {
-		v = Array.from(v);
-		if (v.some((s) => !(s instanceof CSSStyleSheet)))
-			throw new TypeError('not a CSSStyleSheet');
-		this._sheets = v;
-		this._sheetsView = new Proxy(v, {
-			set: (a, k, x) => {
-				a[k] = x;
-				this.adoptedStyleSheets = a;
-				return true;
-			},
-		});
-		for (const s of v) {
-			/* to be told when the sheet changes, without holding
-			 * the root */
-			s._roots = (s._roots || []).filter((r) => r.deref() &&
-				r.deref() !== this);
-			s._roots.push(new WeakRef(this));
-		}
-		this._syncSheets();
-	}
-	/* the engine's text of the adopted sheets, in their order */
-	_syncSheets() {
-		api.shadowCss(this, this._sheets.map((s) => s._read())
-			.join('\n'));
-	}
+	get adoptedStyleSheets() { return sheetsOf(this).view; }
+	set adoptedStyleSheets(v) { adoptRoot(this, Array.from(v)); }
 }
 
 /* Elements that may be shadow hosts, besides custom elements */
@@ -1394,41 +1449,51 @@ function assigned(slot, flatten, elements) {
 
 /* ElementInternals.states: a Set that tells the engine, for :state() */
 class CustomStateSet extends Set {
-	constructor(el) {
+	#el;
+	constructor(key, el) {
+		if (key !== PRIVATE)
+			throw new TypeError('Illegal constructor');
 		super();
-		this._el = el;
+		this.#el = el;
 	}
-	_sync() { api.states(this._el, [...this].join(' ')); }
+	#sync() { api.states(this.#el, [...this].join(' ')); }
 	add(v) {
 		super.add(String(v));
-		this._sync();
+		this.#sync();
 		return this;
 	}
 	delete(v) {
 		const r = super.delete(String(v));
-		this._sync();
+		this.#sync();
 		return r;
 	}
 	clear() {
 		super.clear();
-		this._sync();
+		this.#sync();
 	}
 	has(v) { return super.has(String(v)); }
 }
 
+/* Only attachInternals() makes one: whoever holds it gets the element's
+ * closed shadow root, the element is private (a page that set it would
+ * read any root) */
 class ElementInternals {
-	constructor(el) {
-		this._el = el;
-		this.states = new CustomStateSet(el);
+	#el;
+	#value = null;
+	constructor(key, el) {
+		if (key !== PRIVATE)
+			throw new TypeError('Illegal constructor');
+		this.#el = el;
+		this.states = new CustomStateSet(PRIVATE, el);
 		this.validationMessage = '';
 		this.validity = { valid: true };
 		this.role = null;
 	}
-	get shadowRoot() { return api.shadow(this._el) || null; }
-	get form() { return this._el.closest('form'); }
+	get shadowRoot() { return api.shadow(this.#el) || null; }
+	get form() { return this.#el.closest('form'); }
 	get labels() { return list([]); }
 	get willValidate() { return true; }
-	setFormValue(v) { this._value = v; }
+	setFormValue(v) { this.#value = v; }
 	setValidity(flags, message) {
 		this.validity = Object.assign({ valid: true }, flags);
 		for (const k in flags)
@@ -2023,24 +2088,40 @@ class Element extends Node {
 	 * value (Material's components ask for the object when they are
 	 * built, and threw without it) */
 	attachInternals() {
-		if (this._internals)
+		if (api.ns(this) !== NS_HTML || !customs.has(api.name(this)))
+			throw new DOMException('not a custom element',
+				'NotSupportedError');
+		if (hasInternals.has(this))
 			throw new DOMException('internals attached already',
 				'NotSupportedError');
-		return this._internals = new ElementInternals(this);
+		hasInternals.add(this);
+		return new ElementInternals(PRIVATE, this);
 	}
 	attachShadow(init) {
-		const name = api.name(this);
+		const name = api.name(this), open = !init ||
+			init.mode !== 'closed';
 
 		if (api.ns(this) !== NS_HTML || !(SHADOW_HOSTS.has(name) ||
 		    /^[a-z][^A-Z]*-/.test(name)))
 			throw new DOMException(name +
 				' cannot have a shadow root',
 				'NotSupportedError');
-		const r = api.attachShadow(this,
-			!init || init.mode !== 'closed');
-		if (!r)
-			throw new DOMException('already a shadow host',
-				'NotSupportedError');
+		let r = api.attachShadow(this, open);
+		if (!r) {
+			/* a declarative root (server-side rendered) of that
+			 * mode: emptied, the component's from now on */
+			r = api.shadow(this);
+			if (!r || api.shadowOpen(r) !== open ||
+			    !api.shadowClaim(r))
+				throw new DOMException('already a shadow host',
+					'NotSupportedError');
+			for (let k; (k = api.first(r)); )
+				api.remove(k);
+		}
+		rootInit.set(r, { delegatesFocus: !!(init &&
+			init.delegatesFocus), clonable: !!(init &&
+			init.clonable), serializable: !!(init &&
+			init.serializable) });
 		return r;
 	}
 	get shadowRoot() { return api.shadowRoot(this); }
@@ -2087,6 +2168,31 @@ for (const ev of ['click', 'dblclick', 'mousedown', 'mouseup', 'mousemove',
 	Object.defineProperty(Element.prototype, 'on' + ev.toLowerCase(), d);
 }
 
+/* What el.focus() focuses: el, or for a host whose root delegates focus
+ * the first focusable element of its tree (an [autofocus] one first),
+ * null when it has none */
+function focusTarget(el) {
+	const r = api.shadow(el), init = r && rootInit.get(r);
+	if (!init || !init.delegatesFocus)
+		return el;
+	const all = query(r, '*', 0);
+	const ok = (n) => {
+		const s = api.shadow(n), i = s && rootInit.get(s);
+		if (i && i.delegatesFocus)
+			return !!focusTarget(n);
+		return (/^(button|input|select|textarea)$/.test(api.name(n)) &&
+			api.getAttr(n, 'disabled') === null &&
+			api.getAttr(n, 'type') !== 'hidden') ||
+			(api.name(n) === 'a' &&
+			 api.getAttr(n, 'href') !== null) ||
+			api.getAttr(n, 'tabindex') !== null ||
+			/^(|true)$/.test(api.getAttr(n, 'contenteditable'));
+	};
+	const n = all.find((x) => api.getAttr(x, 'autofocus') !== null &&
+		ok(x)) || all.find(ok);
+	return n ? focusTarget(n) : null;
+}
+
 class HTMLElement extends Element {
 	get title() { return api.getAttr(this, 'title') || ''; }
 	set title(v) { api.setAttr(this, 'title', str(v)); }
@@ -2114,18 +2220,31 @@ class HTMLElement extends Element {
 		return this.getAttribute('contenteditable') === 'true' ||
 			this.getAttribute('contenteditable') === '';
 	}
+	/* blur, focusout, focus, focusin; each with the other element as
+	 * relatedTarget: a move inside one shadow tree stops at its host */
 	focus() {
+		const to = focusTarget(this);
+		if (to !== this) {
+			if (to)
+				to.focus();
+			return;
+		}
 		if (activeElement === this)
 			return;
 		const old = activeElement;
 		activeElement = this;
 		api.focus(this);	/* the browser types into it */
-		if (old)
-			dispatch(old, new FocusEvent('blur',
-				{ composed: true }));
-		dispatch(this, new FocusEvent('focus', { composed: true }));
+		if (old) {
+			dispatch(old, new FocusEvent('blur', { composed: true,
+				relatedTarget: this }));
+			dispatch(old, new FocusEvent('focusout', {
+				bubbles: true, composed: true,
+				relatedTarget: this }));
+		}
+		dispatch(this, new FocusEvent('focus', { composed: true,
+			relatedTarget: old }));
 		dispatch(this, new FocusEvent('focusin', { bubbles: true,
-			composed: true }));
+			composed: true, relatedTarget: old }));
 	}
 	blur() {
 		if (activeElement !== this)
@@ -2133,6 +2252,8 @@ class HTMLElement extends Element {
 		activeElement = null;
 		api.focus(null);
 		dispatch(this, new FocusEvent('blur', { composed: true }));
+		dispatch(this, new FocusEvent('focusout', { bubbles: true,
+			composed: true }));
 	}
 	click() {
 		if (this.disabled)
@@ -2534,10 +2655,14 @@ class CSSStyleSheet {
 			this._own = t;
 		for (const el of this._adopted || [])
 			el.textContent = t;
-		for (const w of this._roots || []) {
+		/* the roots that still have it; the others go */
+		const set = sheetRoots.get(this);
+		for (const w of set || []) {
 			const r = w.deref();
-			if (r && r._sheets.includes(this))
-				r._syncSheets();
+			if (r && sheetsOf(r).list.includes(this))
+				syncRoot(r);
+			else
+				set.delete(w);
 		}
 	}
 	insertRule(r, i) {
@@ -2582,24 +2707,22 @@ class CSSStyleSheet {
 
 /* document.adoptedStyleSheets: each sheet as a style element of its
  * own at the end of the head, kept in step with the sheet; push() and
- * the like change it too (adoptedView), as an ObservableArray */
-let adoptedSheets = [], adoptedView = null;
+ * the like change it too (adoptedView, always the same object), as an
+ * ObservableArray */
+const adoptedSheets = [], adoptedEls = [];
+const adoptedView = sheetView(adoptedSheets, adoptSheets);
 function adoptSheets(v) {
-	for (const s of adoptedSheets)
-		for (const el of s._adopted || [])
-			el.remove();
-	adoptedSheets = [...v];
-	adoptedView = new Proxy(adoptedSheets.slice(), {
-		set: (a, k, x) => {
-			a[k] = x;
-			adoptSheets(a);
-			return true;
-		},
-	});
-	for (const s of adoptedSheets) {
+	if (v.some((s) => !(s instanceof CSSStyleSheet)))
+		throw new TypeError('not a CSSStyleSheet');
+	for (const el of adoptedEls)
+		el.remove();
+	adoptedEls.length = adoptedSheets.length = 0;
+	adoptedSheets.push(...v);
+	for (const s of v) {
 		const el = document.createElement('style');
 		el.textContent = s._read();
 		s._adopted = [el];
+		adoptedEls.push(el);
 		(document.head || document.documentElement).appendChild(el);
 	}
 }
@@ -3960,12 +4083,8 @@ class Document extends Node {
 	get styleSheets() {
 		return list(list(query(this, 'style', 0)).map(styleSheet));
 	}
-	get adoptedStyleSheets() {
-		if (!adoptedView)
-			adoptSheets([]);
-		return adoptedView;
-	}
-	set adoptedStyleSheets(v) { adoptSheets(v); }
+	get adoptedStyleSheets() { return adoptedView; }
+	set adoptedStyleSheets(v) { adoptSheets(Array.from(v)); }
 	get implementation() {
 		return {
 			hasFeature: () => true,
@@ -5575,18 +5694,30 @@ function slotsTouched(host, slot) {
 	else
 		slotHosts.add(host);
 }
+/* What the slots of host h's tree show now */
+function slotsNow(h) {
+	const r = api.shadow(h), now = new Map();
+	for (const s of r ? query(r, 'slot', 0) : []) {
+		const a = assigned(s, false, false);
+		if (a.length)
+			now.set(s, a);
+	}
+	return now;
+}
+/* h (a host, or the host of the tree of a node) is about to change:
+ * the first time, what its slots showed before, else a root made
+ * before any was wrapped (the parser's) had every slot fire */
+function slotsBefore(h) {
+	if (h && api.shadow(h) && !slotsShown.has(h))
+		slotsShown.set(h, slotsNow(h));
+}
 function slotsCheck() {
 	const hosts = [...slotHosts], fired = new Set();
 	slotHosts.clear();
 	for (const h of hosts) {
-		const r = api.shadow(h), was = slotsShown.get(h) || new Map();
-		const slots = r ? query(r, 'slot', 0) : [], now = new Map();
-		for (const s of new Set([...slots, ...was.keys()])) {
-			const a = slots.includes(s) ?
-				assigned(s, false, false) : [];
-			const b = was.get(s) || [];
-			if (a.length)
-				now.set(s, a);
+		const was = slotsShown.get(h) || new Map(), now = slotsNow(h);
+		for (const s of new Set([...now.keys(), ...was.keys()])) {
+			const a = now.get(s) || [], b = was.get(s) || [];
 			if (a.length !== b.length ||
 			    a.some((n, i) => n !== b[i]))
 				fired.add(s);
@@ -5608,7 +5739,16 @@ function slotsCheck() {
 			((t === S_EL || t === S_FRAG) && api.first(n) &&
 			 query(n, 'slot', 1).length > 0);
 	};
-	/* a node (with a slot in it: slot) comes into p or leaves it */
+	/* before a node (with a slot in it: slot) comes into p or leaves
+	 * it, after */
+	const before = (p, slot) => {
+		if (!p)
+			return;
+		slotsBefore(p);
+		const r = slot && rootOf(p);
+		if (r instanceof ShadowRoot)
+			slotsBefore(api.host(r));
+	};
 	const touch = (p, slot) => {
 		if (!p)
 			return;
@@ -5627,15 +5767,27 @@ function slotsCheck() {
 		if (!shadowSeen)
 			return insertNode(parent, node, ref);
 		const slot = hasSlot(node), old = api.parent(node);
+		before(old, slot);
+		before(parent, slot);
 		touch(old, slot);
 		const r = insertNode(parent, node, ref);
 		touch(parent, slot);
 		return r;
 	};
 	api.remove = function (n) {
-		if (shadowSeen)
-			touch(api.parent(n), hasSlot(n));
+		if (shadowSeen) {
+			const p = api.parent(n), slot = hasSlot(n);
+			before(p, slot);
+			touch(p, slot);
+		}
 		return remove(n);
+	};
+	/* the host whose slots an attribute name of el changes */
+	const hostOf = (el, name) => {
+		const p = name === 'slot' && api.parent(el), r = name ===
+			'name' && el instanceof SLOT && rootOf(el);
+		return p && api.shadow(p) ? p : r instanceof ShadowRoot ?
+			api.host(r) : null;
 	};
 	const attr = (el, name) => {
 		const p = name === 'slot' && api.parent(el);
@@ -5645,12 +5797,16 @@ function slotsCheck() {
 			touch(el, true);
 	};
 	api.setAttr = function (el, name, v) {
+		if (shadowSeen)
+			slotsBefore(hostOf(el, name));
 		const r = setAttr(el, name, v);
 		if (shadowSeen)
 			attr(el, name);
 		return r;
 	};
 	api.removeAttr = function (el, name) {
+		if (shadowSeen)
+			slotsBefore(hostOf(el, name));
 		const r = removeAttr(el, name);
 		if (shadowSeen)
 			attr(el, name);

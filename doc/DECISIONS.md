@@ -159,6 +159,19 @@ reversed, edit the entry and say why; do not leave stale rules here.
   node_above() (parent, else host) is "the node above" for connected
   (lib/cascade.c, lib/script.c, the extension), the restyle marks'
   depth and cover, the insertion cycle check and the wrappers' tree.
+  soie_attach_shadow() checks the host itself (shadow_host_ok(), as
+  attachShadow()): an embedder's root on a <details> or an <input>
+  was hidden by their own boxes. soie_node_free() of a root that
+  still has its host does nothing (the host's boxes, kept, pointed to
+  freed nodes).
+- Shadow nesting has no bound: every walk that enters shadow trees
+  iterates (walk_start()/walk_next() in lib/dom.c, a stack of scopes
+  on the heap; next_deep() in the extension), none recurses. A cap
+  would have to be checked at each insertion too (a host moved into
+  another tree nests both), a walk of the subtree each time. Before,
+  100,000 nested declarative roots overflowed the stack (74,750
+  frames of tree_signature()), and held() walked the whole chain at
+  each level: 20,000 levels took 3 s, 0.08 s now, 100,000 0.43 s.
 - Flat tree: gen_children() of a host walks its root's children; of a
   slot, the host's children of its name (first slot of that name in
   tree order only), else its own (fallback). flat_parent() is the
@@ -177,7 +190,11 @@ reversed, edit the entry and say why; do not leave stale rules here.
   (prefers-color-scheme), anything else light. compute_style() computes
   it first and sets color_dark for the element's other values; a
   declaration holding light-dark() is kept pending like one with
-  var(), since its color is the element's to choose. Not done: the
+  var(), since its color is the element's to choose, but it is parsed
+  once when the sheet is: an invalid one is dropped there (the
+  declaration before it stays, @supports says no). color_dark is
+  thread-local (workers parse colors), set and cleared only for a
+  dark element: light pages pay no access per element. Not done: the
   canvas and the default text color of a page that is dark by
   color-scheme alone, form controls, the meta tag.
 - `:defined`: a node flag set by the script extension when a custom
@@ -213,6 +230,17 @@ reversed, edit the entry and say why; do not leave stale rules here.
   3000 elements and 1500 rules without shadow roots counts 0.1% more
   instructions than before (a first version, with a check per
   compound, 3%).
+  Shadow roots are styled per tree scope, layers too: a shadow
+  tree's sheets have their own @layer tree (struct scoped, by rule
+  scope), so a component's `@layer two, one` does not reorder the
+  page's (they were looked up by name only). A root's <style>
+  elements and its adopted sheets order their layers apart (two
+  scopes): rare, not done. The :host compound has no ancestors nor
+  siblings for its tree's rules (CSS Scoping 3.2): `.dark :host`,
+  `body :host span`, `.a + :host` never match (match_rec() hands
+  over to the host for the first compound only; selector_has_host()
+  wants :host alone). `:host::before` is the host's ::before (it was
+  applied to the host itself).
   Adopted sheets are shared by text: soie_shadow_css() keeps one
   struct shadow_css per distinct text in the document (docinfo.css,
   counted), the root points to it, its rules are loaded once after
@@ -223,8 +251,18 @@ reversed, edit the entry and say why; do not leave stale rules here.
   each added between two styles: over 5 s, quadratic); now once (11
   MB, 23 ms; 96 ms one by one). sheet_signature() hashes the distinct
   texts, not the roots: a new instance keeps the parsed rules, a root
-  whose text changes restyles its host's subtree. Shadow trees'
-  `<style>` elements are still per root (rare in components).
+  whose text changes restyles its host's subtree. A shadow tree whose
+  sheets are plain `<style>` elements (no media, no <link>) shares
+  them the same way: tree_signature() keeps their texts, NUL ended,
+  in a struct shadow_css of the document's `sheets` list
+  (share_sheets()), loaded once (shadow_sheets()). Server-side
+  rendered pages repeat the same <style> in every instance: 4000
+  components kept 4000 copies of the rules, each element looked at
+  every copy (collect_other(): 5.1 G of 9.7 G instructions), and a
+  new instance rebuilt them all; 0.69 s to lay out, 0.14 s now (0.12
+  s for the same page without shadow trees). collect() skips another
+  tree's author rule at once unless el is a host or a host's child
+  (a page of many different components).
   `:host` counts inside `:is()` and `:where()` (has_host()).
 - Tree context is a field of the cascade key above the style
   attribute (CSS Cascade 5, 6.1: context comes before element-attached
@@ -253,10 +291,31 @@ reversed, edit the entry and say why; do not leave stale rules here.
   roots), so expandos on a root and its nodes live as long as the
   host's tree. Adopted constructed sheets are kept in step through
   WeakRefs of the roots that adopted them (a sheet shared by every
-  instance must not hold them). customElements: define(), upgrades and
+  instance must not hold them): one WeakRef per root in a Set per
+  sheet, dead ones dropped when the sheet changes (a filter of the
+  whole list at each adoption: 2000 roots of one sheet, 0.45 s).
+  adoptedStyleSheets is one object per root and for the document,
+  changed in place. customElements: define(), upgrades and
   connected/disconnected callbacks see shadow trees (api.shadows()).
   attachShadow() takes the spec's elements only (custom elements,
-  div, span, p, section...): NotSupportedError for the others.
+  div, span, p, section...): NotSupportedError for the others. On a
+  host with a declarative root of that mode it empties the root and
+  returns it, once (soie_shadow_claim(): a flag of the root the
+  parser sets), as browsers: server-side rendered components call
+  attachShadow() in their constructor. delegatesFocus, clonable and
+  serializable are kept per root; a host's focus() goes to the first
+  focusable element of its tree ([autofocus] first).
+- Closed roots: no property a page can read or set may lead into a
+  closed root or change what a component's own objects do. dom.js
+  keeps what it knows of roots, sheets and events in module WeakMaps
+  (evPaths, rootInit, rootSheets, sheetRoots, hasInternals) and
+  private fields (#el of ElementInternals and CustomStateSet), never
+  in `_x` properties: `ev._path`, `host._internals`, `sheet._roots`
+  gave any page the closed root (Lit exposes its sheets), and a page
+  that set `x._internals = {}` first broke the component.
+  ElementInternals and CustomStateSet throw "Illegal constructor"
+  for pages (a module token). Not a security boundary in browsers
+  either, but embedded widgets count on it.
 - Events (dom.js dispatch(), DOM 2.5 and 4.8): the path goes up
   through api.up() (the slot of a slotted node, else the parent,
   the host of a shadow root), from a root to its host only for a

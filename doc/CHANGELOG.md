@@ -58,6 +58,15 @@ each change are in [DECISIONS.md](DECISIONS.md).
   controls, an outer form leaves the tree's.
 - `:host` inside `:is()` and `:where()`; animation events in shadow
   trees; `document.adoptedStyleSheets.push()` applies.
+- `attachShadow()` on a host the parser gave a declarative root of
+  that mode empties it and returns it, as browsers do: server-side
+  rendered components (Lit SSR, Stencil, Enhance) threw at upgrade.
+  Library: `soie_shadow_claim()`.
+- `delegatesFocus`: a host's `focus()` goes to the first focusable
+  element of its tree; `clonable` and `serializable` reflect the
+  options; `getHTML()` and `setHTMLUnsafe()` on shadow roots (without
+  shadow roots inside). `focus()` and `blur()` fire `focusout`, focus
+  events carry `relatedTarget`.
 
 ### Changed
 - `attachShadow()` throws `NotSupportedError` on elements that cannot
@@ -70,7 +79,37 @@ each change are in [DECISIONS.md](DECISIONS.md).
   the host's `style="x !important"` (it lost).
 - Shadow roots that adopt the same style sheets (every instance of a
   Lit component) share one parse of them: 300 instances added one by
-  one took over 5 s (the script was stopped), now 0.1 s.
+  one took over 5 s (the script was stopped), now 0.1 s. Shadow trees
+  whose `<style>` elements have the same text (server-side rendered
+  components) do too: 4000 such components took 0.69 s to lay out,
+  0.14 s now, as many plain elements 0.12 s.
+- `soie_attach_shadow()` takes the elements DOM's `attachShadow()`
+  takes only, and `soie_node_free()` of a shadow root that still has
+  its host does nothing: the host's boxes kept its nodes.
+
+### Fixed
+- Shadow DOM, after a review: `:host::before` and `::after` styled the
+  host itself (no pseudo-element, the host red or 30 px high); a
+  component's `.dark :host`, `body :host span` or `.a + :host` matched
+  the host's real ancestors and siblings; cascade layers were global
+  to the page, a component's `@layer` order changed the document's;
+  shadow trees nested 100,000 deep overflowed the stack and 20,000
+  took 3 s; a `light-dark()` of the wrong syntax was kept, and
+  `@supports` said yes to it.
+- Closed shadow roots were readable by any page: through the event's
+  `_path`, `new ElementInternals(host)`, `host._internals` and the
+  `_roots` of an adopted sheet. `ElementInternals` and
+  `CustomStateSet` cannot be constructed by pages any more.
+- A parsed shadow root fired `slotchange` on every slot at its first
+  change; focus moving inside one shadow tree fired `blur`, `focus`
+  and `focusin` on its host; a `relatedTarget` that is the host did
+  not stop the path there; `adoptedStyleSheets` gave another object
+  after each assignment (a list kept and pushed to undid the change);
+  `attachInternals()` worked on any element; 2000 roots sharing a
+  sheet took 0.45 s to adopt it (37 ms now).
+- A custom element moved in the page gets `disconnectedCallback`
+  before `connectedCallback`; `stopImmediatePropagation()` in an `on*`
+  handler stops the listeners after it.
 
 ## [0.1.4] - 2026-11-10
 

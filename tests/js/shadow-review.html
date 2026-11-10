@@ -1,0 +1,193 @@
+<!doctype html>
+<x-ssr id=ssr><template shadowrootmode=open><p>server</p></template></x-ssr>
+<x-ssr id=ssr2><template shadowrootmode=closed><p>server</p></template></x-ssr>
+<div id=dsd><template shadowrootmode=open><slot id=d></slot><slot id=n name=x></slot></template><span>a</span><span slot=x>b</span></div>
+<x-s id=s1><template shadowrootmode=open><style>span{color:green}</style><span>1</span></template></x-s>
+<x-s id=s2><template shadowrootmode=open><style>span{color:green}</style><span>2</span></template></x-s>
+<script>
+const log = (...a) => console.log(a.join(' | '));
+const $ = (id) => document.getElementById(id);
+const props = (o) => Object.keys(o).filter((k) => k[0] === '_').join(',');
+
+// Closed roots: nothing a page can read leads into one
+const h = document.createElement('x-closed');
+document.body.appendChild(h);
+const r = h.attachShadow({ mode: 'closed' });
+r.innerHTML = '<input id=secret value=pw><b id=b>b</b>';
+let seen = null;
+window.addEventListener('click', (e) => { seen = e; }, { once: true });
+r.getElementById('b').click();
+log('event', seen.target === h, props(seen) || 'none',
+	seen.composedPath().length);
+for (const C of [ElementInternals, CustomStateSet]) {
+	try {
+		new C(h);
+		log(C.name, 'made');
+	} catch (e) {
+		log(C.name, e.name);
+	}
+}
+class Int extends HTMLElement {
+	constructor() {
+		super();
+		this.i = this.attachInternals();
+		this.attachShadow({ mode: 'closed' }).innerHTML = '<p>in</p>';
+	}
+}
+customElements.define('x-int', Int);
+const xi = document.createElement('x-int');
+log('internals', props(xi) || 'none', xi.i.shadowRoot instanceof ShadowRoot,
+	Object.getOwnPropertySymbols(xi.i).length);
+const pre = document.body.appendChild(document.createElement('x-int2'));
+pre._internals = {};
+customElements.define('x-int2', class extends HTMLElement {
+	constructor() {
+		super();
+		this.i = this.attachInternals();
+	}
+});
+log('pre-set', pre.i instanceof ElementInternals);
+try {
+	document.createElement('div').attachInternals();
+} catch (e) {
+	log('div attachInternals', e.name);
+}
+try {
+	xi.attachInternals();
+} catch (e) {
+	log('twice', e.name);
+}
+const sheet = new CSSStyleSheet();
+sheet.replaceSync('b { color: red }');
+r.adoptedStyleSheets = [sheet];
+log('sheet', props(sheet) || 'none', props(r) || 'none');
+
+// adoptedStyleSheets: one object, changed in place
+const o = document.createElement('div');
+document.body.appendChild(o);
+const or = o.attachShadow({ mode: 'open' });
+const s1 = new CSSStyleSheet(), s2 = new CSSStyleSheet();
+const s3 = new CSSStyleSheet();
+const view = or.adoptedStyleSheets;
+or.adoptedStyleSheets = [s1];
+view.push(s2);
+or.adoptedStyleSheets = [...or.adoptedStyleSheets, s3];
+log('adopted', view === or.adoptedStyleSheets, view.length,
+	view[0] === s1 && view[1] === s2 && view[2] === s3);
+try {
+	view.push({});
+} catch (e) {
+	log('bad sheet', e.name, view.length);
+}
+const dv = document.adoptedStyleSheets;
+document.adoptedStyleSheets = [s1];
+dv.push(s2);
+log('document', dv === document.adoptedStyleSheets, dv.length);
+document.adoptedStyleSheets = [];
+
+// A sheet shared by many roots: each change reaches the live ones
+const shared = new CSSStyleSheet();
+shared.replaceSync('i { color: red }');
+const many = [];
+for (let i = 0; i < 300; i++) {
+	const e = document.createElement('x-many');
+	document.body.appendChild(e);
+	const er = e.attachShadow({ mode: 'open' });
+	er.adoptedStyleSheets = [shared];
+	er.adoptedStyleSheets = [shared];
+	er.innerHTML = '<i>i</i>';
+	many.push(er);
+}
+shared.replaceSync('i { color: green }');
+log('shared', getComputedStyle(many[299].firstChild).color);
+
+// Declarative roots: attachShadow() of that mode takes them over
+customElements.define('x-ssr', class extends HTMLElement {
+	constructor() {
+		super();
+		try {
+			const sr = this.attachShadow({ mode: 'open',
+				delegatesFocus: true });
+			log('ssr', this.id, sr.childNodes.length,
+				sr.delegatesFocus);
+		} catch (e) {
+			log('ssr', this.id, e.name);
+		}
+	}
+});
+try {
+	$('ssr').attachShadow({ mode: 'open' });
+} catch (e) {
+	log('ssr again', e.name);
+}
+
+// slotchange: only the slot whose nodes changed, for a parsed root
+const dsd = $('dsd'), fired = [];
+dsd.shadowRoot.addEventListener('slotchange', (e) => fired.push(e.target.id));
+const sx = document.createElement('span');
+sx.slot = 'x';
+dsd.appendChild(sx);
+
+// Focus moving inside one tree: nothing for the host; relatedTarget
+const fh = document.createElement('div');
+document.body.appendChild(fh);
+const fr = fh.attachShadow({ mode: 'open' });
+fr.innerHTML = '<input id=a><input id=b>';
+fr.getElementById('a').focus();
+const fl = [];
+for (const t of ['focus', 'blur', 'focusin', 'focusout']) {
+	fh.addEventListener(t, (e) => fl.push('host:' + t));
+	fr.getElementById('a').addEventListener(t, (e) => fl.push('a:' + t +
+		'>' + (e.relatedTarget && e.relatedTarget.id)));
+}
+fr.getElementById('b').focus();
+log('focus', fl.join(' '));
+
+// delegatesFocus: the host's focus() goes to its first focusable
+const dh = document.createElement('div');
+document.body.appendChild(dh);
+const dr = dh.attachShadow({ mode: 'open', delegatesFocus: true,
+	clonable: true });
+dr.innerHTML = '<p>t</p><button disabled>x</button><input id=first><input>';
+dh.focus();
+log('delegates', dr.delegatesFocus, dr.clonable, dr.serializable,
+	dr.activeElement && dr.activeElement.id, document.activeElement === dh);
+log('getHTML', dr.getHTML().slice(0, 9));
+
+// relatedTarget the host: the path stops at it
+const rl = [];
+dh.addEventListener('mouseover', () => rl.push('host'));
+dr.firstChild.addEventListener('mouseover', () => rl.push('p'));
+dr.firstChild.dispatchEvent(new MouseEvent('mouseover', { bubbles: true,
+	composed: true, relatedTarget: dh }));
+log('related host', rl.join(','));
+
+// A host moved: disconnected, then connected
+const cl = [];
+customElements.define('x-cb', class extends HTMLElement {
+	connectedCallback() { cl.push('+'); }
+	disconnectedCallback() { cl.push('-'); }
+});
+const cb = document.createElement('x-cb');
+document.body.appendChild(cb);
+document.body.insertBefore(cb, document.body.firstChild);
+log('move', cl.join(''));
+
+// stopImmediatePropagation() in an on* handler
+const sp = document.createElement('p'), spl = [];
+sp.onclick = (e) => { spl.push('on'); e.stopImmediatePropagation(); };
+sp.addEventListener('click', () => spl.push('listener'));
+sp.click();
+log('stop now', spl.join(','));
+
+// Shared <style> texts: a changed one restyles its tree only
+const t2 = $('s2').shadowRoot.querySelector('style');
+t2.textContent = 'span{color:blue}';
+log('styles', getComputedStyle($('s1').shadowRoot.lastChild).color,
+	getComputedStyle($('s2').shadowRoot.lastChild).color);
+t2.textContent = 'span{color:green}';
+log('styles back', getComputedStyle($('s2').shadowRoot.lastChild).color);
+
+Promise.resolve().then(() => Promise.resolve()).then(() =>
+	log('slotchange', fired.join(',')));
+</script>

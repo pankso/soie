@@ -1,0 +1,24 @@
+log: event | true | _stop,_stopNow,_passive | 0
+log: ElementInternals | TypeError
+log: CustomStateSet | TypeError
+log: internals | none | true | 0
+log: pre-set | true
+log: div attachInternals | NotSupportedError
+log: twice | NotSupportedError
+log: sheet | _own,_seen,_rules | none
+log: adopted | true | 3 | true
+log: bad sheet | TypeError | 3
+log: document | true | 2
+log: shared | rgb(0, 128, 0)
+log: ssr | ssr | 0 | true
+log: ssr | ssr2 | NotSupportedError
+log: ssr again | NotSupportedError
+log: focus | a:blur>b a:focusout>b
+log: delegates | true | true | false | first | true
+log: getHTML | <p>t</p><
+log: related host | p
+log: move | +-+
+log: stop now | on
+log: styles | rgb(0, 128, 0) | rgb(0, 0, 255)
+log: styles back | rgb(0, 128, 0)
+log: slotchange | n

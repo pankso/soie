@@ -1,0 +1,331 @@
+#data
+<!DOCTYPE html><x-a><template shadowrootmode=open><style>:host{display:block}:host::before{content:"*";color:red}:host::after{content:"+";height:30px}</style><span>t</span></template></x-a>
+#errors
+#properties
+color,height,content
+#document
+| <!DOCTYPE html>
+| <html>
+|   @color: rgb(0, 0, 0)
+|   @height: auto
+|   @content: normal
+|   <head>
+|     @color: rgb(0, 0, 0)
+|     @height: auto
+|     @content: normal
+|   <body>
+|     @color: rgb(0, 0, 0)
+|     @height: auto
+|     @content: normal
+|     <x-a>
+|       @color: rgb(0, 0, 0)
+|       @height: auto
+|       @content: normal
+|       ::before
+|         @color: rgb(255, 0, 0)
+|         @height: auto
+|         @content: "*"
+|       ::after
+|         @color: rgb(0, 0, 0)
+|         @height: 30px
+|         @content: "+"
+|       #shadow-root
+|         <style>
+|           @color: rgb(0, 0, 0)
+|           @height: auto
+|           @content: normal
+|           ":host{display:block}:host::before{content:"*";color:red}:host::after{content:"+";height:30px}"
+|         <span>
+|           @color: rgb(0, 0, 0)
+|           @height: auto
+|           @content: normal
+|           "t"
+
+#data
+<!DOCTYPE html><div class=dark><p class=a></p><x-a><template shadowrootmode=open><style>.dark :host span{color:red}.dark :host{background-color:red}body :host{border-top:5px solid}.a + :host{font-style:italic}.a ~ :host span{font-weight:700}div > :host{color:red}:host span{text-decoration-line:underline}:host-context(.dark) i{color:green}</style><span>s</span><i>i</i></template></x-a></div>
+#errors
+#properties
+color,background-color,border-top-width,font-style,font-weight,text-decoration-line
+#document
+| <!DOCTYPE html>
+| <html>
+|   @color: rgb(0, 0, 0)
+|   @background-color: rgba(0, 0, 0, 0)
+|   @border-top-width: 0px
+|   @font-style: normal
+|   @font-weight: 400
+|   @text-decoration-line: none
+|   <head>
+|     @color: rgb(0, 0, 0)
+|     @background-color: rgba(0, 0, 0, 0)
+|     @border-top-width: 0px
+|     @font-style: normal
+|     @font-weight: 400
+|     @text-decoration-line: none
+|   <body>
+|     @color: rgb(0, 0, 0)
+|     @background-color: rgba(0, 0, 0, 0)
+|     @border-top-width: 0px
+|     @font-style: normal
+|     @font-weight: 400
+|     @text-decoration-line: none
+|     <div>
+|       class="dark"
+|       @color: rgb(0, 0, 0)
+|       @background-color: rgba(0, 0, 0, 0)
+|       @border-top-width: 0px
+|       @font-style: normal
+|       @font-weight: 400
+|       @text-decoration-line: none
+|       <p>
+|         class="a"
+|         @color: rgb(0, 0, 0)
+|         @background-color: rgba(0, 0, 0, 0)
+|         @border-top-width: 0px
+|         @font-style: normal
+|         @font-weight: 400
+|         @text-decoration-line: none
+|       <x-a>
+|         @color: rgb(0, 0, 0)
+|         @background-color: rgba(0, 0, 0, 0)
+|         @border-top-width: 0px
+|         @font-style: normal
+|         @font-weight: 400
+|         @text-decoration-line: none
+|         #shadow-root
+|           <style>
+|             @color: rgb(0, 0, 0)
+|             @background-color: rgba(0, 0, 0, 0)
+|             @border-top-width: 0px
+|             @font-style: normal
+|             @font-weight: 400
+|             @text-decoration-line: none
+|             ".dark :host span{color:red}.dark :host{background-color:red}body :host{border-top:5px solid}.a + :host{font-style:italic}.a ~ :host span{font-weight:700}div > :host{color:red}:host span{text-decoration-line:underline}:host-context(.dark) i{color:green}"
+|           <span>
+|             @color: rgb(0, 0, 0)
+|             @background-color: rgba(0, 0, 0, 0)
+|             @border-top-width: 0px
+|             @font-style: normal
+|             @font-weight: 400
+|             @text-decoration-line: underline
+|             "s"
+|           <i>
+|             @color: rgb(0, 128, 0)
+|             @background-color: rgba(0, 0, 0, 0)
+|             @border-top-width: 0px
+|             @font-style: italic
+|             @font-weight: 400
+|             @text-decoration-line: none
+|             "i"
+
+#data
+<!DOCTYPE html><x-c><template shadowrootmode=open><style>@layer two, one; @layer one{b{color:green}} @layer two{b{color:red}}</style><b>b</b></template></x-c><style>@layer one, two; @layer one { #p { color: red } } @layer two { #p { color: green } }</style><p id=p>p</p>
+#errors
+#properties
+color
+#document
+| <!DOCTYPE html>
+| <html>
+|   @color: rgb(0, 0, 0)
+|   <head>
+|     @color: rgb(0, 0, 0)
+|   <body>
+|     @color: rgb(0, 0, 0)
+|     <x-c>
+|       @color: rgb(0, 0, 0)
+|       #shadow-root
+|         <style>
+|           @color: rgb(0, 0, 0)
+|           "@layer two, one; @layer one{b{color:green}} @layer two{b{color:red}}"
+|         <b>
+|           @color: rgb(0, 128, 0)
+|           "b"
+|     <style>
+|       @color: rgb(0, 0, 0)
+|       "@layer one, two; @layer one { #p { color: red } } @layer two { #p { color: green } }"
+|     <p>
+|       id="p"
+|       @color: rgb(0, 128, 0)
+|       "p"
+
+#data
+<!DOCTYPE html><x-s><template shadowrootmode=open><style>:host{color:green}span{font-weight:700}</style><span>1</span><x-s><template shadowrootmode=open><style>:host{color:green}span{font-weight:700}</style><span>nested</span></template></x-s></template></x-s><x-s><template shadowrootmode=open><style>:host{color:green}span{font-weight:700}</style><span>2</span></template></x-s><x-s><template shadowrootmode=open><style>:host{color:blue}</style><style>span{font-style:italic}</style><span>3</span></template></x-s><x-s><template shadowrootmode=open><style>span{font-style:italic</style><style>span{font-weight:700}</style><span>4</span></template></x-s><x-s><template shadowrootmode=open><style media=print>span{color:red}</style><style>span{font-style:italic}</style><span>5</span></template></x-s><span>doc</span>
+#errors
+#properties
+color,font-weight,font-style
+#document
+| <!DOCTYPE html>
+| <html>
+|   @color: rgb(0, 0, 0)
+|   @font-weight: 400
+|   @font-style: normal
+|   <head>
+|     @color: rgb(0, 0, 0)
+|     @font-weight: 400
+|     @font-style: normal
+|   <body>
+|     @color: rgb(0, 0, 0)
+|     @font-weight: 400
+|     @font-style: normal
+|     <x-s>
+|       @color: rgb(0, 128, 0)
+|       @font-weight: 400
+|       @font-style: normal
+|       #shadow-root
+|         <style>
+|           @color: rgb(0, 128, 0)
+|           @font-weight: 400
+|           @font-style: normal
+|           ":host{color:green}span{font-weight:700}"
+|         <span>
+|           @color: rgb(0, 128, 0)
+|           @font-weight: 700
+|           @font-style: normal
+|           "1"
+|         <x-s>
+|           @color: rgb(0, 128, 0)
+|           @font-weight: 400
+|           @font-style: normal
+|           #shadow-root
+|             <style>
+|               @color: rgb(0, 128, 0)
+|               @font-weight: 400
+|               @font-style: normal
+|               ":host{color:green}span{font-weight:700}"
+|             <span>
+|               @color: rgb(0, 128, 0)
+|               @font-weight: 700
+|               @font-style: normal
+|               "nested"
+|     <x-s>
+|       @color: rgb(0, 128, 0)
+|       @font-weight: 400
+|       @font-style: normal
+|       #shadow-root
+|         <style>
+|           @color: rgb(0, 128, 0)
+|           @font-weight: 400
+|           @font-style: normal
+|           ":host{color:green}span{font-weight:700}"
+|         <span>
+|           @color: rgb(0, 128, 0)
+|           @font-weight: 700
+|           @font-style: normal
+|           "2"
+|     <x-s>
+|       @color: rgb(0, 0, 255)
+|       @font-weight: 400
+|       @font-style: normal
+|       #shadow-root
+|         <style>
+|           @color: rgb(0, 0, 255)
+|           @font-weight: 400
+|           @font-style: normal
+|           ":host{color:blue}"
+|         <style>
+|           @color: rgb(0, 0, 255)
+|           @font-weight: 400
+|           @font-style: normal
+|           "span{font-style:italic}"
+|         <span>
+|           @color: rgb(0, 0, 255)
+|           @font-weight: 400
+|           @font-style: italic
+|           "3"
+|     <x-s>
+|       @color: rgb(0, 0, 0)
+|       @font-weight: 400
+|       @font-style: normal
+|       #shadow-root
+|         <style>
+|           @color: rgb(0, 0, 0)
+|           @font-weight: 400
+|           @font-style: normal
+|           "span{font-style:italic"
+|         <style>
+|           @color: rgb(0, 0, 0)
+|           @font-weight: 400
+|           @font-style: normal
+|           "span{font-weight:700}"
+|         <span>
+|           @color: rgb(0, 0, 0)
+|           @font-weight: 700
+|           @font-style: italic
+|           "4"
+|     <x-s>
+|       @color: rgb(0, 0, 0)
+|       @font-weight: 400
+|       @font-style: normal
+|       #shadow-root
+|         <style>
+|           media="print"
+|           @color: rgb(0, 0, 0)
+|           @font-weight: 400
+|           @font-style: normal
+|           "span{color:red}"
+|         <style>
+|           @color: rgb(0, 0, 0)
+|           @font-weight: 400
+|           @font-style: normal
+|           "span{font-style:italic}"
+|         <span>
+|           @color: rgb(0, 0, 0)
+|           @font-weight: 400
+|           @font-style: italic
+|           "5"
+|     <span>
+|       @color: rgb(0, 0, 0)
+|       @font-weight: 400
+|       @font-style: normal
+|       "doc"
+
+#data
+<!DOCTYPE html><style>#b { color: blue; color: light-dark(red) } @supports (color: light-dark(red)) { #c { color: red } } @supports (color: light-dark(red, green)) { #d { color: green } } #e { color-scheme: dark; color: light-dark(red, green) } #f { color: blue; color: light-dark(red, 1px) } #g { border-top: 3px solid; border-top-color: light-dark(lime, red) }</style><p id=b>b</p><p id=c>c</p><p id=d>d</p><p id=e>e</p><p id=f>f</p><p id=g>g</p>
+#errors
+#properties
+color,border-top-color
+#document
+| <!DOCTYPE html>
+| <html>
+|   @color: rgb(0, 0, 0)
+|   @border-top-color: rgb(0, 0, 0)
+|   <head>
+|     @color: rgb(0, 0, 0)
+|     @border-top-color: rgb(0, 0, 0)
+|     <style>
+|       @color: rgb(0, 0, 0)
+|       @border-top-color: rgb(0, 0, 0)
+|       "#b { color: blue; color: light-dark(red) } @supports (color: light-dark(red)) { #c { color: red } } @supports (color: light-dark(red, green)) { #d { color: green } } #e { color-scheme: dark; color: light-dark(red, green) } #f { color: blue; color: light-dark(red, 1px) } #g { border-top: 3px solid; border-top-color: light-dark(lime, red) }"
+|   <body>
+|     @color: rgb(0, 0, 0)
+|     @border-top-color: rgb(0, 0, 0)
+|     <p>
+|       id="b"
+|       @color: rgb(0, 0, 255)
+|       @border-top-color: rgb(0, 0, 255)
+|       "b"
+|     <p>
+|       id="c"
+|       @color: rgb(0, 0, 0)
+|       @border-top-color: rgb(0, 0, 0)
+|       "c"
+|     <p>
+|       id="d"
+|       @color: rgb(0, 128, 0)
+|       @border-top-color: rgb(0, 128, 0)
+|       "d"
+|     <p>
+|       id="e"
+|       @color: rgb(0, 128, 0)
+|       @border-top-color: rgb(0, 128, 0)
+|       "e"
+|     <p>
+|       id="f"
+|       @color: rgb(0, 0, 255)
+|       @border-top-color: rgb(0, 0, 255)
+|       "f"
+|     <p>
+|       id="g"
+|       @color: rgb(0, 0, 0)
+|       @border-top-color: rgb(0, 255, 0)
+|       "g"

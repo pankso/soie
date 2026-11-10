@@ -1132,7 +1132,7 @@ void slen_free(struct slen *l)
 }
 
 int vp_units_used;
-int color_dark;
+THREAD_LOCAL int color_dark;
 
 static void lin_resolve(const struct lin *l, const struct ucontext *u,
 	float *px, float *pct)

@@ -584,10 +584,15 @@ static soie_node *template_content(struct parser *p, soie_node *t)
 {
 	int i;
 
-	for (i = 0; i < p->nshadows; i += 2)
+	/* a declaring template has no content: the last ones first, the
+	 * open ones (a page of 4000 components scanned them all for each
+	 * node) */
+	if (t->u.el.content)
+		return t->u.el.content;
+	for (i = p->nshadows - 2; i >= 0; i -= 2)
 		if (p->shadows[i] == t)
 			return p->shadows[i + 1];
-	return t->u.el.content;
+	return NULL;
 }
 
 /* "appropriate place for inserting a node" */
@@ -629,7 +634,18 @@ static void insertion_place(struct parser *p, soie_node *target,
 /*
  * Remember a node the parser leaves out of the tree, maybe for a while:
  * those still without a parent at the end of the parse are freed.
+ * orphan_new(): n is not among them (just made).
  */
+static void orphan_new(struct parser *p, soie_node *n)
+{
+	if (p->norphans == p->caporphans) {
+		p->caporphans = p->caporphans ? p->caporphans * 2 : 8;
+		p->orphans = xrealloc(p->orphans,
+			p->caporphans * sizeof(*p->orphans));
+	}
+	p->orphans[p->norphans++] = n;
+}
+
 static void orphan(struct parser *p, soie_node *n)
 {
 	int i;
@@ -637,12 +653,7 @@ static void orphan(struct parser *p, soie_node *n)
 	for (i = 0; i < p->norphans; i++)
 		if (p->orphans[i] == n)
 			return;
-	if (p->norphans == p->caporphans) {
-		p->caporphans = p->caporphans ? p->caporphans * 2 : 8;
-		p->orphans = xrealloc(p->orphans,
-			p->caporphans * sizeof(*p->orphans));
-	}
-	p->orphans[p->norphans++] = n;
+	orphan_new(p, n);
 }
 
 static void insert_node(struct parser *p, soie_node *n)
@@ -686,9 +697,12 @@ static int declare_shadow(struct parser *p, struct token *t)
 	    (!strcaseeq(m, "open") && !strcaseeq(m, "closed")) ||
 	    !(r = soie_attach_shadow(host, strcaseeq(m, "open"))))
 		return 0;
+	r->u.frag.declared = 1;
 	el = create_element(p, t, SOIE_NS_HTML, 0);
+	soie_node_free(el->u.el.content);
+	el->u.el.content = NULL;
 	push(p, el);
-	orphan(p, el);
+	orphan_new(p, el);
 	if (p->nshadows == p->capshadows) {
 		p->capshadows = p->capshadows ? p->capshadows * 2 : 8;
 		p->shadows = xrealloc(p->shadows,

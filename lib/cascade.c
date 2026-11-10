@@ -164,6 +164,14 @@ struct styledb {
 	struct evec root;	/* :root and nothing else */
 	struct evec universal;
 	struct layer roots[3];
+	/* the author layers of each shadow tree's sheets, by scope (see
+	 * struct srule): a tree's layer names are its own (CSS Cascade 5,
+	 * 6.4.3), a component's order is not the page's */
+	struct scoped {
+		const void *scope;
+		struct layer root;
+		struct scoped *next;
+	} *scoped;
 	unsigned order;
 	int anon_layers;
 	struct reg *regs;
@@ -379,6 +387,13 @@ void styledb_free(struct styledb *db)
 	free(db->universal.v);
 	for (i = 0; i < 3; i++)
 		layer_free(&db->roots[i]);
+	while (db->scoped) {
+		struct scoped *n = db->scoped->next;
+
+		layer_free(&db->scoped->root);
+		free(db->scoped);
+		db->scoped = n;
+	}
 	free(db->regs);
 	for (i = 0; i < db->nkfs; i++) {
 		free(db->kfs[i].name);
@@ -418,6 +433,27 @@ static struct layer *layer_child(struct layer *p, const char *name,
 		p->first = c;
 	p->last = c;
 	return c;
+}
+
+/* The author layers of the rules of scope (struct srule's) */
+static struct layer *scope_layer(struct styledb *db, const void *scope)
+{
+	struct scoped **p, *s;
+
+	if (!scope)
+		return &db->roots[O_AUTHOR];
+	for (p = &db->scoped; (s = *p) && s->scope != scope; p = &s->next)
+		;
+	if (s) {
+		*p = s->next;	/* first: a tree's sheets come together */
+	} else {
+		s = xmalloc(sizeof(*s));
+		memset(s, 0, sizeof(*s));
+		s->scope = scope;
+	}
+	s->next = db->scoped;
+	db->scoped = s;
+	return &s->root;
 }
 
 /* "a.b.c" below p */
@@ -1281,66 +1317,80 @@ static int svg_style(const soie_node *n)
 		!strcmp(n->name, "style");
 }
 
-/* The sheets of a document, or of a shadow root (top): its rules apply
- * to that tree only */
-static void collect_sheets(struct styledb *db, soie_node *top,
+/* The sheets of a document and of its shadow trees: the rules of a
+ * shadow tree's apply to that tree only. A tree with <style> elements
+ * only has its text shared (shadow_sheets()). */
+static void collect_sheets(struct styledb *db, soie_node *doc,
 	const char *base)
 {
-	soie_node *n = top->first;
+	struct walk w;
+	soie_node *n;
 	struct pctx pc;
 
 	memset(&pc, 0, sizeof(pc));
 	pc.origin = O_AUTHOR;
 	pc.layer = &db->roots[O_AUTHOR];
 	pc.base = base;
-	if (top->type == SOIE_DOCUMENT_FRAGMENT)
-		pc.scope = top;
-	while (n) {
+	for (n = walk_start(&w, doc, NULL); n; n = walk_next(&w)) {
 		/* an SVG's <style> is a sheet of the page as well */
-		if (n->type == SOIE_ELEMENT && (n->ns == SOIE_NS_HTML ||
-		    svg_style(n))) {
-			if ((n->tag == TAG_STYLE || n->ns == SOIE_NS_SVG) &&
+		if (n->type != SOIE_ELEMENT || (n->ns != SOIE_NS_HTML &&
+		    !svg_style(n)) || (w.scope && w.scope->u.frag.sheets))
+			continue;
+		if ((n->tag == TAG_STYLE || n->ns == SOIE_NS_SVG ||
+		     n->tag == TAG_LINK) && pc.scope != w.scope) {
+			pc.scope = w.scope;
+			pc.layer = scope_layer(db, w.scope);
+		}
+		if ((n->tag == TAG_STYLE || n->ns == SOIE_NS_SVG) &&
+		    media_attr(db, n)) {
+			const char *t = soie_element_get_attr(n, "type");
+			struct buf b = { 0 };
+
+			if (!t || !*t || ascii_ieq(t, "text/css")) {
+				text_content(n, &b);
+				buf_add(&b, "", 0);
+				load_sheet(db, b.s, b.len, &pc);
+			}
+			buf_free(&b);
+		} else if (n->tag == TAG_LINK) {
+			const char *rel = soie_element_get_attr(n, "rel");
+			const char *href = soie_element_get_attr(n, "href");
+
+			if (href && *href && rel && word_in(rel, "stylesheet",
+			    1) && !word_in(rel, "alternate", 1) &&
+			    !soie_element_get_attr(n, "disabled") &&
 			    media_attr(db, n)) {
-				const char *t = soie_element_get_attr(n, "type");
-				struct buf b = { 0 };
+				char *url = soie_url_resolve(base, href);
+				int r = fetch_sheet(db, url, &pc);
 
-				if (!t || !*t || ascii_ieq(t, "text/css")) {
-					text_content(n, &b);
-					buf_add(&b, "", 0);
-					load_sheet(db, b.s, b.len, &pc);
-				}
-				buf_free(&b);
-			} else if (n->tag == TAG_LINK) {
-				const char *rel = soie_element_get_attr(n, "rel");
-				const char *href = soie_element_get_attr(n,
-					"href");
-
-				if (href && *href && rel && word_in(rel,
-				    "stylesheet", 1) && !word_in(rel,
-				    "alternate", 1) && !soie_element_get_attr(n,
-				    "disabled") && media_attr(db, n)) {
-					char *url = soie_url_resolve(base, href);
-					int r = fetch_sheet(db, url, &pc);
-
-					n->sheet = r == SOIE_FETCH_LATER ? 0 :
-						r ? 2 : 1;
-					free(url);
-				} else {
-					n->sheet = 1;	/* nothing to wait for */
-				}
+				n->sheet = r == SOIE_FETCH_LATER ? 0 :
+					r ? 2 : 1;
+				free(url);
+			} else {
+				n->sheet = 1;	/* nothing to wait for */
 			}
 		}
-		if (n->type == SOIE_ELEMENT && n->u.el.shadow)
-			collect_sheets(db, n->u.el.shadow, base);
-		/* tree order, skipping template contents */
-		if (n->first) {
-			n = n->first;
-			continue;
-		}
-		while (n && !n->next)
-			n = n->parent;
-		if (n)
-			n = n->next;
+	}
+	walk_end(&w);
+}
+
+/* The <style> texts shared by shadow trees (root_sheets()), once each
+ * whatever the number of trees: their scope */
+static void shadow_sheets(struct styledb *db, soie_node *doc,
+	const char *base)
+{
+	struct shadow_css *c;
+	struct pctx pc;
+	const char *t;
+
+	memset(&pc, 0, sizeof(pc));
+	pc.origin = O_AUTHOR;
+	pc.base = base;
+	for (c = doc->u.doc->sheets; c; c = c->next) {
+		pc.scope = c;
+		pc.layer = scope_layer(db, c);
+		for (t = c->text; t < c->text + c->len; t += strlen(t) + 1)
+			load_sheet(db, t, strlen(t), &pc);
 	}
 }
 
@@ -1354,11 +1404,11 @@ static void adopted_sheets(struct styledb *db, soie_node *doc,
 
 	memset(&pc, 0, sizeof(pc));
 	pc.origin = O_AUTHOR;
-	pc.layer = &db->roots[O_AUTHOR];
 	pc.base = base;
 	for (c = doc->u.doc->css; c; c = c->next) {
 		pc.scope = c;
-		load_sheet(db, c->text, strlen(c->text), &pc);
+		pc.layer = scope_layer(db, c);
+		load_sheet(db, c->text, c->len, &pc);
 	}
 }
 
@@ -2273,7 +2323,7 @@ static const struct style *compute_style(struct styledb *db,
 	struct style s;
 	struct cctx c;
 	struct vtmp t;
-	int i, k;
+	int i, k, dark = 0;
 
 	memset(&s, 0, sizeof(s));
 	s.vars = compute_custom(db, cs, parent, &t);
@@ -2321,8 +2371,11 @@ static const struct style *compute_style(struct styledb *db,
 			compute_value(i, sv, &c, &s.v[i]);
 		if (used)
 			sval_free(&tmp);
-		if (i == P_COLOR_SCHEME)
-			color_dark = scheme_dark(db, s.v[i].u.str);
+		/* a thread-local: set only when dark, light pages pay no
+		 * access per element */
+		if (i == P_COLOR_SCHEME && (dark = scheme_dark(db,
+		    s.v[i].u.str)))
+			color_dark = 1;
 		if (i == P_FONT_SIZE) {
 			c.u.em = s.v[P_FONT_SIZE].u.len.px;
 			c.u.ex = c.u.ch = c.u.em / 2;
@@ -2330,7 +2383,8 @@ static const struct style *compute_style(struct styledb *db,
 				c.u.rem = c.u.em;
 		}
 	}
-	color_dark = 0;
+	if (dark)
+		color_dark = 0;
 	vtmp_free(&t);
 	fixups(&s, parent, root);
 	return intern_style(db, &s);
@@ -2359,7 +2413,7 @@ static int in_evec(const struct evec *v, const struct entry *e);
 /* Are rules of scope s (see struct srule) shadow root r's? */
 static int of_root(const soie_node *r, const void *s)
 {
-	return r && (r == s || r->u.frag.css == s);
+	return r && (r == s || r->u.frag.css == s || r->u.frag.sheets == s);
 }
 
 static void collect_other(const struct entry *e, const soie_node *scope,
@@ -2383,10 +2437,11 @@ static void collect_other(const struct entry *e, const soie_node *scope,
 		   !selector_has_host(e->r->sel, e->sel)) {
 		return;
 	}
-	if (root) {
+	if (root)
 		x.cross = X_IN;
-		x.pseudo = PE_NONE;	/* ::slotted(): the element's own */
-	}
+	/* ::slotted(): the element's own; :host::before is the host's */
+	if (e->pseudo == PE_SLOTTED)
+		x.pseudo = PE_NONE;
 	selector_shadow(root);
 	if (selector_match(e->r->sel, e->sel, at) &&
 	    (!e->multi || !in_evec(out, e)))
@@ -2514,11 +2569,17 @@ static void collect_parts(struct styledb *db, const soie_node *el,
 static void collect(struct styledb *db, const soie_node *el,
 	const soie_node *scope, struct evec *out)
 {
-	/* the shared adopted sheets of el's tree, of its own shadow tree
-	 * (a component in its own shadow tree: the same) */
+	/* the shared sheets (adopted, <style>) of el's tree, of its own
+	 * shadow tree (a component in its own shadow tree: the same) */
+	const soie_node *sh = el->u.el.shadow, *p = el->parent;
 	const void *css = scope ? scope->u.frag.css : NULL;
-	const void *own = el->u.el.shadow ? el->u.el.shadow->u.frag.css :
-		NULL;
+	const void *sheets = scope ? scope->u.frag.sheets : NULL;
+	const void *own = sh ? sh->u.frag.css : NULL;
+	const void *owns = sh ? sh->u.frag.sheets : NULL;
+	/* an author's rule of another tree matches a host (:host) or a
+	 * host's child (::slotted()) only: the others skip them at once,
+	 * 4000 components' rules were 4000 calls per element */
+	int cross = sh || (p && p->type == SOIE_ELEMENT && p->u.el.shadow);
 	const char *a;
 	struct evec *e;
 	char *low;
@@ -2528,18 +2589,21 @@ static void collect(struct styledb *db, const soie_node *el,
 	if (scope)
 		selector_shadow(scope);
 #define ADD(vec) do { \
-	for (i = 0; (vec) && i < (vec)->n; i++) \
-		if (((vec)->v[i].r->scope != scope && \
-		     (!css || (vec)->v[i].r->scope != css)) || \
-		    (vec)->v[i].pseudo == PE_SLOTTED) \
-			collect_other(&(vec)->v[i], scope, el, out); \
-		else if (selector_match((vec)->v[i].r->sel, (vec)->v[i].sel, \
-		    el)) { \
-			if (!(vec)->v[i].multi || !in_evec(out, &(vec)->v[i])) \
-				evec_add(out, &(vec)->v[i]); \
-		} else if (own && (vec)->v[i].r->scope == own) { \
-			collect_other(&(vec)->v[i], scope, el, out); \
+	for (i = 0; (vec) && i < (vec)->n; i++) { \
+		const struct entry *x = &(vec)->v[i]; \
+		const void *s = x->r->scope; \
+\
+		if ((s != scope && (!css || s != css) && \
+		     (!sheets || s != sheets)) || x->pseudo == PE_SLOTTED) { \
+			if (cross || x->r->origin != O_AUTHOR) \
+				collect_other(x, scope, el, out); \
+		} else if (selector_match(x->r->sel, x->sel, el)) { \
+			if (!x->multi || !in_evec(out, x)) \
+				evec_add(out, x); \
+		} else if ((own && s == own) || (owns && s == owns)) { \
+			collect_other(x, scope, el, out); \
 		} \
+	} \
 } while (0)
 	if ((a = soie_element_get_attr(el, "id")) && *a) {
 		low = db->quirks ? lowdup(a) : NULL;
@@ -3167,19 +3231,6 @@ static void style_one(struct styledb *db, soie_node *n,
 		db->rem = n->u.el.style->v[P_FONT_SIZE].u.len.px;
 }
 
-static void style_tree(struct styledb *db, soie_node *top, int skip_top,
-	const soie_node *scope);
-
-/* The elements of shadow tree s */
-static void style_shadow(struct styledb *db, soie_node *s)
-{
-	soie_node *c;
-
-	for (c = s->first; c; c = c->next)
-		if (c->type == SOIE_ELEMENT)
-			style_tree(db, c, 0, s);
-}
-
 /* Elements in tree order from top (top itself unless skip_top), each
  * after its parent: a host before its shadow tree, its shadow tree
  * before its children (they inherit from its slots). scope: top's
@@ -3187,44 +3238,25 @@ static void style_shadow(struct styledb *db, soie_node *s)
 static void style_tree(struct styledb *db, soie_node *top, int skip_top,
 	const soie_node *scope)
 {
-	soie_node *n = top;
+	struct walk w;
+	soie_node *n;
 
-	while (n) {
+	for (n = walk_start(&w, top, scope); n; n = walk_next(&w))
 		if (n->type == SOIE_ELEMENT && (n != top || !skip_top))
-			style_one(db, n, scope);
-		if (n->type == SOIE_ELEMENT && n->u.el.shadow)
-			style_shadow(db, n->u.el.shadow);
-		if (n->first && n->type == SOIE_ELEMENT) {
-			n = n->first;
-			continue;
-		}
-		while (n && n != top && !n->next)
-			n = n->parent;
-		if (!n || n == top)
-			break;
-		n = n->next;
-	}
+			style_one(db, n, w.scope);
+	walk_end(&w);
 }
 
 /* Elements whose style has viewport units, for another viewport */
 static void mark_viewport(soie_node *doc)
 {
-	soie_node *n = doc->first;
+	struct walk w;
+	soie_node *n;
 
-	while (n) {
+	for (n = walk_start(&w, doc, NULL); n; n = walk_next(&w))
 		if (n->type == SOIE_ELEMENT && n->vp)
 			mark(n, SELF);
-		if (n->type == SOIE_ELEMENT && n->u.el.shadow)
-			mark_viewport(n->u.el.shadow);
-		if (n->first && n->type == SOIE_ELEMENT) {
-			n = n->first;
-			continue;
-		}
-		while (n && !n->next)
-			n = n->parent;
-		if (n)
-			n = n->next;
-	}
+	walk_end(&w);
 }
 
 /* Is there a <slot> in n's subtree? */
@@ -3313,46 +3345,96 @@ static unsigned hash_str(const char *s, unsigned h)
 	return s ? hash_bytes(s, strlen(s) + 1, h) : hash_bytes("", 0, h ^ 1);
 }
 
-/*
- * A hash of everything the rules come from: options, the base URL, and
- * the <style>, <link> and <base> elements. When it has not changed, a
- * restyle (after a script changed the tree) keeps the parsed rules
- * and only runs the cascade again.
- */
-static unsigned tree_signature(soie_node *top, unsigned h, struct buf *b)
+/* The <style> texts of shadow root r, each ended by a NUL, into b; 0
+ * when it has another kind of sheet (<link>, media, SVG): its rules
+ * are its own then. Its tree only, not those of its hosts. */
+static int root_sheets(const soie_node *r, struct buf *b)
 {
-	static const char *const attrs[] = { "href", "rel", "media", "type",
-		"disabled", NULL };
-	soie_node *n = top->first;
-	int frag = top->type == SOIE_DOCUMENT_FRAGMENT, i;
+	const soie_node *n = r->first;
+	const char *t;
 
 	while (n) {
 		if (n->type == SOIE_ELEMENT && ((n->ns == SOIE_NS_HTML &&
-		    (n->tag == TAG_STYLE || n->tag == TAG_LINK ||
-		     n->tag == TAG_BASE)) || svg_style(n))) {
-			if (frag)
-				h = hash_bytes(&top, sizeof(top), h);
-			h = hash_bytes(&n, sizeof(n), h);
-			for (i = 0; attrs[i]; i++)
-				h = hash_str(soie_element_get_attr(n,
-					attrs[i]), h);
-			if (n->tag == TAG_STYLE || n->ns == SOIE_NS_SVG) {
-				b->len = 0;
-				text_content(n, b);
-				h = hash_bytes(b->s ? b->s : "", b->len, h);
-			}
+		    (n->tag == TAG_STYLE || n->tag == TAG_LINK)) ||
+		    svg_style(n))) {
+			if (n->tag != TAG_STYLE || n->ns != SOIE_NS_HTML ||
+			    soie_element_get_attr(n, "media") ||
+			    ((t = soie_element_get_attr(n, "type")) && *t &&
+			     !ascii_ieq(t, "text/css")))
+				return 0;
+			text_content(n, b);
+			buf_putc(b, '\0');
 		}
-		if (n->type == SOIE_ELEMENT && n->u.el.shadow)
-			h = tree_signature(n->u.el.shadow, h, b);
 		if (n->first) {
 			n = n->first;
 			continue;
 		}
-		while (n && !n->next)
+		while (n != r && !n->next)
 			n = n->parent;
-		if (n)
-			n = n->next;
+		n = n == r ? NULL : n->next;
 	}
+	return 1;
+}
+
+/* Shadow root r's shared <style> text, as it is now: every instance of
+ * a component server-side rendered has the same, the cascade loads it
+ * once and a new instance keeps the rules */
+static void share_sheets(soie_node *doc, soie_node *r, struct buf *b)
+{
+	struct shadow_css *old = r->u.frag.sheets, *c = NULL;
+
+	b->len = 0;
+	if (root_sheets(r, b) && b->len) {
+		if (old && old->len == b->len && !memcmp(old->text, b->s,
+		    b->len))
+			return;
+		c = css_hold(&doc->u.doc->sheets, b->s, b->len);
+	}
+	r->u.frag.sheets = c;
+	css_drop(&doc->u.doc->sheets, old);
+	/* rules that may be kept (another tree had that text): its tree
+	 * restyles all the same */
+	if (r->u.frag.host)
+		style_changed(r->u.frag.host, CH_ATTR);
+}
+
+/*
+ * A hash of everything the rules come from: options, the base URL, and
+ * the <style>, <link> and <base> elements. When it has not changed, a
+ * restyle (after a script changed the tree) keeps the parsed rules
+ * and only runs the cascade again. A shadow tree's shared <style>
+ * text is hashed once (sheet_signature()), not for each tree.
+ */
+static unsigned tree_signature(soie_node *doc, unsigned h, struct buf *b)
+{
+	static const char *const attrs[] = { "href", "rel", "media", "type",
+		"disabled", NULL };
+	struct walk w;
+	soie_node *n;
+	int i;
+
+	for (n = walk_start(&w, doc, NULL); n; n = walk_next(&w)) {
+		if (n == w.scope) {
+			share_sheets(doc, n, b);
+			continue;
+		}
+		if (n->type != SOIE_ELEMENT || !((n->ns == SOIE_NS_HTML &&
+		    (n->tag == TAG_STYLE || n->tag == TAG_LINK ||
+		     n->tag == TAG_BASE)) || svg_style(n)) ||
+		    (w.scope && w.scope->u.frag.sheets))
+			continue;
+		if (w.scope)
+			h = hash_bytes(&w.scope, sizeof(w.scope), h);
+		h = hash_bytes(&n, sizeof(n), h);
+		for (i = 0; attrs[i]; i++)
+			h = hash_str(soie_element_get_attr(n, attrs[i]), h);
+		if (n->tag == TAG_STYLE || n->ns == SOIE_NS_SVG) {
+			b->len = 0;
+			text_content(n, b);
+			h = hash_bytes(b->s ? b->s : "", b->len, h);
+		}
+	}
+	walk_end(&w);
 	return h;
 }
 
@@ -3381,7 +3463,11 @@ static unsigned sheet_signature(soie_node *doc, const soie_style_options *o)
 	 * no new rules, a new component does */
 	for (c = doc->u.doc->css; c; c = c->next) {
 		h = hash_bytes(&c, sizeof(c), h);
-		h = hash_str(c->text, h);
+		h = hash_bytes(c->text, c->len, h);
+	}
+	for (c = doc->u.doc->sheets; c; c = c->next) {
+		h = hash_bytes(&c, sizeof(c), h);
+		h = hash_bytes(c->text, c->len, h);
 	}
 	buf_free(&b);
 	return h;
@@ -3430,24 +3516,16 @@ void doc_units(const struct style *st, struct ucontext *u)
 static int anims_in(soie_node *doc, soie_node *top, soie_node **out, int k,
 	int max)
 {
-	soie_node *n = top->first;
+	struct walk w;
+	soie_node *n;
 
-	while (n && k < max) {
+	for (n = walk_start(&w, top, NULL); n && k < max; n = walk_next(&w))
 		if (n->type == SOIE_ELEMENT && (n->anim & 1)) {
 			n->anim &= ~1;
 			doc->u.doc->anims--;
 			out[k++] = n;
 		}
-		if (n->type == SOIE_ELEMENT && n->u.el.shadow)
-			k = anims_in(doc, n->u.el.shadow, out, k, max);
-		if (n->first) {
-			n = n->first;
-			continue;
-		}
-		while (n != top && !n->next)
-			n = n->parent;
-		n = n == top ? NULL : n->next;
-	}
+	walk_end(&w);
 	return k;
 }
 
@@ -3473,6 +3551,7 @@ unsigned long style_serial(const soie_node *doc)
 int soie_style_document(soie_node *doc, const soie_style_options *opts)
 {
 	struct styledb *db;
+	struct scoped *sc;
 	struct pctx pc;
 	soie_node *n;
 	char *base;
@@ -3559,6 +3638,7 @@ int soie_style_document(soie_node *doc, const soie_style_options *opts)
 	base = document_base(doc, opts ? opts->base_url : NULL);
 	db->base = base;
 	collect_sheets(db, doc, base);
+	shadow_sheets(db, doc, base);
 	adopted_sheets(db, doc, base);
 	fonts_drop_document(doc);
 	load_fonts(db, doc);
@@ -3567,6 +3647,10 @@ int soie_style_document(soie_node *doc, const soie_style_options *opts)
 	for (i = 0; i < 3; i++) {
 		next = 1;
 		layer_rank(&db->roots[i], &next);
+	}
+	for (sc = db->scoped; sc; sc = sc->next) {
+		next = 1;
+		layer_rank(&sc->root, &next);
 	}
 
 cascade:

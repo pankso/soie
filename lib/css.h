@@ -12,6 +12,12 @@
 
 #include "internal.h"
 
+#if defined(__GNUC__)
+#define THREAD_LOCAL __thread	/* workers match selectors, parse colors */
+#else
+#define THREAD_LOCAL
+#endif
+
 /* Tokens and component values (CSS Syntax 3) */
 
 enum {
@@ -195,8 +201,10 @@ void selector_scope(const soie_node *el);
 /* The shadow root whose rules are matched (cascade.c), else NULL: its
  * host matches :host, ::slotted() sees its slots */
 void selector_shadow(const soie_node *root);
-/* Selector i of l: has its subject :host? does el match its
- * ::slotted() argument (the rest is matched from el's slot)? */
+/* Selector i of l: may it match the host, :host alone (nothing before
+ * it: the host has no ancestors nor siblings for its tree's rules)?
+ * does el match its ::slotted() argument (the rest is matched from
+ * el's slot)? */
 int selector_has_host(const struct sellist *l, int i);
 int selector_slotted(const struct sellist *l, int i, const soie_node *el);
 /* The ::part() of selector i of l (NULL if none); does el, a part
@@ -259,8 +267,9 @@ struct ucontext {
 /* Set when a length was resolved with viewport units (vw, vh...) */
 extern int vp_units_used;
 /* light-dark() gives its dark color: set by the cascade for the
- * element it computes, from its color-scheme */
-extern int color_dark;
+ * element it computes, from its color-scheme; a worker's colors are
+ * light */
+extern THREAD_LOCAL int color_dark;
 
 int parse_color(struct cur *c, struct color *out);
 void serialize_color(struct buf *b, const struct color *col);

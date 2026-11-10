@@ -9,12 +9,18 @@ by RMSE (the 38 sites survey of 2026-11-03).
 
 - Form controls: the pop-up list of a `<select>`, a `range` that
   slides, a color picker, date fields.
-- Shadow DOM, what is left: `delegatesFocus`, `slot.assign()` (manual assignment),
+- Shadow DOM, what is left: `slot.assign()` (manual assignment),
   `setHTMLUnsafe()` / `parseHTMLUnsafe()` with declarative roots,
-  `<script>` inside declarative shadow trees (never run),
-  `slotchange` for changes made by the parser, `link.sheet` (null,
-  in shadow trees and out), the `::before` mapping of `exportparts`,
-  `cookieStore` change events.
+  `getHTML()` with shadow roots, `clonable` roots cloned with their
+  host, the `shadowrootdelegatesfocus` / `-clonable` /
+  `-serializable` attributes of declarative roots, `delegatesFocus`
+  for a click on the host, `<script>` inside declarative shadow trees
+  (never run), `slotchange` for changes made by the parser,
+  `link.sheet` (null, in shadow trees and out), the `::before`
+  mapping of `exportparts`, `cookieStore` change events. A shadow
+  root's `<style>` elements and its adopted sheets order their
+  `@layer`s apart. An `on*` handler runs before the listeners added
+  before it.
 
 ## Rendering, small
 

@@ -81,6 +81,7 @@ struct docinfo {
 	float zoom;		/* the style options', 1 */
 	int shadows;		/* shadow roots made: 0, no shadow work */
 	struct shadow_css *css;	/* adopted sheets of its shadow roots */
+	struct shadow_css *sheets;	/* their <style> texts (cascade.c) */
 	/* the custom states of its elements (soie_element_set_states()):
 	 * few, found from the node's flag */
 	struct cstates {
@@ -90,14 +91,21 @@ struct docinfo {
 	int nstates;
 };
 
-/* The text of a shadow root's adopted style sheets, shared by the roots
- * of a document with the same text (every instance of a component):
- * the cascade parses it once, its rules have it as scope */
+/* The text of a shadow root's adopted style sheets, or of its <style>
+ * elements (each ended by a NUL, len in all), shared by the roots of a
+ * document with the same text (every instance of a component): the
+ * cascade parses it once, its rules have it as scope */
 struct shadow_css {
 	char *text;
+	size_t len;
 	unsigned refs;
 	struct shadow_css *next;
 };
+
+/* list's entry of that text, held once more; let go of one */
+struct shadow_css *css_hold(struct shadow_css **list, const char *text,
+	size_t len);
+void css_drop(struct shadow_css **list, struct shadow_css *c);
 
 struct soie_node {
 	unsigned char type;
@@ -145,14 +153,17 @@ struct soie_node {
 			char *public_id, *system_id;
 		} doctype;
 		/* a document fragment: a shadow root has a host, and the
-		 * CSS of its adopted style sheets */
+		 * CSS of its adopted style sheets, of its <style>
+		 * elements when that is all it has (the cascade's) */
 		struct {
 			struct soie_node *host;
-			struct shadow_css *css;
+			struct shadow_css *css, *sheets;
 			/* its <slot> elements in tree order, NULL ended,
 			 * when slots_ok (slot_find()) */
 			struct soie_node **slots;
-			unsigned char closed, slots_ok;
+			/* declared: made by the parser, not yet taken by
+			 * a script (soie_shadow_claim()) */
+			unsigned char closed, slots_ok, declared;
 		} frag;
 		/* a document's own (soie_document_new()), out of every
 		 * node's union */
@@ -189,6 +200,40 @@ static inline struct soie_node *node_above(const struct soie_node *n)
 {
 	return n->parent ? n->parent : n->type == SOIE_DOCUMENT_FRAGMENT ?
 		n->u.frag.host : NULL;
+}
+
+/*
+ * A walk of a subtree in tree order, shadow trees included: a host's
+ * shadow root and its tree right after the host, before its children
+ * (the style order). Without recursion: pages nest shadow trees as
+ * deep as they like. scope: the shadow root of the tree of the node
+ * walk_next() gave (NULL for the document's), as collect() wants it.
+ */
+struct walk {
+	struct soie_node *n, *top;
+	const struct soie_node *scope;
+	const struct soie_node **outer;	/* the scopes of the hosts */
+	size_t depth, cap;
+};
+/* top, the first node; scope: top's */
+struct soie_node *walk_start(struct walk *w, struct soie_node *top,
+	const struct soie_node *scope);
+struct soie_node *walk_step(struct walk *w);
+void walk_end(struct walk *w);
+
+/* A child or a sibling here, the rest in walk_step(): every cascade
+ * walks the whole page */
+static inline struct soie_node *walk_next(struct walk *w)
+{
+	struct soie_node *n = w->n;
+
+	if (n && (n->type != SOIE_ELEMENT || !n->u.el.shadow)) {
+		if (n->first)
+			return w->n = n->first;
+		if (n != w->top && n->next)
+			return w->n = n->next;
+	}
+	return walk_step(w);
 }
 
 /* Shadow trees (dom.c). The root of n's tree when it is a shadow
