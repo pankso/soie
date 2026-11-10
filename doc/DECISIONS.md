@@ -459,6 +459,15 @@ reversed, edit the entry and say why; do not leave stale rules here.
   2026-11-03). Web fonts are normal width (the descriptor is not
   read). The `font` shorthand takes a stretch keyword as one token.
 
+- A face's ascent and descent are whole pixels, each rounded up
+  (face_metrics()), and `line-height: normal` their sum: what
+  FreeType's size metrics give, which Firefox and Chrome use on Linux.
+  DejaVu Sans at 16 px is 15 + 4 = 19 px a line, where the scaled
+  design metrics said 18.625: forty lines down a page everything was
+  15 px higher than in a browser. Measured against Firefox at 13
+  sizes of three families, all equal. Hacker News against Firefox:
+  0.163 to 0.078 RMSE.
+
 ## Painting (phase 5)
 
 - `soie_paint()` draws the laid out page into the host's buffer:

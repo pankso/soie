@@ -9,6 +9,7 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 #include <dirent.h>
+#include <math.h>
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
@@ -509,7 +510,13 @@ void face_metrics(int fi, float size, struct fontm *m)
 	asc = x->masc;
 	desc = x->mdesc;
 	gap = x->mgap;
-	m->ascent = asc * s;
-	m->descent = desc * s;
-	m->normal_lh = (asc + desc + gap) * s;
+	/* whole pixels, each rounded up, as FreeType's size metrics that
+	 * Firefox and Chrome take on Linux: DejaVu Sans at 16 px is 15 +
+	 * 4 = 19 px a line, not 18.625 (a page of forty lines was 15 px
+	 * shorter than in a browser) */
+	m->ascent = ceilf(asc * s - 0.01f);
+	m->descent = ceilf(desc * s - 0.01f);
+	m->normal_lh = m->ascent + m->descent;
+	if (gap > 0 && floorf((asc + desc + gap) * s + 0.5f) > m->normal_lh)
+		m->normal_lh = floorf((asc + desc + gap) * s + 0.5f);
 }

@@ -25,6 +25,8 @@ each change are in [DECISIONS.md](DECISIONS.md).
   descendants.
 
 ### Changed
+- Lines are as high as in Firefox and Chrome: font ascent and descent
+  in whole pixels (19 px for DejaVu Sans at 16 px, it was 18.625).
 - The background images of the root or of the body cover the whole
   page, as their color did.
 - Background images are placed from the padding box, as specified,
