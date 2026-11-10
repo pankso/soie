@@ -18,11 +18,34 @@ each change are in [DECISIONS.md](DECISIONS.md).
   `isConnected` through hosts. Web components (Lit, Stencil...)
   showed nothing. Library: `soie_attach_shadow()`,
   `soie_shadow_root()`, `soie_shadow_host()`, `soie_shadow_open()`,
-  `soie_shadow_css()`.
+  `soie_shadow_css()`, `soie_assigned_slot()`.
+- Shadow DOM events: the path goes through the slots of slotted nodes
+  and from a shadow root to its host for composed events (the user's
+  clicks, keys, focus, input...; `composed: true` for scripts'),
+  listeners outside a tree see its host as `target` and
+  `relatedTarget`, `composedPath()` hides closed trees from outside,
+  a host gets its tree's events at target. `document.activeElement` is
+  the host of a focused element of a shadow tree,
+  `shadowRoot.activeElement` the element; `elementFromPoint()` gives
+  the host. `slotchange` events.
+- Declarative shadow DOM: `<template shadowrootmode=open|closed>` in a
+  parsed document gives its parent a shadow root (not in `innerHTML`).
+- The browser follows a link or a button around a shadow tree or
+  around the slot of a slotted node, edits text fields, checkboxes and
+  details inside shadow trees; a form of a shadow tree submits its own
+  controls, an outer form leaves the tree's.
+- `:host` inside `:is()` and `:where()`; animation events in shadow
+  trees; `document.adoptedStyleSheets.push()` applies.
 
 ### Changed
 - `attachShadow()` throws `NotSupportedError` on elements that cannot
   host a shadow root (`img`, `i`...), as browsers do.
+- Events at their target run their capturing listeners first, as
+  browsers do now (they ran in the order they were added);
+  `composedPath()` is empty once the event was dispatched.
+- Shadow roots that adopt the same style sheets (every instance of a
+  Lit component) share one parse of them: 300 instances added one by
+  one took over 5 s (the script was stopped), now 0.1 s.
 
 ## [0.1.4] - 2026-11-10
 

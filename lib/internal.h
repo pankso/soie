@@ -80,6 +80,16 @@ struct docinfo {
 	struct damage *damage;	/* soie_layout_damage() */
 	float zoom;		/* the style options', 1 */
 	int shadows;		/* shadow roots made: 0, no shadow work */
+	struct shadow_css *css;	/* adopted sheets of its shadow roots */
+};
+
+/* The text of a shadow root's adopted style sheets, shared by the roots
+ * of a document with the same text (every instance of a component):
+ * the cascade parses it once, its rules have it as scope */
+struct shadow_css {
+	char *text;
+	unsigned refs;
+	struct shadow_css *next;
 };
 
 struct soie_node {
@@ -129,8 +139,11 @@ struct soie_node {
 		 * CSS of its adopted style sheets */
 		struct {
 			struct soie_node *host;
-			char *css;
-			unsigned char closed;
+			struct shadow_css *css;
+			/* its <slot> elements in tree order, NULL ended,
+			 * when slots_ok (slot_find()) */
+			struct soie_node **slots;
+			unsigned char closed, slots_ok;
 		} frag;
 		/* a document's own (soie_document_new()), out of every
 		 * node's union */
@@ -179,6 +192,8 @@ const char *slot_name(const struct soie_node *n);
 struct soie_node *slot_find(const struct soie_node *s, const char *name);
 /* The slot light child n is assigned to, else NULL */
 struct soie_node *slot_of(const struct soie_node *n);
+/* May HTML element el have a shadow root (DOM attachShadow())? */
+int shadow_host_ok(const struct soie_node *el);
 /* n's parent in the flat tree: its slot for a light child of a host
  * (the host when it has none), the host for a shadow root's child */
 struct soie_node *flat_parent(const struct soie_node *n);

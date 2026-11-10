@@ -468,11 +468,40 @@ static void text_of(soie_node *n, char *out, size_t size)
 	}
 }
 
+/* The node above n on an event's way (DOM "get the parent"): the slot
+ * that shows it, else its parent, the host for a shadow root */
+static soie_node *up(soie_node *n)
+{
+	soie_node *p = soie_assigned_slot(n);
+
+	if (p || (p = soie_node_parent(n)))
+		return p;
+	return soie_shadow_host(n);
+}
+
+/* The element of that tag around n, as the user sees it: a link or a
+ * button around the slot that shows n, around the host of n's shadow
+ * tree */
 static soie_node *ancestor(soie_node *n, const char *tag)
+{
+	for (; n; n = up(n)) {
+		if (soie_node_get_type(n) != SOIE_ELEMENT) {
+			if (!soie_shadow_host(n))
+				break;
+		} else if (!strcmp(soie_element_name(n), tag)) {
+			return n;
+		}
+	}
+	return NULL;
+}
+
+/* The form of control n: one around it in its own tree only (a control
+ * of a shadow tree is not in a form outside it) */
+static soie_node *form_of(soie_node *n)
 {
 	for (; n && soie_node_get_type(n) == SOIE_ELEMENT;
 	     n = soie_node_parent(n))
-		if (!strcmp(soie_element_name(n), tag))
+		if (!strcmp(soie_element_name(n), "form"))
 			return n;
 	return NULL;
 }
@@ -2101,8 +2130,9 @@ static int toggle_details(struct shell *s, soie_node *sm, soie_node *n)
 	if (c != sm)
 		return 0;
 	/* a link inside the summary is followed instead */
-	for (a = n; a && a != sm; a = soie_node_parent(a))
-		if (!strcmp(soie_element_name(a), "a") &&
+	for (a = n; a && a != sm; a = up(a))
+		if (soie_node_get_type(a) == SOIE_ELEMENT &&
+		    !strcmp(soie_element_name(a), "a") &&
 		    soie_element_get_attr(a, "href"))
 			return 0;
 	if (soie_element_get_attr(d, "open"))
@@ -2124,11 +2154,16 @@ static void toggle_box(soie_node *n, int on)
 
 /* Check radio n, the others of its group unchecked; returns the one
  * that was checked */
-static soie_node *check_radio(struct shell *s, soie_node *n)
+static soie_node *check_radio(soie_node *n)
 {
 	const char *name = soie_element_get_attr(n, "name");
-	soie_node *form = ancestor(n, "form");
-	soie_node *in = form ? form : s->page.doc, *o, *was = NULL;
+	soie_node *form = form_of(n), *in = form, *o, *was = NULL;
+
+	/* no form: its group is in its tree, the document or a shadow
+	 * tree */
+	if (!in)
+		for (in = n; soie_node_parent(in); in = soie_node_parent(in))
+			;
 
 	for (o = in; o; ) {
 		const char *t;
@@ -2181,7 +2216,7 @@ static void click(struct shell *s, int x, int y, int mods)
 				toggle_box(n, box == 1);
 			} else if (!strcasecmp(t, "radio")) {
 				box = 3;
-				was = check_radio(s, n);
+				was = check_radio(n);
 			}
 		}
 		if (fire(s, n, "click", (float)x, cy, NULL, mods)) {
@@ -2219,7 +2254,7 @@ static void click(struct shell *s, int x, int y, int mods)
 	set_page_focus(s, NULL, 0);
 	if (!n)
 		return;
-	form = ancestor(n, "form");
+	form = form_of(n);
 	if (!strcmp(soie_element_name(n), "input")) {
 		t = soie_element_get_attr(n, "type");
 		if (t && (!strcasecmp(t, "submit") || !strcasecmp(t, "image")) &&
@@ -2253,7 +2288,7 @@ static void click(struct shell *s, int x, int y, int mods)
 		relayout(s);
 		return;
 	}
-	if ((a = ancestor(n, "button")) && form) {
+	if ((a = ancestor(n, "button")) && (form = form_of(a))) {
 		t = soie_element_get_attr(a, "type");
 		if (!t || !strcasecmp(t, "submit"))
 			submit(s, form, a);
@@ -2357,7 +2392,7 @@ static int key_in(struct shell *s, const char *key, const char *text, int mods)
 	}
 	if (s->focus) {
 		if (!strcmp(key, "Enter")) {
-			soie_node *form = ancestor(s->focus, "form");
+			soie_node *form = form_of(s->focus);
 
 			if (form && strcmp(soie_element_name(s->focus),
 			    "textarea")) {

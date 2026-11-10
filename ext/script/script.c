@@ -496,6 +496,11 @@ static JSValue n_rel(JSContext *js, JSValueConst this, int argc,
 		if (r && !soie_shadow_open(r))
 			r = NULL;
 		break;
+	case 10:	/* an event's way up: slot, parent, host */
+		if (!(r = soie_assigned_slot(n)))
+			r = above(n);
+		break;
+	case 11: r = soie_shadow_root(n); break;	/* closed too */
 	}
 	return wrap(ctx_of(js), r);
 }
@@ -3135,6 +3140,8 @@ static const JSCFunctionListEntry natives[] = {
 	JS_CFUNC_MAGIC_DEF("ownerDoc", 1, n_rel, 7),
 	JS_CFUNC_MAGIC_DEF("host", 1, n_rel, 8),
 	JS_CFUNC_MAGIC_DEF("shadowRoot", 1, n_rel, 9),
+	JS_CFUNC_MAGIC_DEF("up", 1, n_rel, 10),
+	JS_CFUNC_MAGIC_DEF("shadow", 1, n_rel, 11),
 	JS_CFUNC_DEF("attachShadow", 2, n_attach_shadow),
 	JS_CFUNC_DEF("shadowOpen", 1, n_shadow_open),
 	JS_CFUNC_DEF("shadowCss", 2, n_shadow_css),

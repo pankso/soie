@@ -297,3 +297,30 @@ color,font-style,font-weight
 |             @font-style: italic
 |             @font-weight: 700
 |             "inner light"
+
+#data
+<!DOCTYPE html><x-a class=dark><template shadowrootmode=open><style>:is(:host, .none){color:green} :where(:host(.dark)) b{color:blue} :is(:host(.light)) i{color:red}</style><b>b</b><i>i</i></template></x-a>
+#errors
+#properties
+color
+#document
+| <!DOCTYPE html>
+| <html>
+|   @color: rgb(0, 0, 0)
+|   <head>
+|     @color: rgb(0, 0, 0)
+|   <body>
+|     @color: rgb(0, 0, 0)
+|     <x-a>
+|       class="dark"
+|       @color: rgb(0, 128, 0)
+|       #shadow-root
+|         <style>
+|           @color: rgb(0, 128, 0)
+|           ":is(:host, .none){color:green} :where(:host(.dark)) b{color:blue} :is(:host(.light)) i{color:red}"
+|         <b>
+|           @color: rgb(0, 0, 255)
+|           "b"
+|         <i>
+|           @color: rgb(0, 128, 0)
+|           "i"

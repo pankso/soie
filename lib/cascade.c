@@ -101,9 +101,10 @@ struct srule {
 	unsigned order;
 	struct layer *layer;
 	unsigned char origin;
-	/* the shadow root of its sheet, NULL for the document's: only
-	 * compared, the root may be gone before the rules are */
-	const soie_node *scope;
+	/* the shadow root of its sheet, or the shared text of adopted
+	 * sheets (struct shadow_css), NULL for the document's: only
+	 * compared, either may be gone before the rules are */
+	const void *scope;
 };
 
 struct entry {
@@ -629,7 +630,7 @@ struct pctx {
 	const struct sellist *parent;
 	const char *base;	/* URL of the sheet */
 	int depth;		/* @import nesting */
-	const soie_node *scope;	/* srule's */
+	const void *scope;	/* srule's */
 };
 
 static void process_rules(struct styledb *db, struct crule **rules, int n,
@@ -1322,9 +1323,24 @@ static void collect_sheets(struct styledb *db, soie_node *top,
 		if (n)
 			n = n->next;
 	}
-	/* adopted style sheets come after the tree's */
-	if (pc.scope && top->u.frag.css)
-		load_sheet(db, top->u.frag.css, strlen(top->u.frag.css), &pc);
+}
+
+/* The adopted style sheets of doc's shadow roots, after every tree's:
+ * a text once for all the roots that share it, as their scope */
+static void adopted_sheets(struct styledb *db, soie_node *doc,
+	const char *base)
+{
+	struct shadow_css *c;
+	struct pctx pc;
+
+	memset(&pc, 0, sizeof(pc));
+	pc.origin = O_AUTHOR;
+	pc.layer = &db->roots[O_AUTHOR];
+	pc.base = base;
+	for (c = doc->u.doc->css; c; c = c->next) {
+		pc.scope = c;
+		load_sheet(db, c->text, strlen(c->text), &pc);
+	}
 }
 
 /* Presentational hints (HTML 15.3), as declarations. */
@@ -2287,30 +2303,38 @@ static int in_evec(const struct evec *v, const struct entry *e);
  * across trees only from a shadow tree: its :host rules to its host,
  * its ::slotted() rules to the host's children, from their slot.
  */
+/* Are rules of scope s (see struct srule) shadow root r's? */
+static int of_root(const soie_node *r, const void *s)
+{
+	return r && (r == s || r->u.frag.css == s);
+}
+
 static void collect_other(const struct entry *e, const soie_node *scope,
 	const soie_node *el, struct evec *out)
 {
-	const soie_node *s = e->r->scope, *p = el->parent, *at = el;
+	const soie_node *p = el->parent, *at = el, *root = NULL;
+	const void *s = e->r->scope;
 	struct entry x = *e;
 
 	if (e->r->origin != O_AUTHOR) {
-		s = NULL;
+		;
 	} else if (!s) {
 		return;		/* the document's, el is in a shadow tree */
 	} else if (e->pseudo == PE_SLOTTED) {
-		if (!p || p->type != SOIE_ELEMENT || p->u.el.shadow != s ||
+		if (!p || p->type != SOIE_ELEMENT ||
+		    !of_root(root = p->u.el.shadow, s) ||
 		    !selector_slotted(e->r->sel, e->sel, el) ||
 		    !(at = slot_of(el)))
 			return;
-	} else if (el->u.el.shadow != s ||
+	} else if (!of_root(root = el->u.el.shadow, s) ||
 		   !selector_has_host(e->r->sel, e->sel)) {
 		return;
 	}
-	if (s) {
+	if (root) {
 		x.cross = 1;
 		x.pseudo = PE_NONE;	/* ::slotted(): the element's own */
 	}
-	selector_shadow(s);
+	selector_shadow(root);
 	if (selector_match(e->r->sel, e->sel, at) &&
 	    (!e->multi || !in_evec(out, e)))
 		evec_add(out, &x);
@@ -2321,6 +2345,11 @@ static void collect_other(const struct entry *e, const soie_node *scope,
 static void collect(struct styledb *db, const soie_node *el,
 	const soie_node *scope, struct evec *out)
 {
+	/* the shared adopted sheets of el's tree, of its own shadow tree
+	 * (a component in its own shadow tree: the same) */
+	const void *css = scope ? scope->u.frag.css : NULL;
+	const void *own = el->u.el.shadow ? el->u.el.shadow->u.frag.css :
+		NULL;
 	const char *a;
 	struct evec *e;
 	char *low;
@@ -2331,13 +2360,17 @@ static void collect(struct styledb *db, const soie_node *el,
 		selector_shadow(scope);
 #define ADD(vec) do { \
 	for (i = 0; (vec) && i < (vec)->n; i++) \
-		if ((vec)->v[i].r->scope != scope || \
+		if (((vec)->v[i].r->scope != scope && \
+		     (!css || (vec)->v[i].r->scope != css)) || \
 		    (vec)->v[i].pseudo == PE_SLOTTED) \
 			collect_other(&(vec)->v[i], scope, el, out); \
 		else if (selector_match((vec)->v[i].r->sel, (vec)->v[i].sel, \
-		    el) && (!(vec)->v[i].multi || \
-		    !in_evec(out, &(vec)->v[i]))) \
-			evec_add(out, &(vec)->v[i]); \
+		    el)) { \
+			if (!(vec)->v[i].multi || !in_evec(out, &(vec)->v[i])) \
+				evec_add(out, &(vec)->v[i]); \
+		} else if (own && (vec)->v[i].r->scope == own) { \
+			collect_other(&(vec)->v[i], scope, el, out); \
+		} \
 } while (0)
 	if ((a = soie_element_get_attr(el, "id")) && *a) {
 		low = db->quirks ? lowdup(a) : NULL;
@@ -3120,12 +3153,6 @@ static unsigned tree_signature(soie_node *top, unsigned h, struct buf *b)
 	soie_node *n = top->first;
 	int frag = top->type == SOIE_DOCUMENT_FRAGMENT, i;
 
-	/* a shadow root with sheets: which one (their rules' scope), not
-	 * one without (a component added makes no other rules) */
-	if (frag && top->u.frag.css) {
-		h = hash_bytes(&top, sizeof(top), h);
-		h = hash_str(top->u.frag.css, h);
-	}
 	while (n) {
 		if (n->type == SOIE_ELEMENT && ((n->ns == SOIE_NS_HTML &&
 		    (n->tag == TAG_STYLE || n->tag == TAG_LINK ||
@@ -3160,6 +3187,7 @@ static unsigned sheet_signature(soie_node *doc, const soie_style_options *o)
 {
 	unsigned h = 2166136261u;
 	struct buf b = { 0 };
+	struct shadow_css *c;
 
 	if (o) {
 		int v[3];
@@ -3176,6 +3204,12 @@ static unsigned sheet_signature(soie_node *doc, const soie_style_options *o)
 	}
 	h = hash_bytes(&doc->u.doc->quirks, 1, h);
 	h = tree_signature(doc, h, &b);
+	/* the texts of adopted sheets: a component's new instance makes
+	 * no new rules, a new component does */
+	for (c = doc->u.doc->css; c; c = c->next) {
+		h = hash_bytes(&c, sizeof(c), h);
+		h = hash_str(c->text, h);
+	}
 	buf_free(&b);
 	return h;
 }
@@ -3219,28 +3253,38 @@ void doc_units(const struct style *st, struct ucontext *u)
 
 /* The elements whose animation began since the last call, max at
  * most (the others at the next call); how many */
-int soie_animations(soie_node *doc, soie_node **out, int max)
+/* soie_animations() below top, shadow trees included, from out[k] */
+static int anims_in(soie_node *doc, soie_node *top, soie_node **out, int k,
+	int max)
 {
-	soie_node *n;
-	int k = 0;
+	soie_node *n = top->first;
 
-	if (doc->type != SOIE_DOCUMENT || doc->u.doc->anims <= 0)
-		return 0;
-	for (n = doc->first; n && k < max; ) {
+	while (n && k < max) {
 		if (n->type == SOIE_ELEMENT && (n->anim & 1)) {
 			n->anim &= ~1;
 			doc->u.doc->anims--;
 			out[k++] = n;
 		}
+		if (n->type == SOIE_ELEMENT && n->u.el.shadow)
+			k = anims_in(doc, n->u.el.shadow, out, k, max);
 		if (n->first) {
 			n = n->first;
 			continue;
 		}
-		while (n && !n->next)
+		while (n != top && !n->next)
 			n = n->parent;
-		if (n)
-			n = n->next;
+		n = n == top ? NULL : n->next;
 	}
+	return k;
+}
+
+int soie_animations(soie_node *doc, soie_node **out, int max)
+{
+	int k;
+
+	if (doc->type != SOIE_DOCUMENT || doc->u.doc->anims <= 0)
+		return 0;
+	k = anims_in(doc, doc, out, 0, max);
 	if (k < max)
 		doc->u.doc->anims = 0;	/* the rest left the document */
 	return k;
@@ -3342,6 +3386,7 @@ int soie_style_document(soie_node *doc, const soie_style_options *opts)
 	base = document_base(doc, opts ? opts->base_url : NULL);
 	db->base = base;
 	collect_sheets(db, doc, base);
+	adopted_sheets(db, doc, base);
 	fonts_drop_document(doc);
 	load_fonts(db, doc);
 	images_setup(doc, opts ? opts->fetch : NULL,

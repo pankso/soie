@@ -1,0 +1,99 @@
+#data
+<!DOCTYPE html><x-card><template shadowrootmode=open><style>p{}</style><p><slot></slot></p></template>light</x-card>
+#errors
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|   <body>
+|     <x-card>
+|       #shadow-root
+|         <style>
+|           "p{}"
+|         <p>
+|           <slot>
+|       "light"
+
+#data
+<!DOCTYPE html><div><template shadowrootmode=closed><x-in><template shadowrootmode=open><b>deep</b></template><i>slotted</i></x-in></template></div><span><template shadowrootmode=OPEN>a</template><template shadowrootmode=open>second</template></span>
+#errors
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|   <body>
+|     <div>
+|       #shadow-root
+|         <x-in>
+|           #shadow-root
+|             <b>
+|               "deep"
+|           <i>
+|             "slotted"
+|     <span>
+|       #shadow-root
+|         "a"
+|       <template>
+|         shadowrootmode="open"
+|         content
+|           "second"
+
+#data
+<!DOCTYPE html><img><template shadowrootmode=open>x</template><button><template shadowrootmode=open>y</template></button><table><template shadowrootmode=open><tr></tr></template></table><p><template shadowrootmode=none>z</template></p><head-er><template>plain</template></head-er>
+#errors
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|   <body>
+|     #shadow-root
+|       "x"
+|     <img>
+|     <button>
+|       <template>
+|         shadowrootmode="open"
+|         content
+|           "y"
+|     <table>
+|       <template>
+|         shadowrootmode="open"
+|         content
+|           <tr>
+|     <p>
+|       <template>
+|         shadowrootmode="none"
+|         content
+|           "z"
+|     <head-er>
+|       <template>
+|         content
+|           "plain"
+
+#data
+<!DOCTYPE html><head><template shadowrootmode=open>h</template></head><body><template shadowrootmode=open>b</template><div>c</div>
+#errors
+#document
+| <!DOCTYPE html>
+| <html>
+|   <head>
+|     <template>
+|       shadowrootmode="open"
+|       content
+|         "h"
+|   <body>
+|     #shadow-root
+|       "b"
+|     <div>
+|       "c"
+
+#data
+<div><template shadowrootmode=open>a</template></div>
+#errors
+#document-fragment
+div
+#document
+| <div>
+|   <template>
+|     shadowrootmode="open"
+|     content
+|       "a"

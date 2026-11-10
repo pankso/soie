@@ -102,7 +102,7 @@ class Event {
 	}
 	stopPropagation() { this._stop = true; }
 	stopImmediatePropagation() { this._stop = this._stopNow = true; }
-	composedPath() { return this._path ? this._path.slice() : []; }
+	composedPath() { return composedPath(this); }
 	initEvent(type, bubbles, cancelable) {
 		this.type = String(type);
 		this.bubbles = !!bubbles;
@@ -416,10 +416,12 @@ function handlerOf(target, type) {
 	return fn;
 }
 
-function invoke(node, ev, phase) {
+/* The listeners of node for ev: the capturing ones, or the others
+ * (the handler first) */
+function invoke(node, ev, phase, capture) {
 	ev.currentTarget = node;
 	ev.eventPhase = phase;
-	if (phase !== Event.CAPTURING_PHASE) {
+	if (!capture) {
 		const h = handlerOf(node, ev.type);
 		if (typeof h === 'function') {
 			try {
@@ -435,10 +437,7 @@ function invoke(node, ev, phase) {
 	if (!m || !m[ev.type])
 		return;
 	for (const l of m[ev.type].slice()) {
-		if (l.removed)
-			continue;
-		if ((phase === Event.CAPTURING_PHASE && !l.capture) ||
-		    (phase === Event.BUBBLING_PHASE && l.capture))
+		if (l.removed || l.capture !== capture)
 			continue;
 		if (l.once)
 			node.removeEventListener(ev.type, l.fn, l.capture);
@@ -457,27 +456,179 @@ function invoke(node, ev, phase) {
 	}
 }
 
-function dispatch(target, ev) {
-	const path = [target];
-	if (target instanceof Node) {
-		for (let n = api.parent(target); n; n = api.parent(n))
-			path.push(n);
-		if (path[path.length - 1] === document && ev.type !== 'load')
-			path.push(g);
+/* Shadow trees and events (DOM 2.5, 4.8) */
+function rootOf(n) {
+	for (let p; (p = api.parent(n)); )
+		n = p;
+	return n;
+}
+/* a as listeners at b see it: the host of the outermost shadow tree
+ * of a's that b is not in (DOM "retarget") */
+function retarget(a, b) {
+	for (;;) {
+		if (!(a instanceof Node))
+			return a;
+		const r = rootOf(a);
+		if (!(r instanceof ShadowRoot))
+			return a;
+		for (let n = b instanceof Node ? b : null; n;
+		     n = api.parent(n) || api.host(n))
+			if (n === r)
+				return a;
+		a = api.host(r);
 	}
-	ev.target = target;
+}
+
+/*
+ * The path of an event: up from its target through the slots that show
+ * slotted nodes, from a shadow root to its host if the event is
+ * composed or did not start in that tree, then the window. Listeners
+ * outside a shadow tree see the host as target: at[i] is the target at
+ * path[i] when it changes there (at target phase), else null; at stays
+ * null on a path that crosses no shadow boundary. ev._closed[i]: 1 a
+ * closed root, 2 a slot of a closed tree, for composedPath().
+ */
+function dispatch(target, ev) {
+	const path = [target], rel = ev.relatedTarget;
+	/* a relatedTarget in a shadow tree: retargeted as target is */
+	const inner = rel instanceof Node && rootOf(rel) instanceof ShadowRoot;
+	let at = null, closed = null;
+	/* the path so far, before the first shadow boundary: no change
+	 * of target, a closed root at most */
+	const cross = () => {
+		if (at)
+			return;
+		at = path.map((x, i) => i ? null : x);
+		closed = path.map((x) => x instanceof ShadowRoot &&
+			!api.shadowOpen(x) ? 1 : 0);
+	};
+	if (target instanceof Node) {
+		let depth = 0;	/* trees entered through slots */
+		let moved = false;	/* out of the target's tree */
+		for (let n = target, p; (p = api.up(n)); n = p) {
+			let t = null, c = 0;
+			if (n instanceof ShadowRoot) {
+				cross();
+				if (depth)
+					depth--;
+				else if ((!ev.composed && !moved) ||
+				    (inner && retarget(rel, p) === p))
+					break;	/* its target's root, or a
+						 * move inside p */
+				else
+					t = p, moved = true;
+			} else if (p instanceof SLOT &&
+			    api.parent(n) !== p) {
+				cross();
+				depth++;
+				if (!api.shadowOpen(rootOf(p)))
+					c = 2;
+			}
+			path.push(p);
+			if (at) {
+				at.push(t);
+				closed.push(c || (p instanceof ShadowRoot &&
+					!api.shadowOpen(p) ? 1 : 0));
+			}
+		}
+		if (path[path.length - 1] === document && ev.type !== 'load') {
+			path.push(g);
+			if (at) {
+				at.push(null);
+				closed.push(0);
+			}
+		}
+	}
 	ev._path = path;
+	ev._closed = closed;
 	ev._stop = ev._stopNow = false;
-	for (let i = path.length - 1; i > 0 && !ev._stop; i--)
-		invoke(path[i], ev, Event.CAPTURING_PHASE);
-	if (!ev._stop)
-		invoke(target, ev, Event.AT_TARGET);
-	if (ev.bubbles)
-		for (let i = 1; i < path.length && !ev._stop; i++)
-			invoke(path[i], ev, Event.BUBBLING_PHASE);
+	/* a move inside one element's shadow tree: not for it */
+	if (inner && rel !== target && retarget(rel, target) === target)
+		path.length = 0;
+	const rels = inner ? path.map((x) => retarget(rel, x)) : null;
+	let tg = target;
+	const step = (i, capture) => {
+		let ph = Event.AT_TARGET;
+		if (!at) {
+			if (i)
+				ph = capture ? Event.CAPTURING_PHASE :
+					Event.BUBBLING_PHASE;
+		} else {
+			tg = null;
+			for (let j = i; !tg; j--)
+				tg = at[j];
+			if (!at[i])
+				ph = capture ? Event.CAPTURING_PHASE :
+					Event.BUBBLING_PHASE;
+		}
+		if (!capture && ph !== Event.AT_TARGET && !ev.bubbles)
+			return;
+		ev.target = tg;
+		if (rels)
+			ev.relatedTarget = rels[i];
+		invoke(path[i], ev, ph, capture);
+	};
+	for (let i = path.length - 1; i >= 0 && !ev._stop; i--)
+		step(i, true);
+	for (let i = 0; i < path.length && !ev._stop; i++)
+		step(i, false);
 	ev.currentTarget = null;
 	ev.eventPhase = 0;
+	ev.target = target;
+	/* after: no node of a shadow tree the event did not get out of */
+	if (at) {
+		for (let j = at.length - 1; j >= 0; j--)
+			if (at[j]) {
+				ev.target = at[j];
+				break;
+			}
+		if (rootOf(ev.target) instanceof ShadowRoot)
+			ev.target = null;
+	}
+	if (inner) {
+		const r = path.length ? rels[path.length - 1] : rel;
+		ev.relatedTarget = rootOf(r) instanceof ShadowRoot ? null : r;
+	}
 	return !ev.defaultPrevented;
+}
+
+/* Event.composedPath() (DOM 2.9): from the current target, what it
+ * may see of the path; nothing once dispatched */
+function composedPath(ev) {
+	const path = ev._path, closed = ev._closed, cur = ev.currentTarget;
+	if (!path || !cur)
+		return [];
+	if (!closed)
+		return path.slice();
+	let i = path.length - 1, level = 0;
+	for (; i >= 0; i--) {
+		if (closed[i] === 1)
+			level++;
+		if (path[i] === cur)
+			break;
+		if (closed[i] === 2)
+			level--;
+	}
+	const out = [cur], ci = i;
+	let lv = level, max = level;
+	for (i = ci - 1; i >= 0; i--) {
+		if (closed[i] === 1)
+			lv++;
+		if (lv <= max)
+			out.unshift(path[i]);
+		if (closed[i] === 2 && --lv < max)
+			max = lv;
+	}
+	lv = max = level;
+	for (i = ci + 1; i < path.length; i++) {
+		if (closed[i] === 2)
+			lv++;
+		if (lv <= max)
+			out.push(path[i]);
+		if (closed[i] === 1 && --lv < max)
+			max = lv;
+	}
+	return out;
 }
 
 /* Events from the host: dispatch(target or null, type, init) */
@@ -485,6 +636,8 @@ const MOUSE = /^(click|dblclick|mouse(down|up|move|over|out|enter|leave)|context
 const POINTER = /^pointer/;
 const NO_BUBBLE = /^(focus|blur|load|unload|error|abort|scroll|resize|mouseenter|mouseleave|pointerenter|pointerleave|loadstart|loadend|progress|play|pause|playing|ended|timeupdate|durationchange|volumechange|loadeddata|loadedmetadata|canplay|canplaythrough|seeking|seeked|waiting|emptied|ratechange|invalid|toggle)$/;
 const NOT_CANCELABLE = /^(input|change|focus|blur|focusin|focusout|load|unload|error|scroll|resize|mouseenter|mouseleave|DOMContentLoaded|readystatechange|keyup|play|pause|ended|timeupdate)$/;
+/* UI events, out of shadow trees to their hosts (UI Events, composed) */
+const COMPOSED = /^(click|dblclick|auxclick|contextmenu|mouse(down|up|move|over|out)|pointer(down|up|move|over|out|cancel)|wheel|key(down|up|press)|beforeinput|input|focus|blur|focusin|focusout|touch(start|end|move|cancel)|composition(start|update|end))$/;
 api.dispatch = function (target, type, init) {
 	if (api.names)
 		api.names();
@@ -492,6 +645,7 @@ api.dispatch = function (target, type, init) {
 	const t = target || g;
 	const opts = { bubbles: !NO_BUBBLE.test(type) || (type === 'scroll' &&
 		t === document), cancelable: !NOT_CANCELABLE.test(type),
+		composed: COMPOSED.test(type),
 		clientX: init.clientX, clientY: init.clientY,
 		button: init.button, buttons: type === 'mousedown' ? 1 : 0,
 		shiftKey: !!(init.mods & 1), ctrlKey: !!(init.mods & 2),
@@ -538,7 +692,13 @@ api.dispatch = function (target, type, init) {
 /* Default actions the host does not know: scripts' own, after a
  * click on these elements. host: the host does the navigation. */
 function activation(el, host) {
-	for (let n = el; n instanceof Element; n = n.parentNode) {
+	/* the event's way: a link or a button around a slot that shows
+	 * el, or around the host of el's shadow tree */
+	for (let n = el; n; n = api.up(n)) {
+		if (n instanceof ShadowRoot)
+			continue;
+		if (!(n instanceof Element))
+			break;
 		const tag = n.localName;
 		if (tag === 'label' && n.control && n.control !== el) {
 			n.control.click();
@@ -1145,7 +1305,12 @@ class ShadowRoot extends DocumentFragment {
 		if (v !== '')
 			insert(this, api.parse(api.host(this), v), null);
 	}
-	get activeElement() { return null; }
+	/* the focused element, or the host of the shadow tree in this
+	 * one that holds it */
+	get activeElement() {
+		const a = activeElement && retarget(activeElement, this);
+		return a && rootOf(a) === this ? a : null;
+	}
 	get styleSheets() {
 		return list(list(query(this, 'style', 0)).map(styleSheet));
 	}
@@ -1890,22 +2055,24 @@ class HTMLElement extends Element {
 		activeElement = this;
 		api.focus(this);	/* the browser types into it */
 		if (old)
-			dispatch(old, new FocusEvent('blur'));
-		dispatch(this, new FocusEvent('focus'));
-		dispatch(this, new FocusEvent('focusin', { bubbles: true }));
+			dispatch(old, new FocusEvent('blur',
+				{ composed: true }));
+		dispatch(this, new FocusEvent('focus', { composed: true }));
+		dispatch(this, new FocusEvent('focusin', { bubbles: true,
+			composed: true }));
 	}
 	blur() {
 		if (activeElement !== this)
 			return;
 		activeElement = null;
 		api.focus(null);
-		dispatch(this, new FocusEvent('blur'));
+		dispatch(this, new FocusEvent('blur', { composed: true }));
 	}
 	click() {
 		if (this.disabled)
 			return;
 		const ev = new MouseEvent('click', { bubbles: true,
-			cancelable: true, view: g, detail: 1 });
+			cancelable: true, composed: true, view: g, detail: 1 });
 		if (dispatch(this, ev))
 			activation(this, false);
 	}
@@ -1976,10 +2143,16 @@ function html(name, tags, body, base = HTMLElement) {
 	return cls;
 }
 
+/* An id in el's tree: its shadow tree's, else the document's */
+function byIdOf(el, id) {
+	const r = rootOf(el);
+	return (r instanceof ShadowRoot ? r : document).getElementById(id);
+}
+
 function formOf(el) {
 	const id = api.getAttr(el, 'form');
 	if (id !== null)
-		return document.getElementById(id);
+		return byIdOf(el, id);
 	return el.closest('form');
 }
 
@@ -2342,13 +2515,21 @@ class CSSStyleSheet {
 }
 
 /* document.adoptedStyleSheets: each sheet as a style element of its
- * own at the end of the head, kept in step with the sheet */
-let adoptedSheets = [];
+ * own at the end of the head, kept in step with the sheet; push() and
+ * the like change it too (adoptedView), as an ObservableArray */
+let adoptedSheets = [], adoptedView = null;
 function adoptSheets(v) {
 	for (const s of adoptedSheets)
 		for (const el of s._adopted || [])
 			el.remove();
 	adoptedSheets = [...v];
+	adoptedView = new Proxy(adoptedSheets.slice(), {
+		set: (a, k, x) => {
+			a[k] = x;
+			adoptSheets(a);
+			return true;
+		},
+	});
 	for (const s of adoptedSheets) {
 		const el = document.createElement('style');
 		el.textContent = s._read();
@@ -2462,7 +2643,7 @@ reflect(HTMLCanvasElement, ['width', 'height'], 'int');
 html('HTMLTemplateElement', ['template'], (B) => class extends B {
 	get content() { return api.content(this); }
 });
-html('HTMLSlotElement', ['slot'], (B) => class extends B {
+const SLOT = html('HTMLSlotElement', ['slot'], (B) => class extends B {
 	assignedNodes(o) { return assigned(this, o && o.flatten, false); }
 	assignedElements(o) { return assigned(this, o && o.flatten, true); }
 });
@@ -2471,7 +2652,7 @@ html('HTMLLabelElement', ['label'], (B) => class extends B {
 	get control() {
 		const f = api.getAttr(this, 'for');
 		if (f !== null)
-			return document.getElementById(f);
+			return byIdOf(this, f);
 		return this.querySelector('input, select, textarea, button');
 	}
 	get form() { return formOf(this); }
@@ -2650,14 +2831,15 @@ html('HTMLInputElement', ['input'], (B) => class extends formControl(B) {
 		else if (t === 'radio')
 			this.checked = true;
 		const ev = new MouseEvent('click', { bubbles: true,
-			cancelable: true, view: g, detail: 1 });
+			cancelable: true, composed: true, view: g, detail: 1 });
 		if (!dispatch(this, ev)) {
 			if (t === 'checkbox' || t === 'radio')
 				this.checked = was;
 			return;
 		}
 		if ((t === 'checkbox' || t === 'radio') && was !== this.checked) {
-			dispatch(this, new InputEvent('input', { bubbles: true }));
+			dispatch(this, new InputEvent('input', { bubbles: true,
+				composed: true }));
 			dispatch(this, new Event('change', { bubbles: true }));
 		} else {
 			activation(this, false);
@@ -3524,8 +3706,11 @@ g.HTMLElement = HTMLElementCtor;
 api.protoFor = function (type, name, ns) {
 	switch (type) {
 	case S_DOC: return Document.prototype;
-	case S_FRAG: return name ? ShadowRoot.prototype :
-		DocumentFragment.prototype;
+	case S_FRAG:
+		if (!name)
+			return DocumentFragment.prototype;
+		shadowSeen = true;
+		return ShadowRoot.prototype;
 	case S_DOCTYPE: return DocumentType.prototype;
 	case S_TEXT: return Text.prototype;
 	case S_COMMENT: return Comment.prototype;
@@ -3680,7 +3865,11 @@ class Document extends Node {
 	}
 	get defaultView() { return this === document ? g : null; }
 	get all() { return htmlAll; }
-	get activeElement() { return activeElement || this.body; }
+	/* a focused node of a shadow tree: its host */
+	get activeElement() {
+		return (activeElement && retarget(activeElement, this)) ||
+			this.body;
+	}
 	get currentScript() { return api.currentScript(); }
 	get hidden() { return false; }
 	get visibilityState() { return 'visible'; }
@@ -3703,7 +3892,11 @@ class Document extends Node {
 	get styleSheets() {
 		return list(list(query(this, 'style', 0)).map(styleSheet));
 	}
-	get adoptedStyleSheets() { return adoptedSheets; }
+	get adoptedStyleSheets() {
+		if (!adoptedView)
+			adoptSheets([]);
+		return adoptedView;
+	}
 	set adoptedStyleSheets(v) { adoptSheets(v); }
 	get implementation() {
 		return {
@@ -3787,7 +3980,11 @@ class Document extends Node {
 	writeln(...s) { api.write(s.join('') + '\n'); }
 	open() { return this; }
 	close() {}
-	elementFromPoint(x, y) { return api.hit(+x || 0, +y || 0); }
+	/* in a shadow tree: its host */
+	elementFromPoint(x, y) {
+		const n = api.hit(+x || 0, +y || 0);
+		return n && retarget(n, this);
+	}
 	elementsFromPoint(x, y) {
 		const r = [];
 		for (let n = this.elementFromPoint(x, y); n && api.type(n) === S_EL;
@@ -5290,6 +5487,109 @@ class MutationObserver {
 		return r;
 	};
 }
+/*
+ * slotchange (DOM 4.2.2.5): the slots of a host whose children or
+ * slots changed are looked at in a microtask, once for all the
+ * changes of a task; a slot whose assigned nodes are not those of the
+ * last look gets the event, a slot showing its fallback when that
+ * changes. Only once a shadow root was wrapped: before, no script can
+ * listen to a slot.
+ */
+let shadowSeen = false;
+const slotHosts = new Set();	/* hosts to look at */
+const slotsForced = new Set();	/* slots whose fallback changed */
+const slotsShown = new WeakMap();	/* host: Map of slot: its nodes */
+function slotsTouched(host, slot) {
+	if (!slotHosts.size && !slotsForced.size)
+		THEN.call(RESOLVED, slotsCheck);
+	if (slot)
+		slotsForced.add(slot);
+	else
+		slotHosts.add(host);
+}
+function slotsCheck() {
+	const hosts = [...slotHosts], fired = new Set();
+	slotHosts.clear();
+	for (const h of hosts) {
+		const r = api.shadow(h), was = slotsShown.get(h) || new Map();
+		const slots = r ? query(r, 'slot', 0) : [], now = new Map();
+		for (const s of new Set([...slots, ...was.keys()])) {
+			const a = slots.includes(s) ?
+				assigned(s, false, false) : [];
+			const b = was.get(s) || [];
+			if (a.length)
+				now.set(s, a);
+			if (a.length !== b.length ||
+			    a.some((n, i) => n !== b[i]))
+				fired.add(s);
+		}
+		slotsShown.set(h, now);
+	}
+	for (const s of slotsForced)
+		fired.add(s);
+	slotsForced.clear();
+	for (const s of fired)
+		dispatch(s, new Event('slotchange', { bubbles: true }));
+}
+{
+	const insertNode = api.insert, remove = api.remove;
+	const setAttr = api.setAttr, removeAttr = api.removeAttr;
+	const hasSlot = (n) => {
+		const t = api.type(n);
+		return (t === S_EL && api.name(n) === 'slot') ||
+			((t === S_EL || t === S_FRAG) && api.first(n) &&
+			 query(n, 'slot', 1).length > 0);
+	};
+	/* a node (with a slot in it: slot) comes into p or leaves it */
+	const touch = (p, slot) => {
+		if (!p)
+			return;
+		if (api.shadow(p))
+			slotsTouched(p);
+		const r = rootOf(p);
+		if (!(r instanceof ShadowRoot))
+			return;
+		if (slot)
+			slotsTouched(api.host(r));
+		else if (p instanceof SLOT && !assigned(p, false, false).length)
+			slotsTouched(null, p);
+	};
+
+	api.insert = function (parent, node, ref) {
+		if (!shadowSeen)
+			return insertNode(parent, node, ref);
+		const slot = hasSlot(node), old = api.parent(node);
+		touch(old, slot);
+		const r = insertNode(parent, node, ref);
+		touch(parent, slot);
+		return r;
+	};
+	api.remove = function (n) {
+		if (shadowSeen)
+			touch(api.parent(n), hasSlot(n));
+		return remove(n);
+	};
+	const attr = (el, name) => {
+		const p = name === 'slot' && api.parent(el);
+		if (p && api.shadow(p))
+			slotsTouched(p);
+		else if (name === 'name' && el instanceof SLOT)
+			touch(el, true);
+	};
+	api.setAttr = function (el, name, v) {
+		const r = setAttr(el, name, v);
+		if (shadowSeen)
+			attr(el, name);
+		return r;
+	};
+	api.removeAttr = function (el, name) {
+		const r = removeAttr(el, name);
+		if (shadowSeen)
+			attr(el, name);
+		return r;
+	};
+}
+
 /*
  * IntersectionObserver: targets against the viewport (or a root), grown
  * by rootMargin; an entry at observe() and whenever a target crosses a

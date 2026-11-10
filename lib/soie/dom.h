@@ -96,6 +96,9 @@ soie_node *soie_shadow_host(const soie_node *n);
 /* 1 for a shadow root attached open */
 int soie_shadow_open(const soie_node *root);
 void soie_shadow_css(soie_node *root, const char *css);
+/* The <slot> of its host's shadow tree that shows n, a child of a
+ * shadow host, whatever the mode; NULL when no slot takes it */
+soie_node *soie_assigned_slot(const soie_node *n);
 
 /* Text and comments. Data may contain NUL bytes, hence the length. */
 soie_node *soie_text_new(soie_node *doc, const char *s, size_t len);

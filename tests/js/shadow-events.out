@@ -1,0 +1,22 @@
+log: window^:h/1 document^:h/1 body^:h/1 h^:h/2 #root(h)^:in/1 wrap^:in/1 in^:in/2 in:in/2 wrap:in/3 #root(h):in/3 h:h/2 body:h/3 document:h/3 window:h/3
+log: open path from document | in,wrap,#root(h),h,body,html,document,window
+log: window^:light/1 document^:light/1 body^:light/1 h^:light/1 #root(h)^:light/1 wrap^:light/1 wrap:light/3 #root(h):light/3 h:light/3 body:light/3 document:light/3 window:light/3
+log: not composed | wrap:in #root(h):in |  | 0
+log: composed | wrap:in #root(h):in h:h document:h | h
+log: closed outside | div,body,html,document,window
+log: closed inside | ci,#root(div),div,body,html,document,window
+log: slotted in closed | lc,div,body,html,document,window
+log: capture, bubble, host 2
+log: wrap:in>wrap document:body>h wrap:in>body document:h>body
+log: host focus h 2, document focusin h
+log: activeElement | h | in | null
+log: nested | h | x-nest | deep
+log: blurred | body | 
+log: link | true | cb
+log: declared | open | dp | declared |  | 1
+log: innerHTML |  | template | open
+log: document sheets | 1 | rgb(0, 0, 9)
+log: document sheets | 0 | rgb(0, 0, 0)
+log: recursive | 7px | 7px | rgb(0, 9, 0) | rgb(0, 9, 0)
+log: slotchange | def@a def@b named@b named@c named@d
+log: animations | start ap, end ap

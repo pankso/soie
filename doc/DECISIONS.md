@@ -152,7 +152,8 @@ reversed, edit the entry and say why; do not leave stale rules here.
   for a template). Public: soie_attach_shadow(), soie_shadow_root(),
   soie_shadow_host(), soie_shadow_open() (the mode lives in C, so a
   closed root stays closed whatever happens to its wrapper) and
-  soie_shadow_css() (adopted sheets as one text). The root goes with
+  soie_shadow_css() (adopted sheets as one text), soie_assigned_slot()
+  (the shell's and the events' way up). The root goes with
   its host: freed (a root a script holds survives, without host),
   adopted, never cloned nor serialized; adopting it alone fails.
   node_above() (parent, else host) is "the node above" for connected
@@ -163,9 +164,13 @@ reversed, edit the entry and say why; do not leave stale rules here.
   tree order only), else its own (fallback). flat_parent() is the
   parent for inheritance and for layout_touch(): a slotted node's
   is its slot, so a change below it invalidates the kept boxes of
-  the slot's ancestors. Assignment is computed, not stored: walks of
-  the shadow tree, small in practice; a change of slots (insert,
-  remove, name) touches every slot and restyles the host's children.
+  the slot's ancestors. Assignment is computed, not stored, but each
+  root keeps the list of its slots (slots_of(): a light child finds
+  its slot among a few, not in a walk of the whole shadow tree: the
+  style of a host of 1000 children and 6000 shadow nodes took 98 ms,
+  24 now); a change of slots (insert, remove, name) drops that list,
+  touches every slot and restyles the host's children. node_detach()
+  looks at slots once the node is out: the list must not keep it.
   docinfo.shadows (roots made) keeps all of this off pages without.
 - Style order: host, its shadow tree, its light children (they need
   their slot's style). A rule keeps the shadow root of its sheet as
@@ -183,11 +188,19 @@ reversed, edit the entry and say why; do not leave stale rules here.
   3000 elements and 1500 rules without shadow roots counts 0.1% more
   instructions than before (a first version, with a check per
   compound, 3%).
-  sheet_signature() hashes a root only when it has sheets: adding
-  components keeps the parsed rules. Rules of identical adopted
-  sheets are not shared between roots: 200 Lit instances of one
-  component parse its CSS 200 times (a cache keyed by text would fix
-  it, when a page shows the cost).
+  Adopted sheets are shared by text: soie_shadow_css() keeps one
+  struct shadow_css per distinct text in the document (docinfo.css,
+  counted), the root points to it, its rules are loaded once after
+  every tree's sheets with that struct as scope, and an element of a
+  root takes the rules of its root's text too (of_root()). Every Lit
+  instance of a component adopts the same sheet: 300 instances parsed
+  their CSS 300 times and kept 300 copies of the rules (95 MB, 290 ms;
+  each added between two styles: over 5 s, quadratic); now once (11
+  MB, 23 ms; 96 ms one by one). sheet_signature() hashes the distinct
+  texts, not the roots: a new instance keeps the parsed rules, a root
+  whose text changes restyles its host's subtree. Shadow trees'
+  `<style>` elements are still per root (rare in components).
+  `:host` counts inside `:is()` and `:where()` (has_host()).
 - Script side: the wrappers of a shadow tree belong to the tree of
   its host (rehome() climbs through hosts, strengthen() enters
   roots), so expandos on a root and its nodes live as long as the
@@ -197,15 +210,47 @@ reversed, edit the entry and say why; do not leave stale rules here.
   connected/disconnected callbacks see shadow trees (api.shadows()).
   attachShadow() takes the spec's elements only (custom elements,
   div, span, p, section...): NotSupportedError for the others.
+- Events (dom.js dispatch(), DOM 2.5 and 4.8): the path goes up
+  through api.up() (the slot of a slotted node, else the parent,
+  the host of a shadow root), from a root to its host only for a
+  composed event or one that started below that tree; the target
+  changes to the host on the way out (that item is "at target", a
+  host's listeners run for a focus event), listeners see it
+  retargeted, relatedTarget too (an event of a move inside one host
+  stops at it); after dispatch target is null if still inside a
+  tree. composedPath() is the spec's algorithm on per item flags
+  (closed root, slot of a closed tree). A page without shadow roots
+  builds the same arrays as before: the per item work starts at the
+  first boundary. The host's UI events (click, keys, focus, input,
+  pointer, wheel, touch, composition) and focus()/click() are
+  composed. At target, capturing listeners now run first, as in
+  browsers since 2021. slotchange: the mutation natives (insert,
+  remove, attributes) note the hosts whose slots may change, once a
+  ShadowRoot was ever wrapped (before, nobody can listen); a microtask
+  compares each slot's assigned nodes with the last look (and a slot
+  whose fallback changed) and fires. document.activeElement and
+  elementFromPoint() retarget to the document, ShadowRoot.activeElement
+  to its root.
+- Shell: ancestor() (links, buttons, summary, media around a click or
+  hover) follows the event's way (soie_assigned_slot(), parent, host);
+  the form of a control is looked for in its own tree only (form_of()),
+  as is a radio group without form. Focus and text editing need
+  nothing: the focused node is any element.
 - Element.removeAttributeNode(), and attributes.removeNamedItem():
   the map is a copy here, so the node taken out leaves the map it
   came from too. React empties html, head and body with "while
   (attrs.length) el.removeAttributeNode(attrs[0])", which never ends
   on a copy that stays full.
-- Declarative shadow DOM (`<template shadowrootmode>`) is not
-  implemented in the parser: such a template stays a plain template.
-  tests/html5lib turns them into shadow roots after the parse for the
-  style and layout tests, as the parser will.
+- Declarative shadow DOM (HTML 13.2.6.4.4): a `<template
+  shadowrootmode=open|closed>` start tag of a document's parse, when
+  the current node may host a shadow root (shadow_host_ok()) and has
+  none, attaches one; the template goes on the stack only, its
+  content goes to the root (the parser's template/root pairs,
+  template_content()) and it is freed as an orphan. Fragment parsing
+  (innerHTML) keeps a plain template, as the spec says. Scripts in
+  such a tree do not run (soie_script_start() does not enter shadow
+  trees). The html5lib corpus has no such test; tests/tree/shadow01.dat
+  prints the root as `#shadow-root` before the host's children.
 
 ## CSS
 

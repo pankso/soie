@@ -9,10 +9,11 @@ by RMSE (the 38 sites survey of 2026-11-03).
 
 - Form controls: the pop-up list of a `<select>`, a `range` that
   slides, a color picker, date fields.
-- Shadow DOM, what is left: events through shadow boundaries
-  (composed path, retargeting), the shell's link and form lookups
-  across hosts, focus inside shadow trees, `slotchange`, declarative
-  `<template shadowrootmode>` in the parser, `::part()`.
+- Shadow DOM, what is left: `::part()` and `exportparts`,
+  `delegatesFocus`, `slot.assign()` (manual assignment),
+  `setHTMLUnsafe()` / `parseHTMLUnsafe()` with declarative roots,
+  `<script>` inside declarative shadow trees (never run),
+  `slotchange` for changes made by the parser.
 
 ## Rendering, small
 

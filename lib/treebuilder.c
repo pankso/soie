@@ -578,6 +578,18 @@ static soie_node *clone_element(struct parser *p, soie_node *el)
 	return c;
 }
 
+/* Where a template's children go: its content, or the shadow root it
+ * declared (declare_shadow()) */
+static soie_node *template_content(struct parser *p, soie_node *t)
+{
+	int i;
+
+	for (i = 0; i < p->nshadows; i += 2)
+		if (p->shadows[i] == t)
+			return p->shadows[i + 1];
+	return t->u.el.content;
+}
+
 /* "appropriate place for inserting a node" */
 static void insertion_place(struct parser *p, soie_node *target,
 	soie_node **parent, soie_node **ref)
@@ -609,7 +621,7 @@ static void insertion_place(struct parser *p, soie_node *target,
 		}
 	}
 	if (is_html(*parent, TAG_TEMPLATE)) {
-		*parent = (*parent)->u.el.content;
+		*parent = template_content(p, *parent);
 		*ref = NULL;
 	}
 }
@@ -656,6 +668,35 @@ static soie_node *insert_element(struct parser *p, soie_node *el)
 static soie_node *insert_html(struct parser *p, struct token *t)
 {
 	return insert_element(p, create_element(p, t, SOIE_NS_HTML, 0));
+}
+
+/*
+ * Declarative shadow DOM (HTML 13.2.6.4.4, "template" in head): a
+ * <template shadowrootmode=open|closed> of a document's parse gives
+ * the current node a shadow root, when it may have one and has none.
+ * The template only goes on the stack: what it holds goes to the root
+ * (template_content()), it stays out of the tree. 0: a plain template.
+ */
+static int declare_shadow(struct parser *p, struct token *t)
+{
+	const char *m = tok_attr(t, "shadowrootmode");
+	soie_node *host = current(p), *el, *r;
+
+	if (!m || p->context || p->nstack < 2 || !shadow_host_ok(host) ||
+	    (!strcaseeq(m, "open") && !strcaseeq(m, "closed")) ||
+	    !(r = soie_attach_shadow(host, strcaseeq(m, "open"))))
+		return 0;
+	el = create_element(p, t, SOIE_NS_HTML, 0);
+	push(p, el);
+	orphan(p, el);
+	if (p->nshadows == p->capshadows) {
+		p->capshadows = p->capshadows ? p->capshadows * 2 : 8;
+		p->shadows = xrealloc(p->shadows,
+			p->capshadows * sizeof(*p->shadows));
+	}
+	p->shadows[p->nshadows++] = el;
+	p->shadows[p->nshadows++] = r;
+	return 1;
 }
 
 static soie_node *insert_tag(struct parser *p, int tag)
@@ -1196,7 +1237,8 @@ static void m_in_head(struct parser *p, struct token *t)
 			raw_text(p, t, S_SCRIPT);
 			return;
 		case TAG_TEMPLATE:
-			insert_html(p, t);
+			if (!declare_shadow(p, t))
+				insert_html(p, t);
 			afe_marker(p);
 			p->frameset_ok = 0;
 			p->mode = M_IN_TEMPLATE;
@@ -2421,6 +2463,7 @@ static void parser_run(struct parser *p, const char *buf, size_t len,
 		if (!p->orphans[i]->parent)
 			soie_node_free(p->orphans[i]);
 	free(p->orphans);
+	free(p->shadows);
 	tokenizer_free(p);
 	buf_free(&in);
 	buf_free(&p->pending);

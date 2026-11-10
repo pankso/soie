@@ -76,6 +76,9 @@ struct parser {
 	int scripting, frameset_ok, foster, skip_lf;
 	soie_node **orphans;		/* nodes left out of the tree */
 	int norphans, caporphans;
+	soie_node **shadows;		/* declarative shadow roots: their
+					 * template, the root, by pairs */
+	int nshadows, capshadows;
 	struct buf pending;		/* "in table text" characters */
 	int pending_dirty;		/* pending has non-whitespace */
 };

@@ -1,0 +1,208 @@
+<!doctype html>
+<div id=h><span id=light slot=s>light</span></div>
+<x-decl id=d><template shadowrootmode=open><p id=dp><slot></slot></p></template>declared</x-decl>
+<x-closed id=dc><template shadowrootmode=closed><b>hidden</b></template></x-closed>
+<script>
+const log = (...a) => console.log(a.join(' | '));
+const name = (n) => !n ? String(n) : n === window ? 'window' : n === document ?
+	'document' : n instanceof ShadowRoot ? '#root(' + name(n.host) + ')' :
+	n.nodeType === 3 ? '#text' : n.id || n.localName;
+const names = (a) => a.map(name).join(',');
+
+// An open tree: the path enters slots, leaves the root for the host,
+// listeners outside see the host as target
+const h = document.getElementById('h'), light = document.getElementById('light');
+const r = h.attachShadow({ mode: 'open' });
+r.innerHTML = '<div id=wrap><button id=in>in</button><slot name=s id=sl></slot></div>';
+const inn = r.getElementById('in'), wrap = r.getElementById('wrap');
+const seen = [];
+const spy = (where, el) => {
+	for (const cap of [true, false])
+		el.addEventListener('click', (e) => seen.push(name(where) +
+			(cap ? '^' : '') + ':' + name(e.target) + '/' + e.eventPhase),
+			cap);
+};
+for (const el of [window, document, document.body, h, r, wrap, inn])
+	spy(el, el);
+inn.click();
+log(seen.join(' '));
+let path = null;
+document.addEventListener('click', (e) => { path = e.composedPath(); }, { once: true });
+inn.click();
+log('open path from document', names(path));
+
+// a slotted light node: through its slot, its target never changes
+seen.length = 0;
+light.click();
+log(seen.join(' '));
+
+// not composed: stops at the root, no target left after
+const ce = new CustomEvent('ping', { bubbles: true });
+const got = [];
+for (const el of [document, h, r, wrap])
+	el.addEventListener('ping', (e) => got.push(name(el) + ':' + name(e.target)));
+inn.dispatchEvent(ce);
+log('not composed', got.join(' '), ce.target, ce.composedPath().length);
+got.length = 0;
+const ce2 = new CustomEvent('ping', { bubbles: true, composed: true });
+inn.dispatchEvent(ce2);
+log('composed', got.join(' '), name(ce2.target));
+
+// closed trees: their nodes stay hidden from outside
+const c = document.createElement('div');
+document.body.append(c);
+const cr = c.attachShadow({ mode: 'closed' });
+cr.innerHTML = '<i id=ci>x<slot></slot></i>';
+const ci = cr.getElementById('ci');
+let outside = null, inside = null;
+document.addEventListener('click', (e) => { outside = e.composedPath(); }, { once: true });
+ci.addEventListener('click', (e) => { inside = e.composedPath(); }, { once: true });
+ci.click();
+log('closed outside', names(outside));
+log('closed inside', names(inside));
+// a light child slotted into the closed tree: the slot is hidden too
+const lc = document.createElement('u');
+lc.id = 'lc';
+c.append(lc);
+lc.addEventListener('click', (e) => { inside = e.composedPath(); }, { once: true });
+lc.click();
+log('slotted in closed', names(inside));
+
+// at target: capturing listeners first, stopPropagation at the host
+const order = [];
+inn.addEventListener('dblclick', () => order.push('bubble'));
+inn.addEventListener('dblclick', () => order.push('capture'), true);
+h.addEventListener('dblclick', (e) => { order.push('host ' + e.eventPhase); e.stopPropagation(); });
+document.addEventListener('dblclick', () => order.push('document'));
+inn.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, composed: true }));
+log(order.join(', '));
+
+// relatedTarget retargeted as target is; a move inside a host stays in
+let rel = [];
+const mo = (e) => rel.push(name(e.currentTarget) + ':' + name(e.target) + '>' +
+	name(e.relatedTarget));
+document.addEventListener('mouseover', mo);
+wrap.addEventListener('mouseover', mo);
+inn.dispatchEvent(new MouseEvent('mouseover', { bubbles: true, composed: true,
+	relatedTarget: wrap }));
+document.body.dispatchEvent(new MouseEvent('mouseover', { bubbles: true,
+	composed: true, relatedTarget: inn }));
+inn.dispatchEvent(new MouseEvent('mouseover', { bubbles: true, composed: true,
+	relatedTarget: document.body }));
+// from its own shadow tree: nothing for h
+h.dispatchEvent(new MouseEvent('mouseover', { bubbles: true, composed: true,
+	relatedTarget: inn }));
+log(rel.join(' '));
+
+// focus: the host from outside, the inner element from its root
+const fo = [];
+h.addEventListener('focus', (e) => fo.push('host focus ' + name(e.target) + ' ' + e.eventPhase));
+document.addEventListener('focusin', (e) => fo.push('document focusin ' + name(e.target)));
+inn.focus();
+log(fo.join(', '));
+log('activeElement', name(document.activeElement), name(r.activeElement),
+	name(cr.activeElement));
+const nest = document.createElement('x-nest');
+wrap.append(nest);
+const nr = nest.attachShadow({ mode: 'open' });
+nr.innerHTML = '<input id=deep>';
+nr.firstChild.focus();
+log('nested', name(document.activeElement), name(r.activeElement),
+	name(nr.activeElement));
+nr.firstChild.blur();
+log('blurred', name(document.activeElement), r.activeElement);
+
+// default actions along the way: a link around the slot of a slotted
+// node, a label of the shadow tree
+window.hits = [];
+const lk = document.createElement('div');
+lk.innerHTML = '<span id=ls>go</span>';
+document.body.append(lk);
+lk.attachShadow({ mode: 'open' }).innerHTML =
+	'<a href="javascript:hits.push(\'link\')"><slot></slot></a>' +
+	'<label for=cb>label</label><input type=checkbox id=cb>';
+lk.querySelector('#ls').click();
+lk.shadowRoot.querySelector('label').click();
+log(hits.join(), lk.shadowRoot.getElementById('cb').checked,
+	name(lk.shadowRoot.querySelector('label').control));
+
+// declarative shadow roots of the parse; innerHTML keeps templates
+const d = document.getElementById('d');
+log('declared', d.shadowRoot && d.shadowRoot.mode, name(d.shadowRoot.firstChild),
+	d.shadowRoot.querySelector('slot').assignedNodes()[0].data,
+	document.getElementById('dc').shadowRoot, d.childNodes.length);
+const tdiv = document.createElement('div');
+tdiv.innerHTML = '<template shadowrootmode=open>t</template>';
+log('innerHTML', tdiv.shadowRoot, tdiv.firstChild.localName,
+	tdiv.firstChild.getAttribute('shadowrootmode'));
+
+// document.adoptedStyleSheets.push() applies, as a shadow root's
+const ds = new CSSStyleSheet();
+ds.replaceSync('#h { color: rgb(0, 0, 9) }');
+document.adoptedStyleSheets.push(ds);
+log('document sheets', document.adoptedStyleSheets.length, getComputedStyle(h).color);
+document.adoptedStyleSheets.pop();
+log('document sheets', document.adoptedStyleSheets.length, getComputedStyle(h).color);
+
+// a component in its own shadow tree, one adopted sheet for all: the
+// inner instance takes :host as the outer
+const tsheet = new CSSStyleSheet();
+tsheet.replaceSync(':host { display: block; padding-left: 7px } .lbl { color: rgb(0, 9, 0) }');
+customElements.define('x-tree', class extends HTMLElement {
+	connectedCallback() {
+		if (this.shadowRoot)
+			return;
+		const tr = this.attachShadow({ mode: 'open' });
+		tr.adoptedStyleSheets = [tsheet];
+		tr.innerHTML = '<span class=lbl>n</span>' + (this.hasAttribute('leaf') ?
+			'' : '<x-tree class=lbl leaf></x-tree>');
+	}
+});
+const xt = document.createElement('x-tree');
+document.body.append(xt);
+const xin = xt.shadowRoot.querySelector('x-tree');
+log('recursive', getComputedStyle(xt).paddingLeft, getComputedStyle(xin).paddingLeft,
+	getComputedStyle(xin).color, getComputedStyle(xin.shadowRoot.firstChild).color);
+
+// slotchange: a microtask after the change, once for many
+const sc = [];
+const sh = document.createElement('div');
+document.body.append(sh);
+const sr = sh.attachShadow({ mode: 'open' });
+sr.addEventListener('slotchange', (e) => sc.push(name(e.target) + '@' + sc.step));
+document.addEventListener('slotchange', () => sc.push('DOCUMENT'));
+sh.innerHTML = '<b>1</b>';
+sc.step = 'a';
+sr.innerHTML = '<slot id=def></slot><slot id=named name=n>fallback</slot>';
+Promise.resolve().then(() => {
+	sc.step = 'b';
+	sh.append('2', document.createElement('i'));
+	sh.lastChild.slot = 'n';
+	return Promise.resolve();
+}).then(() => {
+	sc.step = 'c';
+	sh.lastChild.slot = 'other';
+	sh.firstChild.textContent = 'changed';	/* not an assignment */
+	return Promise.resolve();
+}).then(() => {
+	sc.step = 'd';
+	sr.getElementById('named').append(' more');	/* its fallback shown */
+	sr.getElementById('def').remove();
+	return Promise.resolve();
+}).then(() => {
+	sc.step = 'e';
+	return Promise.resolve();
+}).then(() => {
+	log('slotchange', sc.join(' '));
+});
+
+// animation events of shadow trees, for listeners of that tree
+const an = document.createElement('div'), anl = [];
+document.body.append(an);
+const ar = an.attachShadow({ mode: 'open' });
+ar.innerHTML = '<style>@keyframes k { to { opacity: 0 } } p { animation: k .1s }</style><p id=ap>a</p>';
+ar.addEventListener('animationstart', (e) => anl.push('start ' + name(e.target)));
+ar.addEventListener('animationend', (e) => anl.push('end ' + name(e.target)));
+document.addEventListener('animationend', (e) => anl.push('DOCUMENT'));
+setTimeout(() => log('animations', anl.join(', ')), 400);
+</script>

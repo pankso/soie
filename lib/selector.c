@@ -738,16 +738,25 @@ static int is_host(const soie_node *el)
 	return sel_shadow && el->u.el.shadow == sel_shadow;
 }
 
-/* Does compound c hold :host? Nothing else of a shadow tree's rules
- * sees its host */
+/* Does compound c hold :host, maybe in :is() or :where()? Nothing
+ * else of a shadow tree's rules sees its host */
 static int has_host(const struct compound *c)
 {
-	int i;
+	const struct sellist *a;
+	int i, j;
 
-	for (i = 0; i < c->n; i++)
-		if (c->s[i].type == SEL_PSEUDO && (c->s[i].pseudo == PC_HOST ||
-		    c->s[i].pseudo == PC_HOST_CONTEXT))
+	for (i = 0; i < c->n; i++) {
+		if (c->s[i].type != SEL_PSEUDO)
+			continue;
+		if (c->s[i].pseudo == PC_HOST ||
+		    c->s[i].pseudo == PC_HOST_CONTEXT)
 			return 1;
+		if ((c->s[i].pseudo == PC_IS || c->s[i].pseudo == PC_WHERE) &&
+		    (a = c->s[i].args))
+			for (j = 0; j < a->n; j++)
+				if (has_host(&a->c[j].c[a->c[j].n - 1]))
+					return 1;
+	}
 	return 0;
 }
 

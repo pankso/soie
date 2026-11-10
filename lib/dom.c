@@ -487,14 +487,86 @@ int soie_shadow_open(const soie_node *root)
 		!root->u.frag.closed;
 }
 
+/* doc's shared text css, held once more */
+static struct shadow_css *css_hold(soie_node *doc, const char *css)
+{
+	struct shadow_css **p, *c;
+
+	for (p = &doc->u.doc->css; (c = *p); p = &c->next)
+		if (!strcmp(c->text, css)) {
+			c->refs++;
+			return c;
+		}
+	c = xmalloc(sizeof(*c));
+	c->text = xstrndup(css, strlen(css));
+	c->refs = 1;
+	c->next = NULL;
+	*p = c;
+	return c;
+}
+
+static void css_drop(soie_node *doc, struct shadow_css *c)
+{
+	struct shadow_css **p;
+
+	if (!c || --c->refs)
+		return;
+	for (p = &doc->u.doc->css; *p != c; p = &(*p)->next)
+		;
+	*p = c->next;
+	free(c->text);
+	free(c);
+}
+
 void soie_shadow_css(soie_node *root, const char *css)
 {
+	struct shadow_css *old;
+
 	if (!soie_shadow_host(root))
 		return;
-	free(root->u.frag.css);
-	root->u.frag.css = css && *css ? xstrndup(css, strlen(css)) : NULL;
-	/* other rules: sheet_signature() sees it */
+	old = root->u.frag.css;
+	root->u.frag.css = css && *css ? css_hold(root->doc, css) : NULL;
+	css_drop(root->doc, old);
+	/* other rules if a new text (sheet_signature() sees it), other
+	 * rules for its tree anyway */
 	root->doc->u.doc->gen++;
+	style_changed(root->u.frag.host, CH_ATTR);
+}
+
+int shadow_host_ok(const struct soie_node *el)
+{
+	static const char *const reserved[] = { "annotation-xml",
+		"color-profile", "font-face", "font-face-src",
+		"font-face-uri", "font-face-format", "font-face-name",
+		"missing-glyph", NULL };
+	const char *s;
+	int i;
+
+	if (el->type != SOIE_ELEMENT || el->ns != SOIE_NS_HTML)
+		return 0;
+	switch (el->tag) {
+	case TAG_ARTICLE: case TAG_ASIDE: case TAG_BLOCKQUOTE: case TAG_BODY:
+	case TAG_DIV: case TAG_FOOTER: case TAG_H1: case TAG_H2: case TAG_H3:
+	case TAG_H4: case TAG_H5: case TAG_H6: case TAG_HEADER: case TAG_MAIN:
+	case TAG_NAV: case TAG_P: case TAG_SECTION: case TAG_SPAN:
+		return 1;
+	}
+	/* a valid custom element name */
+	s = el->name;
+	if (*s < 'a' || *s > 'z' || !strchr(s, '-'))
+		return 0;
+	for (; *s; s++)
+		if (*s >= 'A' && *s <= 'Z')
+			return 0;
+	for (i = 0; reserved[i]; i++)
+		if (!strcmp(el->name, reserved[i]))
+			return 0;
+	return 1;
+}
+
+soie_node *soie_assigned_slot(const soie_node *n)
+{
+	return n->doc->u.doc->shadows ? slot_of(n) : NULL;
 }
 
 struct soie_node *shadow_scope(const struct soie_node *n)
@@ -516,23 +588,50 @@ const char *slot_name(const struct soie_node *n)
 	return (s = soie_element_get_attr(n, "slot")) ? s : "";
 }
 
-struct soie_node *slot_find(const struct soie_node *s, const char *name)
+/* The slots of shadow root s, in tree order, NULL ended: kept on s
+ * until one comes, goes or changes its name (slots_moved()), not
+ * looked for in the whole tree at each light child */
+static struct soie_node **slots_of(const struct soie_node *s)
 {
-	const struct soie_node *n = s->first;
-	const char *a;
+	struct soie_node *r = (struct soie_node *)s, *n = r->first;
+	size_t k = 0, cap = 0;
 
+	if (r->u.frag.slots_ok)
+		return r->u.frag.slots;
+	free(r->u.frag.slots);
+	r->u.frag.slots = NULL;
 	while (n) {
-		if (is_html(n, TAG_SLOT) && !strcmp((a =
-		    soie_element_get_attr(n, "name")) ? a : "", name))
-			return (struct soie_node *)n;
+		if (is_html(n, TAG_SLOT)) {
+			if (k + 1 >= cap) {
+				cap = cap ? cap * 2 : 4;
+				r->u.frag.slots = xrealloc(r->u.frag.slots,
+					cap * sizeof(*r->u.frag.slots));
+			}
+			r->u.frag.slots[k++] = n;
+		}
 		if (n->first) {
 			n = n->first;
 			continue;
 		}
-		while (n != s && !n->next)
+		while (n != r && !n->next)
 			n = n->parent;
-		n = n == s ? NULL : n->next;
+		n = n == r ? NULL : n->next;
 	}
+	if (k)
+		r->u.frag.slots[k] = NULL;
+	r->u.frag.slots_ok = 1;
+	return r->u.frag.slots;
+}
+
+struct soie_node *slot_find(const struct soie_node *s, const char *name)
+{
+	struct soie_node **v = slots_of(s);
+	const char *a;
+
+	for (; v && *v; v++)
+		if (!strcmp((a = soie_element_get_attr(*v, "name")) ? a : "",
+		    name))
+			return *v;
 	return NULL;
 }
 
@@ -564,19 +663,10 @@ struct soie_node *flat_parent(const struct soie_node *n)
  * boxes are built again */
 static void slots_touch(soie_node *host)
 {
-	soie_node *s = host->u.el.shadow, *n = s->first;
+	soie_node **v = slots_of(host->u.el.shadow);
 
-	while (n) {
-		if (is_html(n, TAG_SLOT))
-			layout_touch(n);
-		if (n->first) {
-			n = n->first;
-			continue;
-		}
-		while (n != s && !n->next)
-			n = n->parent;
-		n = n == s ? NULL : n->next;
-	}
+	for (; v && *v; v++)
+		layout_touch(*v);
 }
 
 /* The slots of host's shadow tree changed: its children may go to
@@ -585,6 +675,7 @@ static void slots_moved(soie_node *host)
 {
 	soie_node *c;
 
+	host->u.el.shadow->u.frag.slots_ok = 0;
 	slots_touch(host);
 	for (c = host->first; c; c = c->next)
 		if (c->type == SOIE_ELEMENT)
@@ -762,6 +853,7 @@ static void move_one(soie_node *n, soie_node *from, soie_node *to)
 static void move_tree(soie_node *n, soie_node *from, soie_node *to)
 {
 	soie_node *s = n;
+	struct shadow_css *c;
 
 	while (s) {
 		move_one(s, from, to);
@@ -770,6 +862,12 @@ static void move_tree(soie_node *n, soie_node *from, soie_node *to)
 		if (s->type == SOIE_ELEMENT && s->u.el.shadow) {
 			move_tree(s->u.el.shadow, from, to);
 			to->u.doc->shadows++;
+		}
+		if (s->type == SOIE_DOCUMENT_FRAGMENT && s->u.frag.css) {
+			/* to's own text */
+			c = s->u.frag.css;
+			s->u.frag.css = css_hold(to, c->text);
+			css_drop(from, c);
 		}
 		if (s->first) {
 			s = s->first;
@@ -816,8 +914,6 @@ void node_detach(struct soie_node *n)
 		return;
 	style_changed(n, CH_REMOVE);
 	layout_touch(p);
-	if (n->doc->u.doc->shadows)
-		slots_changed(p, n);
 	if (n->prev)
 		n->prev->next = n->next;
 	else
@@ -828,6 +924,9 @@ void node_detach(struct soie_node *n)
 		p->last = n->prev;
 	n->parent = n->prev = n->next = NULL;
 	n->doc->u.doc->gen++;
+	/* out: the slots kept (slots_of()) are those of the tree left */
+	if (n->doc->u.doc->shadows)
+		slots_changed(p, n);
 }
 
 /* Insert without checks; ref is NULL to append. */
@@ -913,7 +1012,8 @@ static void node_free_one(soie_node *n)
 	case SOIE_DOCUMENT_FRAGMENT:
 		if (n->u.frag.host)
 			n->u.frag.host->u.el.shadow = NULL;
-		free(n->u.frag.css);
+		css_drop(n->doc, n->u.frag.css);
+		free(n->u.frag.slots);
 		break;
 	case SOIE_TEXT:
 	case SOIE_COMMENT:

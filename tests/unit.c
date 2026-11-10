@@ -199,7 +199,7 @@ static void test_shadow(void)
 		"<div id=h><b>light</b><i slot=x>named</i></div>";
 	soie_node *doc = soie_html_parse(html, sizeof(html) - 1, NULL);
 	soie_node *other = soie_document_new();
-	soie_node *h, *r, *p, *c;
+	soie_node *h, *r, *r2, *p, *c;
 	char *s, *v;
 
 	h = soie_node_last_child(soie_node_last_child(
@@ -227,6 +227,26 @@ static void test_shadow(void)
 	v = soie_computed_value(soie_node_first_child(h), NULL, "color");
 	CHECK(v && !strcmp(v, "rgb(0, 128, 0)"));
 	free(v);
+	/* a second root with the same adopted text shares its rules */
+	c = soie_element_new(doc, SOIE_NS_HTML, "x-b");
+	CHECK(soie_node_append(soie_node_parent(h), c) == 0);
+	r2 = soie_attach_shadow(c, 0);
+	CHECK(soie_node_append(r2, soie_element_new(doc, SOIE_NS_HTML,
+		"p")) == 0);
+	soie_shadow_css(r2, "p { color: blue } ::slotted(b) { color: green }");
+	CHECK(soie_style_document(doc, NULL) == 0);
+	v = soie_computed_value(soie_node_first_child(r2), NULL, "color");
+	CHECK(v && !strcmp(v, "rgb(0, 0, 255)"));
+	free(v);
+	soie_shadow_css(r2, NULL);
+	CHECK(soie_style_document(doc, NULL) == 0);
+	v = soie_computed_value(soie_node_first_child(r2), NULL, "color");
+	CHECK(v && !strcmp(v, "rgb(0, 0, 0)"));
+	free(v);
+	v = soie_computed_value(p, NULL, "color");
+	CHECK(v && !strcmp(v, "rgb(0, 0, 255)"));
+	free(v);
+	soie_shadow_css(r2, "p { color: blue } ::slotted(b) { color: green }");
 	CHECK(soie_layout_document(doc, 300, 200) == 0);
 	s = soie_layout_dump(doc, NULL);
 	CHECK(s && strstr(s, "block <p>") && strstr(s, "\"light\"") &&
@@ -244,6 +264,16 @@ static void test_shadow(void)
 	CHECK(soie_node_adopt(other, h) == 0);
 	CHECK(soie_node_document(r) == other &&
 		soie_node_document(p) == other);
+	/* its adopted text with it, the other root's left */
+	CHECK(soie_node_append(other, h) == 0);
+	CHECK(soie_style_document(other, NULL) == 0);
+	v = soie_computed_value(p, NULL, "color");
+	CHECK(v && !strcmp(v, "rgb(0, 0, 255)"));
+	free(v);
+	CHECK(soie_style_document(doc, NULL) == 0);
+	v = soie_computed_value(soie_node_first_child(r2), NULL, "color");
+	CHECK(v && !strcmp(v, "rgb(0, 0, 255)"));
+	free(v);
 	soie_node_free(doc);
 	/* freed with its host, the host with its document */
 	c = soie_element_new(other, SOIE_NS_HTML, "span");
