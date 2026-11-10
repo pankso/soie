@@ -337,7 +337,10 @@ static struct box *marker(const soie_node *el, const struct style *st)
 		int n = ordinal(el);
 		char num[16];
 
-		if (!strcmp(t, "lower-roman") || !strcmp(t, "upper-roman"))
+		/* roman numerals stop at 3999: decimal beyond, as browsers
+		 * (a value of two billions was two million letters) */
+		if ((!strcmp(t, "lower-roman") || !strcmp(t, "upper-roman")) &&
+		    n >= 1 && n <= 3999)
 			roman(&b, n, t[0] == 'u');
 		else if (!strcmp(t, "lower-alpha") ||
 			 !strcmp(t, "lower-latin") ||
@@ -570,7 +573,9 @@ static void gen_node(struct box *parent, soie_node *n)
 		return;
 	}
 	if (kw(st, P_DISPLAY, "contents")) {
+		depth++;	/* no box, a level of recursion all the same */
 		gen_children(parent, n);
+		depth--;
 		return;
 	}
 	if (is_html(n, TAG_BR)) {

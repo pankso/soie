@@ -801,6 +801,40 @@ static int same_type(const soie_node *a, const soie_node *b)
 
 static int matches_list(const struct sellist *l, const soie_node *el);
 
+/*
+ * & : does el match the parent rule's list? The last answers are kept
+ * while one selector is matched (nest_depth: cleared when the outermost
+ * match starts, nothing changes meanwhile): `&:is(&)` asked twice at
+ * each level of nesting, 2^n times in all.
+ */
+#if defined(__GNUC__)
+#define THREAD_LOCAL __thread	/* workers match selectors too */
+#else
+#define THREAD_LOCAL
+#endif
+#define NEST_MEMO 16
+static THREAD_LOCAL struct {
+	const struct sellist *l;
+	const soie_node *el;
+	int r;
+} nest_memo[NEST_MEMO];
+static THREAD_LOCAL int nest_n, nest_depth;
+
+static int nest_match(const struct sellist *l, const soie_node *el)
+{
+	int i, r;
+
+	for (i = 0; i < NEST_MEMO && i < nest_n; i++)
+		if (nest_memo[i].l == l && nest_memo[i].el == el)
+			return nest_memo[i].r;
+	r = matches_list(l, el);
+	i = nest_n++ % NEST_MEMO;
+	nest_memo[i].l = l;
+	nest_memo[i].el = el;
+	nest_memo[i].r = r;
+	return r;
+}
+
 /* Position (1-based) among siblings, from the end if last. */
 static int nth_index(const soie_node *el, int last, int of_type,
 	const struct sellist *of)
@@ -1003,7 +1037,7 @@ static int match_compound(const struct compound *c, const soie_node *el,
 				return 0;
 			break;
 		case SEL_NEST:
-			if (!parent || !matches_list(parent, el))
+			if (!parent || !nest_match(parent, el))
 				return 0;
 			break;
 		}
@@ -1323,13 +1357,17 @@ static int related(const soie_node *x, const soie_node *el, int comb)
 /*
  * Match compounds [0, idx] with el as the subject of compound idx.
  * anchor: for relative selectors, the :has() element compound 0
- * must be related to.
+ * must be related to. Returns 1 for a match, 0 when el does not match
+ * but another candidate may, -1 when no ancestor further up can
+ * either: the ancestors left to try are fewer of the same. Without
+ * it `a b c d e` tried every ancestor at every level, depth^4 (50
+ * nested divs and six descendant combinators: over a second).
  */
-static int match_from(const struct complex *c, int idx, const soie_node *el,
+static int match_rec(const struct complex *c, int idx, const soie_node *el,
 	const soie_node *anchor, const struct sellist *parent)
 {
 	const soie_node *n;
-	int comb;
+	int comb, r;
 
 	if (!match_compound(&c->c[idx], el, parent))
 		return 0;
@@ -1339,22 +1377,34 @@ static int match_from(const struct complex *c, int idx, const soie_node *el,
 	switch (comb) {
 	case COMB_DESC:
 		for (n = parent_el(el); n; n = parent_el(n))
-			if (match_from(c, idx - 1, n, anchor, parent))
-				return 1;
-		return 0;
+			if ((r = match_rec(c, idx - 1, n, anchor, parent)))
+				return r;
+		return -1;
 	case COMB_CHILD:
 		n = parent_el(el);
-		return n && match_from(c, idx - 1, n, anchor, parent);
+		return n ? match_rec(c, idx - 1, n, anchor, parent) : -1;
 	case COMB_NEXT:
 		n = prev_el(el);
-		return n && match_from(c, idx - 1, n, anchor, parent);
+		return n ? match_rec(c, idx - 1, n, anchor, parent) : 0;
 	case COMB_SUBSEQ:
 		for (n = prev_el(el); n; n = prev_el(n))
-			if (match_from(c, idx - 1, n, anchor, parent))
-				return 1;
+			if ((r = match_rec(c, idx - 1, n, anchor, parent)))
+				return r;
 		return 0;
 	}
 	return 0;
+}
+
+static int match_from(const struct complex *c, int idx, const soie_node *el,
+	const soie_node *anchor, const struct sellist *parent)
+{
+	int r;
+
+	if (!nest_depth++)
+		nest_n = 0;
+	r = match_rec(c, idx, el, anchor, parent) > 0;
+	nest_depth--;
+	return r;
 }
 
 int selector_match(const struct sellist *l, int i, const soie_node *el)

@@ -1827,13 +1827,18 @@ static void text_el(struct canvas *c, const soie_node *n, const struct mat *m,
 }
 
 /* One element of the tree, with its paint state and transform */
+/* Elements drawn by one svg_render(), those of <use> counted each
+ * time: eight levels of thirty <use> each are 30^8 shapes in 4 KB */
+#define SVG_BUDGET 200000
+static int budget;
+
 static void element(struct canvas *c, const soie_node *k, struct mat m,
 	struct paintstate ps, int depth)
 {
 	const char *a;
 	char buf[128];
 
-	if (k->type != SOIE_ELEMENT || k->ns != SOIE_NS_SVG)
+	if (k->type != SOIE_ELEMENT || k->ns != SOIE_NS_SVG || --budget < 0)
 		return;
 	if (!strcmp(k->name, "defs") || !strcmp(k->name, "title") ||
 	    !strcmp(k->name, "desc") || !strcmp(k->name, "clipPath") ||
@@ -1973,6 +1978,7 @@ void svg_render(struct canvas *c, const soie_node *el, float x, float y,
 		float a = c->alpha;
 
 		c->alpha = 1;	/* opacity is in the paint state */
+		budget = SVG_BUDGET;
 		walk(c, el, m, ps, 0);
 		c->alpha = a;
 	}
@@ -2268,7 +2274,7 @@ int clip_path_paint(struct canvas *c, const struct box *b)
 			} else {
 				m.a = m.d = z;
 			}
-			walk(c, cp, m, ps, 0);
+			budget = SVG_BUDGET, walk(c, cp, m, ps, 0);
 			ok = 1;
 		}
 	} else {
