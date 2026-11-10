@@ -223,6 +223,22 @@ class SubmitEvent extends Event {
 		this.submitter = init.submitter || null;
 	}
 }
+class AnimationEvent extends Event {
+	constructor(type, init = {}) {
+		super(type, init);
+		this.animationName = init.animationName || '';
+		this.elapsedTime = init.elapsedTime || 0;
+		this.pseudoElement = init.pseudoElement || '';
+	}
+}
+class TransitionEvent extends Event {
+	constructor(type, init = {}) {
+		super(type, init);
+		this.propertyName = init.propertyName || '';
+		this.elapsedTime = init.elapsedTime || 0;
+		this.pseudoElement = init.pseudoElement || '';
+	}
+}
 class ProgressEvent extends Event {
 	constructor(type, init = {}) {
 		super(type, init);
@@ -472,6 +488,7 @@ const NOT_CANCELABLE = /^(input|change|focus|blur|focusin|focusout|load|unload|e
 api.dispatch = function (target, type, init) {
 	if (api.names)
 		api.names();
+	animationCheck();
 	const t = target || g;
 	const opts = { bubbles: !NO_BUBBLE.test(type) || (type === 'scroll' &&
 		t === document), cancelable: !NOT_CANCELABLE.test(type),
@@ -574,6 +591,48 @@ function addTimer(fn, delay, args, repeat) {
 	return id;
 }
 
+/*
+ * Animations do not run here: one that begins has ended. The engine
+ * says which elements got an animation-name at the last styling;
+ * each animation of theirs gets its animationstart, and its
+ * animationend unless it loops for ever (scripts wait for it to take
+ * a loader or a class away). Asked a moment after the document
+ * changed, once the host styled it again.
+ */
+let animGen = -1, animTimer = 0;
+function animationEvents() {
+	animTimer = 0;
+	if (!api.animations || !document.documentElement)
+		return;
+	/* the styles of the document as it is now, first */
+	getComputedStyle(document.documentElement).getPropertyValue('display');
+	for (const el of api.animations()) {
+		const cs = getComputedStyle(el);
+		const names = cs.getPropertyValue('animation-name').split(',');
+		const counts = cs.getPropertyValue('animation-iteration-count')
+			.split(',');
+		names.forEach((raw, i) => {
+			const name = raw.trim().replace(/^["']|["']$/g, '');
+			if (!name || name === 'none')
+				return;
+			const init = { animationName: name, bubbles: true,
+				cancelable: false };
+			dispatch(el, new AnimationEvent('animationstart', init));
+			if ((counts[i % counts.length] || '').trim() !== 'infinite')
+				dispatch(el, new AnimationEvent('animationend', init));
+		});
+	}
+}
+function animationCheck() {
+	if (!api.animations || api.gen() === animGen || animTimer)
+		return;
+	animGen = api.gen();
+	animTimer = addTimer(() => {
+		animationEvents();
+		animationCheck();
+	}, 30, [], false);
+}
+
 api.tick = function () {
 	const now = api.now();
 	const due = [];
@@ -597,6 +656,7 @@ api.tick = function () {
 			report(e);
 		}
 	}
+	animationCheck();
 };
 
 /* ms until the next timer, -1 for none: asked after the microtasks,
@@ -6252,7 +6312,8 @@ const globals = {
 	sessionStorage: new Proxy(new Storage(), storageHandler),
 	EventTarget, Event, CustomEvent, UIEvent, MouseEvent, PointerEvent,
 	WheelEvent, KeyboardEvent, FocusEvent, InputEvent, SubmitEvent,
-	ProgressEvent, ErrorEvent, PopStateEvent, HashChangeEvent,
+	ProgressEvent, AnimationEvent, TransitionEvent, ErrorEvent,
+	PopStateEvent, HashChangeEvent,
 	PromiseRejectionEvent, MessageEvent, Node, CharacterData, Text, CDATASection, Comment,
 	ProcessingInstruction,
 	DocumentType, DocumentFragment, Document, HTMLDocument: Document,

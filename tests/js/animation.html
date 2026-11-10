@@ -1,0 +1,10 @@
+<!doctype html><style>@keyframes fade{from{opacity:0}to{opacity:1}}@keyframes spin{to{color:red}}
+#a{animation:fade .3s forwards}.out{animation:fade .2s reverse both}#c{animation:spin 1s infinite, fade 1s}</style>
+<div id=a>a</div><div id=b>b</div><div id=c>c</div>
+<script>
+var log = [];
+document.addEventListener('animationstart', function (e) { log.push('start ' + e.target.id + ' ' + e.animationName + ' ' + (e instanceof AnimationEvent)); });
+document.addEventListener('animationend', function (e) { log.push('end ' + e.target.id + ' ' + e.animationName); if (e.target.id === 'b') e.target.remove(); });
+setTimeout(function () { document.getElementById('b').className = 'out'; }, 100);
+setTimeout(function () { console.log(log.join('\n')); console.log('b gone', !document.getElementById('b')); }, 600);
+</script>

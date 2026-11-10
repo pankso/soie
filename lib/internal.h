@@ -74,6 +74,7 @@ struct docinfo {
 	struct script *script;	/* soie_script_start() */
 	struct media *media;	/* audio and video players */
 	int lay_w, lay_h;
+	int anims;		/* elements with anim set */
 	/* layout_touch() stamps, and the last layout's */
 	unsigned long lstamp, lbuilt;
 	struct damage *damage;	/* soie_layout_damage() */
@@ -91,6 +92,8 @@ struct soie_node {
 	unsigned char dirty;	/* its subtree needs restyling */
 	unsigned char vp;	/* its style has viewport units (vw...) */
 	unsigned char sheet;	/* <link>: its style sheet came (1), failed (2) */
+	unsigned char anim;	/* an animation of it began at the last
+				 * styling: soie_animations() tells scripts */
 	unsigned short tag;
 	/* when it or its subtree last changed what its boxes would be
 	 * (layout_touch()); a layout built later keeps them */

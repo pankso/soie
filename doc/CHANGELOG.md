@@ -23,7 +23,8 @@ each change are in [DECISIONS.md](DECISIONS.md).
   positions with units and `calc()`.
 - `@keyframes` and `animation`: nothing moves, but an element that an
   animation leaves in its last keyframe (`forwards`) is shown there;
-  content faded in from `opacity: 0` stayed invisible.
+  content faded in from `opacity: 0` stayed invisible. Scripts get
+  `animationstart` and `animationend`.
 - Transforms that rotate, scale or skew (`rotate()`, `scale()`,
   `skew()`, `matrix()`, the `rotate`, `scale` and `translate`
   properties, `transform-origin`): carets, chevrons and flipped icons

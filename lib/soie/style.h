@@ -62,6 +62,13 @@ char *soie_computed_value(const soie_node *el, const char *pseudo,
 	const char *property);
 
 /*
+ * Animations do not run, but scripts wait for their events: the
+ * elements that got an animation-name since the last call (at most
+ * max, the rest at the next call), in tree order. Returns how many.
+ */
+int soie_animations(soie_node *doc, soie_node **out, int max);
+
+/*
  * The style sheet of a <link>, as the last soie_style_document() found
  * it: 1 when it came (or there is none to wait for), -1 when it could
  * not be fetched, 0 while it is on its way or not looked at yet.

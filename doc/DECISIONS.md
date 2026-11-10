@@ -196,7 +196,13 @@ reversed, edit the entry and say why; do not leave stale rules here.
   shorthand drops the rest). `opacity: 0; animation: fade-in .3s
   forwards`, the usual way to bring a page's content in, left it
   invisible. Infinite animations and those that do not fill leave the
-  style as it is. No animationstart or animationend event yet.
+  style as it is. Scripts get the events all the same: an element
+  that gets an animation-name it did not have is marked when it is
+  styled (soie_animations(), a public function added for the script
+  extension), and dom.js sends animationstart, then animationend
+  unless the animation loops for ever, a moment after the document
+  changed. Pages wait for animationend to remove a loader or the
+  class that hides their content.
 - `revert` goes back to the user agent's (or the user's) declaration:
   the cascade keeps the winner among those beside the overall one. It
   was read as unset: `div { display: revert }` was inline, `all:

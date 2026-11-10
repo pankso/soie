@@ -2836,6 +2836,18 @@ static void style_one(struct styledb *db, soie_node *n)
 	/* styles are interned: the same pointer is the same style */
 	if (st != n->u.el.style || b != n->u.el.before || a != n->u.el.after)
 		layout_touch(n);
+	{
+		/* an animation-name it did not have: one begins (and ends
+		 * at once here), scripts hear of it */
+		const char *was = st ? st->v[P_ANIMATION_NAME].u.str : NULL;
+		const char *now = n->u.el.style->v[P_ANIMATION_NAME].u.str;
+
+		if (st != n->u.el.style && now && strcmp(now, "none") &&
+		    (!was || strcmp(was, now)) && !n->anim) {
+			n->anim = 1;
+			n->doc->u.doc->anims++;
+		}
+	}
 	if (n->parent && n->parent->type == SOIE_DOCUMENT)
 		db->rem = n->u.el.style->v[P_FONT_SIZE].u.len.px;
 }
@@ -3022,6 +3034,35 @@ void doc_units(const struct style *st, struct ucontext *u)
 	u->rem = db && db->rem > 0 ? db->rem : 16 * u->zoom;
 	u->vw = db ? db->vp.vw : 1024;
 	u->vh = db ? db->vp.vh : 768;
+}
+
+/* The elements whose animation began since the last call, max at
+ * most (the others at the next call); how many */
+int soie_animations(soie_node *doc, soie_node **out, int max)
+{
+	soie_node *n;
+	int k = 0;
+
+	if (doc->type != SOIE_DOCUMENT || doc->u.doc->anims <= 0)
+		return 0;
+	for (n = doc->first; n && k < max; ) {
+		if (n->type == SOIE_ELEMENT && n->anim) {
+			n->anim = 0;
+			doc->u.doc->anims--;
+			out[k++] = n;
+		}
+		if (n->first) {
+			n = n->first;
+			continue;
+		}
+		while (n && !n->next)
+			n = n->parent;
+		if (n)
+			n = n->next;
+	}
+	if (k < max)
+		doc->u.doc->anims = 0;	/* the rest left the document */
+	return k;
 }
 
 static unsigned long serials;

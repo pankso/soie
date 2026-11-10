@@ -1766,6 +1766,23 @@ static JSValue n_current(JSContext *js, JSValueConst this, int argc,
 	return wrap(c, soie_script_current(c->doc));
 }
 
+/* animations(): the elements whose animation just began */
+static JSValue n_animations(JSContext *js, JSValueConst this, int argc,
+	JSValueConst *argv)
+{
+	struct sctx *c = ctx_of(js);
+	soie_node *v[64];
+	JSValue a = JS_NewArray(js);
+	int i, n = soie_animations(c->doc, v, 64);
+
+	(void)this;
+	(void)argc;
+	(void)argv;
+	for (i = 0; i < n; i++)
+		JS_SetPropertyUint32(js, a, (uint32_t)i, wrap(c, v[i]));
+	return a;
+}
+
 /* ids(): the ids of the document's elements, and the names of its
  * forms, images and frames: what the window has as named properties */
 static JSValue n_ids(JSContext *js, JSValueConst this, int argc,
@@ -2586,6 +2603,7 @@ static const JSCFunctionListEntry natives[] = {
 	JS_CFUNC_DEF("now", 0, n_now),
 	JS_CFUNC_DEF("currentScript", 0, n_current),
 	JS_CFUNC_DEF("ids", 0, n_ids),
+	JS_CFUNC_DEF("animations", 0, n_animations),
 	JS_CFUNC_DEF("random", 1, n_random),
 	JS_CFUNC_DEF("player", 3, n_player),
 	JS_CFUNC_DEF("playerState", 1, n_player_state),

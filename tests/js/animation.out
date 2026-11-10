@@ -1,0 +1,8 @@
+log: start a fade true
+end a fade
+start c spin true
+start c fade true
+end c fade
+start b fade true
+end b fade
+log: b gone true
