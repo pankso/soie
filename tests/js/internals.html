@@ -1,0 +1,7 @@
+<!doctype html><x-a></x-a><script>
+class A extends HTMLElement{constructor(){super();this.attachShadow({mode:'closed'});this.i=this.attachInternals();}}
+customElements.define('x-a',A);var a=document.querySelector('x-a');
+a.i.states.add('on');a.i.setValidity({valueMissing:true},'need');a.i.setFormValue('v');
+console.log(a.i instanceof ElementInternals, a.i.shadowRoot instanceof ShadowRoot, a.shadowRoot, a.i.states.has('on'), a.i.checkValidity(), a.i.validationMessage, a.i.form);
+try{a.attachInternals();console.log('NO THROW')}catch(e){console.log(e.name)}
+</script>

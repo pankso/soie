@@ -103,6 +103,7 @@ struct soie_node {
 	unsigned char dirty;	/* its subtree needs restyling */
 	unsigned char vp;	/* its style has viewport units (vw...) */
 	unsigned char sheet;	/* <link>: its style sheet came (1), failed (2) */
+	unsigned char defined;	/* a custom element, upgraded: :defined */
 	unsigned char anim;	/* bit 0: an animation of it began, for
 				 * soie_animations() to tell scripts; the
 				 * others: a hash of its animation-name */

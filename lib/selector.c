@@ -1131,6 +1131,10 @@ static int match_pseudo(const struct simple *s, const soie_node *el)
 				return 1;
 		return 0;
 	case PC_DEFINED:
+		/* a custom element (a hyphen in its name) before its
+		 * class came is not: pages hide components until then */
+		return el->defined || el->ns != SOIE_NS_HTML ||
+			!strchr(el->name, '-');
 	case PC_TRUE:
 		return 1;
 	case PC_VALID:

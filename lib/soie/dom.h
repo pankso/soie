@@ -99,6 +99,10 @@ void soie_shadow_css(soie_node *root, const char *css);
 /* The <slot> of its host's shadow tree that shows n, a child of a
  * shadow host, whatever the mode; NULL when no slot takes it */
 soie_node *soie_assigned_slot(const soie_node *n);
+/* el, a custom element (a name with a hyphen), got its class: it
+ * matches :defined from now on. The script extension says so; without
+ * one no custom element ever is, as in a browser without scripts. */
+void soie_element_set_defined(soie_node *el);
 
 /* Text and comments. Data may contain NUL bytes, hence the length. */
 soie_node *soie_text_new(soie_node *doc, const char *s, size_t len);

@@ -19,6 +19,14 @@ each change are in [DECISIONS.md](DECISIONS.md).
   showed nothing. Library: `soie_attach_shadow()`,
   `soie_shadow_root()`, `soie_shadow_host()`, `soie_shadow_open()`,
   `soie_shadow_css()`, `soie_assigned_slot()`.
+- `:defined` is real: a custom element matches it once its class
+  came. Pages hide their components until then
+  (`x-menu:not(:defined) { display: none }`), and lit.dev showed its
+  mobile drawer over the page. Library: `soie_element_set_defined()`.
+- `import.meta.url` in module scripts and imported modules: reddit's
+  loader resolved its lazy chunks against `undefined`.
+- `attachInternals()` and a minimal `ElementInternals` (states,
+  validity, the shadow root): Material's components threw without it.
 - Shadow DOM events: the path goes through the slots of slotted nodes
   and from a shadow root to its host for composed events (the user's
   clicks, keys, focus, input...; `composed: true` for scripts'),

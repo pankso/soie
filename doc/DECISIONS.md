@@ -172,6 +172,18 @@ reversed, edit the entry and say why; do not leave stale rules here.
   touches every slot and restyles the host's children. node_detach()
   looks at slots once the node is out: the list must not keep it.
   docinfo.shadows (roots made) keeps all of this off pages without.
+- `:defined`: a node flag set by the script extension when a custom
+  element is upgraded or constructed (soie_element_set_defined()); an
+  HTML element with a hyphen in its name does not match before, any
+  other element always does. Without the script extension no custom
+  element is ever defined, as in a browser without scripts: a page
+  that hides undefined components hides them there too.
+- ElementInternals keeps what the element gives it (states, validity,
+  form value) and nothing reads it: `:state()` never matches, a form
+  does not take the value. Components only need the object to exist.
+- import.meta.url is set on a module after it is compiled and before
+  it runs (module_meta()): the script's address, the page's for an
+  inline module.
 - Style order: host, its shadow tree, its light children (they need
   their slot's style). A rule keeps the shadow root of its sheet as
   scope (a pointer only compared: the root may be gone before the

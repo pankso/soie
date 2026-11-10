@@ -564,6 +564,14 @@ int shadow_host_ok(const struct soie_node *el)
 	return 1;
 }
 
+void soie_element_set_defined(soie_node *el)
+{
+	if (el->type != SOIE_ELEMENT || el->defined)
+		return;
+	el->defined = 1;
+	style_changed(el, CH_ATTR);
+}
+
 soie_node *soie_assigned_slot(const soie_node *n)
 {
 	return n->doc->u.doc->shadows ? slot_of(n) : NULL;

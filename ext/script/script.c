@@ -1058,6 +1058,16 @@ static JSValue n_shadow_open(JSContext *js, JSValueConst this, int argc,
 }
 
 /* shadowCss(root, text): its adopted style sheets */
+static JSValue n_defined(JSContext *js, JSValueConst this, int argc,
+	JSValueConst *argv)
+{
+	NODE(0, n);
+
+	(void)this;
+	soie_element_set_defined(n);
+	return JS_UNDEFINED;
+}
+
 static JSValue n_shadow_css(JSContext *js, JSValueConst this, int argc,
 	JSValueConst *argv)
 {
@@ -2619,6 +2629,36 @@ static JSValue n_random(JSContext *js, JSValueConst this, int argc,
 }
 
 /* An import map entry: a specifier, or a prefix ending with '/' */
+/* import.meta.url of a compiled module: its own address, which
+ * bundlers resolve their lazy chunks against (reddit's loader gave
+ * "new URL(undefined)" for each of them) */
+static void module_meta(JSContext *js, JSValueConst f, const char *url)
+{
+	JSValue meta = JS_GetImportMeta(js, JS_VALUE_GET_PTR(f));
+
+	if (JS_IsException(meta))
+		return;
+	JS_DefinePropertyValueStr(js, meta, "url", JS_NewString(js, url),
+		JS_PROP_C_W_E);
+	JS_FreeValue(js, meta);
+}
+
+/* A script run, as a module (with its import.meta) or a classic one */
+static JSValue eval_script(JSContext *js, const char *code, size_t len,
+	const char *url, int module)
+{
+	JSValue f;
+
+	if (!module)
+		return JS_Eval(js, code, len, url, JS_EVAL_TYPE_GLOBAL);
+	f = JS_Eval(js, code, len, url, JS_EVAL_TYPE_MODULE |
+		JS_EVAL_FLAG_COMPILE_ONLY);
+	if (JS_IsException(f))
+		return f;
+	module_meta(js, f, url);
+	return JS_EvalFunction(js, f);
+}
+
 static JSValue n_map_module(JSContext *js, JSValueConst this, int argc,
 	JSValueConst *argv)
 {
@@ -2766,8 +2806,7 @@ static void *wk_main(void *arg)
 		to_page(w, wmsg_text(W_ERROR, 0, "the worker could not start"));
 		goto out;
 	}
-	v = JS_Eval(c->js, w->src, w->srclen, w->url, w->module ?
-		JS_EVAL_TYPE_MODULE : JS_EVAL_TYPE_GLOBAL);
+	v = eval_script(c->js, w->src, w->srclen, w->url, w->module);
 	settle(c, v);
 	free(w->src);
 	w->src = NULL;
@@ -3145,6 +3184,7 @@ static const JSCFunctionListEntry natives[] = {
 	JS_CFUNC_DEF("attachShadow", 2, n_attach_shadow),
 	JS_CFUNC_DEF("shadowOpen", 1, n_shadow_open),
 	JS_CFUNC_DEF("shadowCss", 2, n_shadow_css),
+	JS_CFUNC_DEF("defined", 1, n_defined),
 	JS_CFUNC_DEF("shadows", 1, n_shadows),
 	JS_CFUNC_DEF("connected", 1, n_connected),
 	JS_CFUNC_DEF("newDocument", 1, n_new_document),
@@ -3293,6 +3333,7 @@ static JSModuleDef *mod_load(JSContext *js, const char *name, void *opaque)
 	soie_response_free(&res);
 	if (JS_IsException(f))
 		return NULL;
+	module_meta(js, f, name);
 	m = JS_VALUE_GET_PTR(f);
 	JS_FreeValue(js, f);
 	return m;
@@ -3526,8 +3567,7 @@ static void run(void *ctx, soie_node *el, const char *src, size_t len,
 	if (JS_IsFunction(c->js, c->names))
 		JS_FreeValue(c->js, JS_Call(c->js, c->names, JS_UNDEFINED, 0,
 			NULL));
-	v = JS_Eval(c->js, code, len, url, module ? JS_EVAL_TYPE_MODULE :
-		JS_EVAL_TYPE_GLOBAL);
+	v = eval_script(c->js, code, len, url, module);
 	free(code);
 	settle(c, v);
 	c->deadline = 0;

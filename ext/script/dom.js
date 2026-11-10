@@ -1392,6 +1392,31 @@ function assigned(slot, flatten, elements) {
 	return elements ? a.filter((n) => api.type(n) === S_EL) : a;
 }
 
+class ElementInternals {
+	constructor(el) {
+		this._el = el;
+		this.states = new Set();
+		this.validationMessage = '';
+		this.validity = { valid: true };
+		this.role = null;
+	}
+	get shadowRoot() { return api.shadow(this._el) || null; }
+	get form() { return this._el.closest('form'); }
+	get labels() { return list([]); }
+	get willValidate() { return true; }
+	setFormValue(v) { this._value = v; }
+	setValidity(flags, message) {
+		this.validity = Object.assign({ valid: true }, flags);
+		for (const k in flags)
+			if (flags[k])
+				this.validity.valid = false;
+		this.validationMessage = this.validity.valid ? '' :
+			String(message || '');
+	}
+	checkValidity() { return this.validity.valid; }
+	reportValidity() { return this.validity.valid; }
+}
+
 /* Attributes */
 
 class Attr {
@@ -1962,6 +1987,17 @@ class Element extends Node {
 	scroll() {}
 	scrollTo() {}
 	scrollBy() {}
+	/* What a custom element keeps to itself: its shadow root even
+	 * closed, its states, its value in a form. The states and the
+	 * validity are kept and nothing more: :state() never matches,
+	 * and a form does not take the value (Material's components ask
+	 * for the object when they are built, and threw without it) */
+	attachInternals() {
+		if (this._internals)
+			throw new DOMException('internals attached already',
+				'NotSupportedError');
+		return this._internals = new ElementInternals(this);
+	}
 	attachShadow(init) {
 		const name = api.name(this);
 
@@ -3604,6 +3640,7 @@ function upgrade(el, cls) {
 	} finally {
 		constructing = saved;
 	}
+	api.defined(el);
 	for (const a of observed.get(api.name(el)) || NONE) {
 		const v = api.getAttr(el, a);
 		if (v !== null && v !== undefined)
@@ -3696,6 +3733,7 @@ const HTMLElementCtor = function () {
 	const el = api.createElement(NS_HTML, name ? name[0] : 'div');
 	Object.setPrototypeOf(el, new.target.prototype);
 	built.add(el);
+	api.defined(el);
 	return el;
 };
 HTMLElementCtor.prototype = HTMLElement.prototype;
@@ -6718,7 +6756,7 @@ const globals = {
 	CSSFontFaceRule: CSSRule, CSSKeyframesRule: CSSRule,
 	CSSSupportsRule: CSSRule, CSSImportRule: CSSRule,
 	CSSGroupingRule: CSSRule, StyleSheet: CSSStyleSheet,
-	customElements, NodeFilter,
+	customElements, ElementInternals, NodeFilter,
 	localStorage: new Proxy(new Storage(), storageHandler),
 	sessionStorage: new Proxy(new Storage(), storageHandler),
 	EventTarget, Event, CustomEvent, UIEvent, MouseEvent, PointerEvent,

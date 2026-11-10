@@ -1,0 +1,1 @@
+<!doctype html><style>x-z:defined{color:red}x-y:defined{color:red}</style><x-y>a</x-y><x-z>b</x-z><script>customElements.define("x-z",class extends HTMLElement{});console.log(document.querySelector("x-z").matches(":defined"),document.querySelector("x-y").matches(":defined"),document.body.matches(":defined"),new (customElements.get("x-z"))().matches(":defined"))</script>
