@@ -602,7 +602,7 @@ function addTimer(fn, delay, args, repeat) {
 let animGen = -1, animTimer = 0;
 function animationEvents() {
 	animTimer = 0;
-	if (!api.animations || !document.documentElement)
+	if (api.worker || !api.animations || !document.documentElement)
 		return;
 	/* the styles of the document as it is now, first */
 	getComputedStyle(document.documentElement).getPropertyValue('display');
@@ -624,7 +624,9 @@ function animationEvents() {
 	}
 }
 function animationCheck() {
-	if (!api.animations || api.gen() === animGen || animTimer)
+	/* not in a worker: no document there */
+	if (api.worker || !api.animations || animTimer ||
+	    api.gen() === animGen)
 		return;
 	animGen = api.gen();
 	animTimer = addTimer(() => {
