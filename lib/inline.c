@@ -161,12 +161,29 @@ static void process_text(struct box *t, int *prev)
 {
 	int mode = ws_mode(t->style);
 	struct buf b = { 0 };
-	size_t i;
+	size_t i, col = 0;
 
 	buf_add(&b, "", 0);
 	for (i = 0; i < t->len; i++) {
 		int c = (unsigned char)t->text[i];
 
+		/* a soft hyphen shows only where a line breaks at it: no
+		 * hyphenation here, so never (fonts draw it as a hyphen) */
+		if (c == 0xc2 && i + 1 < t->len &&
+		    (unsigned char)t->text[i + 1] == 0xad) {
+			i++;
+			continue;
+		}
+		if (mode == 'p' && c == '\t') {
+			/* a preserved tab: spaces up to the next stop, every
+			 * 8 columns from the start of this text */
+			do
+				buf_putc(&b, ' ');
+			while (++col % 8);
+			*prev = 0;
+			continue;
+		}
+		col = c == '\n' ? 0 : (c & 0xc0) != 0x80 ? col + 1 : col;
 		if (mode == 'c' || (mode == 'b' && c != '\n')) {
 			if (is_space(c)) {
 				if (!*prev)
@@ -236,8 +253,24 @@ struct ls {
 	int content;		/* the line has something visible */
 	struct openbox open[64];
 	int nopen;
-	struct box *pending[32];	/* floats for the next line */
-	int npending;
+	struct box **pending;	/* floats for the next line */
+	int npending, cappending;
+	/* a line may break before what comes next: the text before
+	 * ended with a space that wraps, an atomic box... */
+	int can_break;
+	/* the last place of the line where it may break, to go back to
+	 * when what follows it without a break does not fit (a word in
+	 * several inline boxes, a nowrap run) */
+	struct {
+		int valid, item;
+		size_t off;		/* in the text of that item */
+		int nfrags, nopen, content;
+		float pen;
+		unsigned flen;		/* the last fragment then */
+		float fw;
+		int fspaces;
+		struct openbox open[64];
+	} snap;
 };
 
 static struct frag *new_frag(struct box *b, int kind, struct box *of)
@@ -413,6 +446,7 @@ static void finish_line(struct ls *s, int forced, int last)
 	}
 	if (!s->content && !forced) {
 		/* nothing but collapsed spaces: no line box */
+		s->snap.valid = 0;
 		b->nfrags = s->start;
 		for (k = 0; k < s->nopen; k++)
 			s->open[k].x = s->lx;
@@ -508,6 +542,8 @@ static void finish_line(struct ls *s, int forced, int last)
 	s->first = 0;
 	s->start = b->nfrags;
 	s->content = 0;
+	s->can_break = 0;
+	s->snap.valid = 0;
 	edges_at(s);
 	for (k = 0; k < s->nopen; k++)
 		s->open[k].x = s->pen;
@@ -620,32 +656,172 @@ static void split_word(struct ls *s, struct box *t, size_t i, size_t j)
 	}
 }
 
-static void place_text(struct ls *s, struct box *t)
+/* Line breaking inside words (UAX 14, what Firefox does of it) */
+
+static unsigned cp_at(const char *t, size_t i, size_t n, size_t *next)
+{
+	unsigned c = (unsigned char)t[i];
+	int k = c >= 0xf0 ? 3 : c >= 0xe0 ? 2 : c >= 0xc0 ? 1 : 0;
+
+	i++;
+	if (k)
+		c &= 0x3f >> k;
+	while (k-- && i < n && ((unsigned char)t[i] & 0xc0) == 0x80)
+		c = c << 6 | ((unsigned char)t[i++] & 0x3f);
+	*next = i;
+	return c;
+}
+
+/* Ideographs, kana, hangul, fullwidth forms: a line breaks between
+ * any two of them */
+static int cjk(unsigned c)
+{
+	return (c >= 0x2e80 && c <= 0xa4cf) || (c >= 0xac00 && c <= 0xd7af) ||
+		(c >= 0xf900 && c <= 0xfaff) || (c >= 0xff00 && c <= 0xff60) ||
+		(c >= 0xffe0 && c <= 0xffe6) || (c >= 0x20000 && c <= 0x3ffff);
+}
+
+/* ...but not before closing punctuation nor after an opening one */
+static int no_break_before(unsigned c)
+{
+	static const unsigned short v[] = { 0x3001, 0x3002, 0xff0c, 0xff0e,
+		0xff1a, 0xff1b, 0xff1f, 0xff01, 0xff09, 0x300d, 0x300f, 0x3011,
+		0x3015, 0x3009, 0x300b, 0x30fc, 0x30fb, 0x3005, 0xff3d, 0xff5d,
+		0 };
+	int i;
+
+	for (i = 0; v[i]; i++)
+		if (v[i] == c)
+			return 1;
+	return 0;
+}
+
+static int no_break_after(unsigned c)
+{
+	return c == 0x300c || c == 0x300e || c == 0x3010 || c == 0x3014 ||
+		c == 0x3008 || c == 0x300a || c == 0xff08 || c == 0xff3b ||
+		c == 0xff5b;
+}
+
+static int alnum(unsigned c)
+{
+	return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') ||
+		(c >= 'A' && c <= 'Z') || c >= 0xc0;
+}
+
+/* May a line break between p c and x, c and x not being spaces? */
+static int break_between(unsigned p, unsigned c, unsigned x)
+{
+	if (c == 0x200b)			/* zero width space */
+		return 1;
+	if (x == 0x2014 || c == 0x2014)		/* around an em dash */
+		return c != x;
+	if ((cjk(c) || cjk(x)) && !no_break_after(c) && !no_break_before(x))
+		return c != 0xa0 && x != 0xa0;
+	if ((c == ')' || c == ']' || c == '}') && (x == '(' || x == '[' ||
+	    x == '{'))
+		return 1;
+	if (!alnum(x))
+		return 0;
+	if (c == '-')		/* a hyphen in a word, not a minus sign */
+		return alnum(p) || p == '-';
+	if (c == '/')		/* a path, not a fraction */
+		return x > '9' || x < '0';
+	return c == '?' || c == '!' || c == '|' || c == 0x2013 || c == 0x2026;
+}
+
+/* The end of what cannot be broken from i on: a space, a newline, the
+ * end of the text, or a place where a line may break inside a word */
+static size_t piece_end(const char *t, size_t i, size_t n)
+{
+	unsigned p = 0, c, x;
+	size_t k, nx;
+
+	if (i >= n || t[i] == ' ' || t[i] == '\n')
+		return i;
+	c = cp_at(t, i, n, &k);
+	while (k < n && t[k] != ' ' && t[k] != '\n') {
+		x = cp_at(t, k, n, &nx);
+		/* ASCII letters and digits in a row: the common case */
+		if (!(c < 0x80 && x < 0x80 && alnum(c) && alnum(x)) &&
+		    break_between(p, c, x))
+			return k;
+		p = c;
+		c = x;
+		k = nx;
+	}
+	return k;
+}
+
+/* Remember this place: before text offset off of item item */
+static void snapshot(struct ls *s, int item, size_t off)
+{
+	s->snap.valid = 1;
+	s->snap.item = item;
+	s->snap.off = off;
+	s->snap.nfrags = s->b->nfrags;
+	s->snap.nopen = s->nopen;
+	s->snap.content = s->content;
+	s->snap.pen = s->pen;
+	if (s->b->nfrags > s->start) {
+		const struct frag *f = &s->b->frags[s->b->nfrags - 1];
+
+		s->snap.flen = f->len;
+		s->snap.fw = f->w;
+		s->snap.fspaces = f->spaces;
+	}
+	memcpy(s->snap.open, s->open, (size_t)s->nopen * sizeof(*s->open));
+}
+
+/* Back to the place remembered, the line ended there: what came after
+ * it goes to the next line. The caller goes on from snap.item. */
+static void rewind_line(struct ls *s)
+{
+	s->b->nfrags = s->snap.nfrags;
+	if (s->b->nfrags > s->start) {
+		struct frag *f = &s->b->frags[s->b->nfrags - 1];
+
+		f->len = s->snap.flen;
+		f->w = s->snap.fw;
+		f->spaces = s->snap.fspaces;
+	}
+	s->nopen = s->snap.nopen;
+	memcpy(s->open, s->snap.open, (size_t)s->nopen * sizeof(*s->open));
+	s->content = s->snap.content;
+	s->pen = s->snap.pen;
+	finish_line(s, 0, 0);
+}
+
+/* The text of item item, from offset from. Returns 1 when the line was
+ * rewound: the caller goes on from s->snap. */
+static int place_text(struct ls *s, struct box *t, int item, size_t from)
 {
 	const struct style *st = t->style;
 	int mode = ws_mode(st), wrap = !nowrap(st);
-	size_t i = 0, n = t->len;
+	size_t i = from, n = t->len;
+	int can = s->can_break;	/* a break before the next piece? */
 
 	while (i < n) {
-		size_t j = i, word_end;
+		size_t j, word_end;
 		float w, ww;
 
 		if (t->text[i] == '\n') {
 			finish_line(s, 1, 1);
 			i++;
+			can = 0;
 			continue;
 		}
-		/* a unit: non-spaces then spaces, up to a newline */
-		while (j < n && t->text[j] != ' ' && t->text[j] != '\n')
-			j++;
-		word_end = j;
-		while (j < n && t->text[j] == ' ')
-			j++;
-		if (!wrap) {
-			while (j < n && t->text[j] != '\n')
-				j++;
-			word_end = j;
+		/* a unit: what cannot be broken then spaces, up to a
+		 * newline */
+		if (wrap) {
+			word_end = piece_end(t->text, i, n);
+		} else {
+			for (word_end = i; word_end < n &&
+			     t->text[word_end] != '\n'; word_end++)
+				;
 		}
+		for (j = word_end; j < n && t->text[j] == ' '; j++)
+			;
 		if (i == word_end && mode != 'p' && !s->content) {
 			/* collapsible spaces at the start of a line */
 			i = j;
@@ -653,13 +829,25 @@ static void place_text(struct ls *s, struct box *t)
 		}
 		ww = text_width(st, t->text + i, word_end - i);
 		w = ww + text_width(st, t->text + word_end, j - word_end);
-		need(s, ww, wrap && word_end > i);
+		if (word_end > i && s->content) {
+			if (can) {
+				snapshot(s, item, i);
+			} else if (s->pen + ww > s->lr + 0.01f &&
+			    s->snap.valid) {
+				/* no break here: at the last place there was */
+				rewind_line(s);
+				return 1;
+			}
+		}
+		need(s, ww, (can || !s->content) && word_end > i);
 		if (!s->content && mode != 'p' && t->text[i] == ' ') {
 			/* the wrap left this unit at a line start */
 			while (i < j && t->text[i] == ' ')
 				i++;
-			if (i == j)
+			if (i == j) {
+				can = 0;
 				continue;
+			}
 			ww = text_width(st, t->text + i, word_end - i);
 			w = ww + text_width(st, t->text + word_end,
 				j - word_end);
@@ -672,13 +860,19 @@ static void place_text(struct ls *s, struct box *t)
 				add_text(s, t, (unsigned)i, (unsigned)(j - i),
 					text_width(st, t->text + i, j - i));
 			i = j;
+			can = wrap;
 			continue;
 		}
 		add_text(s, t, (unsigned)i, (unsigned)(j - i), w);
 		if (word_end > i || mode == 'p')
 			s->content = 1;
+		/* after spaces, or where the piece ended in a word */
+		can = wrap && (j > word_end || j < n);
 		i = j;
 	}
+	if (n > from)
+		s->can_break = can;
+	return 0;
 }
 
 static void place_marker(struct ls *s, struct box *m)
@@ -705,6 +899,7 @@ float layout_inline(struct box *b, struct bfc *f, float x, float y, float w,
 	struct items it = { NULL, 0, 0 };
 	struct ls s;
 	struct fontm m;
+	size_t resume = 0;
 	int i;
 
 	collect(b, &it);
@@ -726,10 +921,15 @@ float layout_inline(struct box *b, struct bfc *f, float x, float y, float w,
 	edges_at(&s);
 	for (i = 0; i < it.n; i++) {
 		struct box *c = it.v[i].box;
+		size_t from = resume;
 
+		resume = 0;
 		switch (it.v[i].kind) {
 		case I_TEXT:
-			place_text(&s, c);
+			if (place_text(&s, c, i, from)) {
+				i = s.snap.item - 1;
+				resume = s.snap.off;
+			}
 			break;
 		case I_OPEN:
 			box_edges(c, w);
@@ -761,11 +961,26 @@ float layout_inline(struct box *b, struct bfc *f, float x, float y, float w,
 		case I_ATOMIC: {
 			struct frag *fr;
 			float mw;
+			/* a line breaks before and after it, unless its
+			 * parent does not wrap */
+			int wraps = !c->parent || !c->parent->style ||
+				!nowrap(c->parent->style);
+			int can = wraps || s.can_break;
 
 			layout_atomic(c, w, cbh);
 			mw = c->w + c->p[1] + c->p[3] + c->b[1] + c->b[3] +
 				c->m[1] + c->m[3];
-			need(&s, mw, 1);
+			if (can && s.content) {
+				snapshot(&s, i, 0);
+			} else if (s.content && s.pen + mw > s.lr + 0.01f &&
+			    s.snap.valid) {
+				rewind_line(&s);
+				i = s.snap.item - 1;
+				resume = s.snap.off;
+				break;
+			}
+			need(&s, mw, can || !s.content);
+			s.can_break = wraps;
 			fr = new_frag(b, F_ATOMIC, c);
 			fr->x = s.pen;
 			fr->w = mw;
@@ -794,6 +1009,7 @@ float layout_inline(struct box *b, struct bfc *f, float x, float y, float w,
 		case I_FLOAT: {
 			float mn, mx;
 
+			s.snap.valid = 0;	/* placed once: no going back */
 			box_sizes(c, &mn, &mx);
 			if (!s.content || s.pen + mx <= s.lr) {
 				float old = s.lx, pen = s.pen;
@@ -810,7 +1026,14 @@ float layout_inline(struct box *b, struct bfc *f, float x, float y, float w,
 					for (k = 0; k < s.nopen; k++)
 						s.open[k].x += s.lx - old;
 				}
-			} else if (s.npending < 32) {
+			} else {
+				if (s.npending == s.cappending) {
+					s.cappending = s.cappending ?
+						s.cappending * 2 : 8;
+					s.pending = xrealloc(s.pending,
+						(size_t)s.cappending *
+						sizeof(*s.pending));
+				}
 				s.pending[s.npending++] = c;
 			}
 			break;
@@ -827,6 +1050,7 @@ float layout_inline(struct box *b, struct bfc *f, float x, float y, float w,
 	if (s.content || b->nfrags > s.start)
 		finish_line(&s, 0, 1);
 	place_pending(&s);
+	free(s.pending);
 	free(it.v);
 	return b->nlines ? s.y - y : 0;
 }
@@ -835,8 +1059,8 @@ float layout_inline(struct box *b, struct bfc *f, float x, float y, float w,
 void inline_sizes(struct box *b, float *mn, float *mx)
 {
 	struct items it = { NULL, 0, 0 };
-	float line = 0, cmin, cmax;
-	int i;
+	float line = 0, run = 0, cmin, cmax;
+	int i, can = 0;
 
 	collect(b, &it);
 	process_items(&it);
@@ -847,30 +1071,39 @@ void inline_sizes(struct box *b, float *mn, float *mx)
 		switch (it.v[i].kind) {
 		case I_TEXT: {
 			const struct style *st = c->style;
-			size_t k = 0, j;
+			int wrap = !nowrap(st);
+			size_t k = 0, j, e;
 
 			while (k < c->len) {
-				float w;
-
 				if (c->text[k] == '\n') {
 					if (line > *mx)
 						*mx = line;
-					line = 0;
+					if (run > *mn)
+						*mn = run;
+					line = run = 0;
+					can = 0;
 					k++;
 					continue;
 				}
-				for (j = k; j < c->len && c->text[j] != ' ' &&
-				     c->text[j] != '\n'; j++)
+				if (wrap) {
+					e = piece_end(c->text, k, c->len);
+				} else {
+					for (e = k; e < c->len &&
+					     c->text[e] != '\n'; e++)
+						;
+				}
+				for (j = e; j < c->len && c->text[j] == ' '; j++)
 					;
-				if (nowrap(st))
-					while (j < c->len && c->text[j] != '\n')
-						j++;
-				w = text_width(st, c->text + k, j - k);
-				if (w > *mn)
-					*mn = w;
-				while (j < c->len && c->text[j] == ' ')
-					j++;
+				/* what holds together across inline boxes is
+				 * one run: the min-content width is the widest */
+				if (can && e > k) {
+					if (run > *mn)
+						*mn = run;
+					run = 0;
+				}
+				run += text_width(st, c->text + k, e - k);
 				line += text_width(st, c->text + k, j - k);
+				can = wrap && (j > e || j < c->len);
 				k = j;
 			}
 			break;
@@ -878,11 +1111,27 @@ void inline_sizes(struct box *b, float *mn, float *mx)
 		case I_OPEN:
 		case I_CLOSE:
 			box_edges(c, 0);
-			line += it.v[i].kind == I_OPEN ?
+			cmax = it.v[i].kind == I_OPEN ?
 				c->m[3] + c->b[3] + c->p[3] :
 				c->m[1] + c->b[1] + c->p[1];
+			line += cmax;
+			run += cmax;
 			break;
-		case I_ATOMIC:
+		case I_ATOMIC: {
+			int wraps = !c->parent || !c->parent->style ||
+				!nowrap(c->parent->style);
+
+			box_sizes(c, &cmin, &cmax);
+			if (wraps || can) {
+				if (run > *mn)
+					*mn = run;
+				run = 0;
+			}
+			run += cmin;
+			line += cmax;
+			can = wraps;
+			break;
+		}
 		case I_FLOAT:
 			box_sizes(c, &cmin, &cmax);
 			if (cmin > *mn)
@@ -892,11 +1141,16 @@ void inline_sizes(struct box *b, float *mn, float *mx)
 		case I_BREAK:
 			if (line > *mx)
 				*mx = line;
-			line = 0;
+			if (run > *mn)
+				*mn = run;
+			line = run = 0;
+			can = 0;
 			break;
 		}
 	}
 	if (line > *mx)
 		*mx = line;
+	if (run > *mn)
+		*mn = run;
 	free(it.v);
 }

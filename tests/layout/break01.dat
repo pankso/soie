@@ -1,0 +1,98 @@
+#data
+<!DOCTYPE html><body style="margin:0"><div style="width:80px">aaa bbb <span style="white-space:nowrap">ccc ddd eee</span> f</div>
+#errors
+#layout
+width=200
+#document
+| block <html> 0,0 200x60
+|   block <body> 0,0 200x60
+|     block <div> 0,0 80x60
+|       line 0,0 80x20
+|         text "aaa bbb" 0,2 56x16
+|       line 0,20 80x20
+|         text "ccc ddd eee" 0,22 88x16
+|         inline <span> 0,22 88x16
+|       line 0,40 80x20
+|         text "f" 0,42 8x16
+
+#data
+<!DOCTYPE html><body style="margin:0"><div style="width:80px;white-space:nowrap"><i style="display:inline-block;width:50px;height:10px"></i><i style="display:inline-block;width:50px;height:10px"></i></div>
+#errors
+#layout
+width=200
+#document
+| block <html> 0,0 200x20
+|   block <body> 0,0 200x20
+|     block <div> 0,0 80x20
+|       line 0,0 80x20
+|         inline-block <i> 0,4 50x10
+|         inline-block <i> 50,4 50x10
+
+#data
+<!DOCTYPE html><body style="margin:0"><div style="width:80px">abc def <b>gh</b>ijk<i>lm</i>, n</div>
+#errors
+#layout
+width=200
+#document
+| block <html> 0,0 200x40
+|   block <body> 0,0 200x40
+|     block <div> 0,0 80x40
+|       line 0,0 80x20
+|         text "abc def" 0,2 56x16
+|       line 0,20 80x20
+|         text "gh" 0,22 16x16
+|         inline <b> 0,22 16x16
+|         text "ijk" 16,22 24x16
+|         text "lm" 40,22 16x16
+|         inline <i> 40,22 16x16
+|         text ", n" 56,22 24x16
+
+#data
+<!DOCTYPE html><body style="margin:0"><div style="width:48px">aaa-bbb-ccc a/b/c -5 x?y</div>
+#errors
+#layout
+width=200
+#document
+| block <html> 0,0 200x100
+|   block <body> 0,0 200x100
+|     block <div> 0,0 48x100
+|       line 0,0 48x20
+|         text "aaa-" 0,2 32x16
+|       line 0,20 48x20
+|         text "bbb-" 0,22 32x16
+|       line 0,40 48x20
+|         text "ccc a/" 0,42 48x16
+|       line 0,60 48x20
+|         text "b/c -5" 0,62 48x16
+|       line 0,80 48x20
+|         text "x?y" 0,82 24x16
+
+#data
+<!DOCTYPE html><body style="margin:0"><div style="width:20px">日本語。「あ」</div><div style="float:left">a-b <b>c</b>d</div><div style="float:left;width:min-content">ab <b>c</b>d</div>
+#errors
+#layout
+width=200
+#document
+| block <html> 0,0 200x100
+|   block <body> 0,0 200x60
+|     block <div> 0,0 20x60
+|       line 0,0 20x20
+|         text "日本" 0,2 16x16
+|       line 0,20 20x20
+|         text "語。" 0,22 16x16
+|       line 0,40 20x20
+|         text "「あ」" 0,42 24x16
+|     block float <div> 0,60 48x20
+|       line 0,60 48x20
+|         text "a-b " 0,62 32x16
+|         text "c" 32,62 8x16
+|         inline <b> 32,62 8x16
+|         text "d" 40,62 8x16
+|     block float <div> 48,60 16x40
+|       line 48,60 16x20
+|         text "ab" 48,62 16x16
+|       line 48,80 16x20
+|         text "c" 48,82 8x16
+|         inline <b> 48,82 8x16
+|         text "d" 56,82 8x16
+

@@ -470,6 +470,21 @@ static float shrink_to_fit(struct box *b, float avail)
 	return avail < mx ? avail : mx;
 }
 
+/* A width given as min-content, max-content or fit-content (in avail),
+ * or -1 */
+static float keyword_width(struct box *b, float avail)
+{
+	const struct style *st = b->style;
+	float mn, mx;
+
+	if (!is_auto(st, P_WIDTH) || kw(st, P_WIDTH, "auto"))
+		return -1;
+	if (kw(st, P_WIDTH, "fit-content"))
+		return shrink_to_fit(b, avail);
+	content_sizes(b, &mn, &mx);
+	return kw(st, P_WIDTH, "min-content") ? mn : mx;
+}
+
 /* Margin collapsing */
 
 struct strut {
@@ -1115,6 +1130,9 @@ void place_float(struct box *b, struct bfc *f, float y, float x0, float x1,
 		if (w < 0)
 			w = ratio_width(b, -1);
 		if (w < 0)
+			w = keyword_width(b, cbw - b->m[1] - b->m[3] -
+				hedges(b));
+		if (w < 0)
 			w = shrink_to_fit(b, cbw - b->m[1] - b->m[3] -
 				hedges(b));
 		w = clamp_w(b, w, cbw);
@@ -1390,6 +1408,8 @@ void layout_atomic(struct box *b, float cbw, float cbh)
 	w = spec_width(b, P_WIDTH, cbw);
 	if (w < 0)
 		w = ratio_width(b, cbh);
+	if (w < 0)
+		w = keyword_width(b, cbw - b->m[1] - b->m[3] - hedges(b));
 	if (w < 0)
 		w = shrink_to_fit(b, cbw - b->m[1] - b->m[3] - hedges(b));
 	w = clamp_w(b, w, cbw);

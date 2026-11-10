@@ -593,13 +593,16 @@ float layout_flex(struct box *f, float cbh)
 			}
 		}
 		for (k = a; k < z; k++) {
-			int idx = rev ? z - 1 - (k - a) : k;
-			struct item *it = &v[idx];
+			struct item *it = &v[k];
 			struct box *b = it->b;
 			const char *as = b->style->v[P_ALIGN_SELF].u.str;
 			int al = align_of(as && strcmp(as, "auto") ? as :
 				st->v[P_ALIGN_ITEMS].u.str, "stretch");
 			float cpos = 0, cross = it->cross, mx, my, dx, dy;
+			/* row-reverse, column-reverse: the main start and end
+			 * swap, the items are placed from the other edge */
+			float mpos = rev ? lineavail - pos - it->main -
+				it->mbefore - it->mafter : pos;
 
 			if (it->bl && !it->auto_cs && !it->auto_ce) {
 				const float *la = lasc + 4 * i;
@@ -647,12 +650,12 @@ float layout_flex(struct box *f, float cbh)
 					it->cafter - cpos;
 			if (row) {
 				b->h = cross;
-				mx = f->x + pos + it->mbefore;
+				mx = f->x + mpos + it->mbefore;
 				my = f->y + ly + cpos + it->cbefore;
 			} else {
 				b->w = cross;
 				mx = f->x + ly + cpos + it->cbefore;
-				my = f->y + pos + it->mbefore;
+				my = f->y + mpos + it->mbefore;
 				b->h = it->main;
 			}
 			dx = mx - b->x;

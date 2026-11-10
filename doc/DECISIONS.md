@@ -419,6 +419,34 @@ reversed, edit the entry and say why; do not leave stale rules here.
   positioned inline box is a containing block: the padding box around
   its pieces on the lines (inline_rect()), so a badge or a tooltip in
   a `position: relative` span sits on the span, not on the page.
+- Line breaking (inline.c) knows more than spaces: a line may break
+  after a hyphen in a word, after a slash that is not a fraction's,
+  after ? ! | and dashes, at a zero width space, and between
+  ideographs, kana and hangul except before closing punctuation and
+  after opening brackets (break_between(), measured against Firefox;
+  not the whole of UAX 14). Chinese and Japanese pages were one long
+  line, a long URL never wrapped. Soft hyphens are dropped: without
+  hyphenation they never show, and fonts drew them.
+- A break needs an opportunity: the text of two inline boxes that
+  touch is one word (`<b>W</b>ord`, a comma after a link), and
+  `white-space: nowrap` only stops the breaks inside its own text. The
+  line remembers the last place where it may break (snapshot()); when
+  what follows cannot break and does not fit, it goes back there
+  (rewind_line()) and the layout resumes from that item. Before, a
+  wrapping text could break before any of its words, even glued to
+  the previous box, a nowrap run could not move to the next line and
+  an inline-block wrapped inside a nowrap parent (the tabs of a
+  horizontal scroller one under the other). The min-content width
+  counts such runs whole as well. Not across floats: they are placed
+  once.
+- A preserved tab is spaces up to the next stop of 8 columns (it was
+  drawn as a missing glyph). Floats waiting for the next line are no
+  longer 32 at most (the 33rd was never laid out).
+- min-content, max-content and fit-content are widths of floats and
+  inline-blocks too (keyword_width()), not only of blocks.
+- Flex items of row-reverse and column-reverse are placed from the
+  other edge of the line: only their order was reversed, the row
+  stayed at the left.
 - Bounds found by a review: grid lines are clamped to 10000 as in
   Firefox (the occupancy grid is rows x columns; line 50000 on both
   axes overflowed its index); display: contents counts as a level of

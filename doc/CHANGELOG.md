@@ -23,6 +23,8 @@ each change are in [DECISIONS.md](DECISIONS.md).
   positions with units and `calc()`.
 - A positioned inline box is the containing block of its absolute
   descendants.
+- Lines break after hyphens and slashes, and between Chinese,
+  Japanese and Korean characters.
 
 ### Changed
 - Lines are as high as in Firefox and Chrome: font ascent and descent
@@ -33,6 +35,13 @@ each change are in [DECISIONS.md](DECISIONS.md).
   not from the border box.
 
 ### Fixed
+- `white-space: nowrap`: a nowrap run moves to the next line whole,
+  inline-blocks no longer wrap inside it.
+- A word made of several inline boxes (`<b>W</b>ord`, a comma after a
+  link) is no longer cut between them.
+- `flex-direction: row-reverse` and `column-reverse` start from the
+  other edge.
+- Tabs in preformatted text.
 - Absolute boxes centred with `margin: auto` between their offsets
   (modals, spinners) stayed in the corner.
 - `:is()` and `:where()` with arguments of different kinds (a class
