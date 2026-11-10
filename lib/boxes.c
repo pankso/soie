@@ -148,7 +148,7 @@ static void intrinsic(struct box *b, const soie_node *n)
 	const struct image *im;
 
 	if (n->ns == SOIE_NS_SVG) {
-		svg_size(n, &b->iw, &b->ih);
+		svg_size(n, em / z, &b->iw, &b->ih);
 		if (!b->iw && !b->ih) {
 			b->iw = 300;
 			b->ih = 150;

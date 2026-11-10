@@ -341,6 +341,31 @@ static float fnum(const char *s)
 	return isnan(v) ? 0 : v;
 }
 
+/* A length attribute with its unit in px (user units); em, ex and ch
+ * from the font size em */
+static float ulen(const char *s, float em)
+{
+	float v = s ? num(&s) : NAN;
+	static const struct {
+		const char *u;
+		float px;
+	} units[] = { { "px", 1 }, { "pt", 96 / 72.f }, { "pc", 16 },
+		{ "in", 96 }, { "cm", 96 / 2.54f }, { "mm", 96 / 25.4f },
+		{ "q", 96 / 101.6f } };
+	unsigned i;
+
+	if (isnan(v))
+		return 0;
+	if (!strncmp(s, "em", 2) || !strncmp(s, "rem", 3))
+		return v * em;
+	if (!strncmp(s, "ex", 2) || !strncmp(s, "ch", 2))
+		return v * em / 2;
+	for (i = 0; i < sizeof(units) / sizeof(*units); i++)
+		if (!strncmp(s, units[i].u, strlen(units[i].u)))
+			return v * units[i].px;
+	return v;
+}
+
 static void parse_transform(const char *s, struct mat *m)
 {
 	while (s && *s) {
@@ -705,7 +730,8 @@ struct paintstate {
 				 * 's'quare */
 	float miter;		/* stroke-miterlimit */
 	float vw, vh;		/* the viewport, for percentages */
-	const unsigned char *current;	/* currentColor */
+	unsigned char current[4];	/* currentColor */
+	unsigned char fa, sa;	/* the paints' own alpha, styled elements */
 	const soie_node *fill_g, *stroke_g;	/* gradients, else NULL */
 	/* text */
 	const struct style *base;	/* what the font props change */
@@ -831,11 +857,115 @@ static int svg_paint(const soie_node *n, const char *v,
 	return svg_color(v, current, out);
 }
 
+/* The value of prop is n's own: not what its parent has. An element
+ * drawn through <use> takes what it does not set from the <use>, not
+ * from where it is written: the paint state carries those. */
+static int own(const soie_node *n, int prop)
+{
+	const struct style *p = n->parent && n->parent->type == SOIE_ELEMENT ?
+		n->parent->u.el.style : NULL;
+	const struct cval *a = &n->u.el.style->v[prop], *b;
+
+	if (!p)
+		return 1;
+	b = &p->v[prop];
+	if (a->kw != b->kw)
+		return 1;
+	if (a->kw)
+		return 0;
+	switch (props[prop].kind) {
+	case K_RAW:
+	case K_FAMILY:
+		return a->u.str != b->u.str && (!a->u.str || !b->u.str ||
+			strcmp(a->u.str, b->u.str));
+	case K_COLOR:
+		return a->u.color != b->u.color && memcmp(a->u.color,
+			b->u.color, sizeof(*a->u.color));
+	case K_FSIZE:
+		return a->u.len.px != b->u.len.px;
+	default:
+		return a->u.num != b->u.num;
+	}
+}
+
+static int is_current(const char *v)
+{
+	return v && ascii_ieq(v, "currentcolor");
+}
+
+/* The paint state of an element styled by the cascade (an SVG in a
+ * page): its computed values; all of them for the outer <svg>. */
+static void styled_paint(const soie_node *n, struct paintstate *ps, int all)
+{
+	const struct style *st = n->u.el.style;
+	const char *v;
+	int color = all || own(n, P_COLOR), fo, so;
+
+	if (color)
+		color_to_rgba(st->v[P_COLOR].u.color, ps->current);
+	v = st->v[P_FILL].u.str;
+	fo = all || own(n, P_FILL_OPACITY);
+	if (all || own(n, P_FILL) || (color && is_current(v))) {
+		ps->has_fill = svg_paint(n, v, ps->current, ps->fill,
+			&ps->fill_g);
+		ps->fa = ps->fill[3];
+		fo = 1;
+	}
+	if (fo)
+		ps->fill[3] = (unsigned char)(ps->fa *
+			st->v[P_FILL_OPACITY].u.num + 0.5);
+	v = st->v[P_STROKE].u.str;
+	so = all || own(n, P_STROKE_OPACITY);
+	if (all || own(n, P_STROKE) || (color && is_current(v))) {
+		ps->has_stroke = svg_paint(n, v, ps->current, ps->stroke,
+			&ps->stroke_g);
+		ps->sa = ps->stroke[3];
+		so = 1;
+	}
+	if (so)
+		ps->stroke[3] = (unsigned char)(ps->sa *
+			st->v[P_STROKE_OPACITY].u.num + 0.5);
+	if ((all || own(n, P_STROKE_WIDTH)) &&
+	    (v = st->v[P_STROKE_WIDTH].u.str)) {
+		float w = fnum(v);
+
+		ps->sw = strstr(v, "em") ? w * st->v[P_FONT_SIZE].u.len.px /
+			doc_zoom() : strchr(v, '%') ? w * (ps->vw + ps->vh) /
+			200 : w;
+	}
+	if (all || own(n, P_STROKE_LINEJOIN))
+		ps->join = kw(st, P_STROKE_LINEJOIN, "round") ? 'r' :
+			kw(st, P_STROKE_LINEJOIN, "bevel") ? 'b' : 'm';
+	if (all || own(n, P_STROKE_LINECAP))
+		ps->cap = kw(st, P_STROKE_LINECAP, "round") ? 'r' :
+			kw(st, P_STROKE_LINECAP, "square") ? 's' : 'b';
+	if ((all || own(n, P_STROKE_MITERLIMIT)) &&
+	    st->v[P_STROKE_MITERLIMIT].u.num >= 1)
+		ps->miter = (float)st->v[P_STROKE_MITERLIMIT].u.num;
+	if (all || own(n, P_FILL_RULE))
+		ps->evenodd = kw(st, P_FILL_RULE, "evenodd");
+	if (!all)	/* the outer one's is the canvas' alpha already */
+		ps->opacity *= (float)st->v[P_OPACITY].u.num;
+	if (!all && own(n, P_FONT_SIZE))
+		ps->fsize = st->v[P_FONT_SIZE].u.len.px / doc_zoom();
+	if (!all && own(n, P_FONT_FAMILY))
+		ps->family = st->v[P_FONT_FAMILY].u.str;
+	if (!all && own(n, P_FONT_WEIGHT))
+		ps->weight = (int)st->v[P_FONT_WEIGHT].u.num;
+	if (all || own(n, P_TEXT_ANCHOR))
+		ps->anchor = kw(st, P_TEXT_ANCHOR, "middle") ? 'm' :
+			kw(st, P_TEXT_ANCHOR, "end") ? 'e' : 's';
+}
+
 static void inherit_paint(const soie_node *n, struct paintstate *ps)
 {
 	char buf[128];
 	const char *v;
 
+	if (n->u.el.style) {
+		styled_paint(n, ps, 0);
+		return;
+	}
 	if ((v = prop(n, "fill", buf, sizeof(buf))))
 		ps->has_fill = svg_paint(n, v, ps->current, ps->fill,
 			&ps->fill_g);
@@ -1712,8 +1842,13 @@ static void element(struct canvas *c, const soie_node *k, struct mat m,
 	    !strcmp(k->name, "radialGradient") ||
 	    !strcmp(k->name, "style"))
 		return;
-	if ((a = prop(k, "display", buf, sizeof(buf))) && !strcmp(a, "none"))
+	if (k->u.el.style) {
+		if (kw(k->u.el.style, P_DISPLAY, "none"))
+			return;
+	} else if ((a = prop(k, "display", buf, sizeof(buf))) &&
+	    !strcmp(a, "none")) {
 		return;
+	}
 	if ((a = soie_element_get_attr(k, "transform")))
 		parse_transform(a, &m);
 	inherit_paint(k, &ps);
@@ -1756,6 +1891,9 @@ static void element(struct canvas *c, const soie_node *k, struct mat m,
 			mul(&um, &tr);
 			element(c, t, um, ps, depth + 1);
 		}
+	} else if (k->u.el.style &&
+	    !kw(k->u.el.style, P_VISIBILITY, "visible")) {
+		/* hidden: neither its shape nor its text */
 	} else if (!strcmp(k->name, "text")) {
 		text_el(c, k, &m, ps);
 	} else {
@@ -1797,7 +1935,7 @@ void svg_render(struct canvas *c, const soie_node *el, float x, float y,
 	ps.cap = 'b';
 	ps.miter = 4;
 	ps.opacity = c->alpha;
-	ps.current = current;
+	memcpy(ps.current, current, 4);
 	ps.base = st;
 	ps.anchor = 's';
 	if (st) {
@@ -1827,7 +1965,10 @@ void svg_render(struct canvas *c, const soie_node *el, float x, float y,
 			viewport(&m, el, x, y, w, h, &ps);
 		}
 	}
-	inherit_paint(el, &ps);
+	if (el->u.el.style)
+		styled_paint(el, &ps, 1);
+	else
+		inherit_paint(el, &ps);
 	{
 		float a = c->alpha;
 
@@ -1838,23 +1979,28 @@ void svg_render(struct canvas *c, const soie_node *el, float x, float y,
 }
 
 /* Intrinsic size of an <svg>: width/height, else the viewBox. */
-void svg_size(const soie_node *el, float *w, float *h)
+void svg_size(const soie_node *el, float em, float *w, float *h)
 {
 	const char *vb = soie_element_get_attr(el, "viewBox");
+	const char *aw = soie_element_get_attr(el, "width");
+	const char *ah = soie_element_get_attr(el, "height");
 	const char *s = vb;
 	float v[4] = { 0, 0, 0, 0 };
 	int i;
 
 	for (i = 0; s && i < 4; i++)
 		v[i] = num(&s);
-	*w = attrf(el, "width", isnan(v[2]) ? 0 : v[2]);
-	*h = attrf(el, "height", isnan(v[3]) ? 0 : v[3]);
-	if (soie_element_get_attr(el, "width") &&
-	    strchr(soie_element_get_attr(el, "width"), '%'))
-		*w = v[2];
-	if (soie_element_get_attr(el, "height") &&
-	    strchr(soie_element_get_attr(el, "height"), '%'))
-		*h = v[3];
+	if (isnan(v[2]) || isnan(v[3]))
+		v[2] = v[3] = 0;
+	/* units count (width="1em", "5in"); a percentage is no size */
+	*w = aw && !strchr(aw, '%') && !isnan(fnum(aw)) && *aw ?
+		ulen(aw, em) : v[2];
+	*h = ah && !strchr(ah, '%') && !isnan(fnum(ah)) && *ah ?
+		ulen(ah, em) : v[3];
+	if (*w < 0)
+		*w = 0;
+	if (*h < 0)
+		*h = 0;
 }
 
 /* CSS clip-path on an HTML box */

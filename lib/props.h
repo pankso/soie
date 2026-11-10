@@ -60,6 +60,19 @@ PROP(POINTER_EVENTS, "pointer-events", 1, K_KW, 0,
 	"fill|stroke|all|bounding-box", "auto")
 PROP(TEXT_UNDERLINE_OFFSET, "text-underline-offset", 1, K_LEN, 0, "auto",
 	"auto")
+/* SVG painting (svg.c): presentation attributes are hints of these */
+PROP(FILL, "fill", 1, K_RAW, 0, "", "black")
+PROP(STROKE, "stroke", 1, K_RAW, 0, "", "none")
+PROP(STROKE_WIDTH, "stroke-width", 1, K_RAW, 0, "", "1")
+PROP(STROKE_LINEJOIN, "stroke-linejoin", 1, K_KW, 0,
+	"miter|round|bevel|arcs|miter-clip", "miter")
+PROP(STROKE_LINECAP, "stroke-linecap", 1, K_KW, 0, "butt|round|square",
+	"butt")
+PROP(STROKE_MITERLIMIT, "stroke-miterlimit", 1, K_NUM, L_NONNEG, "", "4")
+PROP(FILL_RULE, "fill-rule", 1, K_KW, 0, "nonzero|evenodd", "nonzero")
+PROP(FILL_OPACITY, "fill-opacity", 1, K_ALPHA, 0, "", "1")
+PROP(STROKE_OPACITY, "stroke-opacity", 1, K_ALPHA, 0, "", "1")
+PROP(TEXT_ANCHOR, "text-anchor", 1, K_KW, 0, "start|middle|end", "start")
 
 PROP(DISPLAY, "display", 0, K_DISPLAY, 0,
 	"inline|block|inline-block|flex|inline-flex|grid|inline-grid|"

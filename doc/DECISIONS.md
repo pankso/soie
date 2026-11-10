@@ -630,6 +630,26 @@ reversed, edit the entry and say why; do not leave stale rules here.
   large images, once for their size and again on screen; reading
   sizes from headers would save the first one.
 
+- An SVG in a page is painted from the cascade: fill, stroke,
+  stroke-width, -linejoin, -linecap, -miterlimit, fill-rule,
+  fill-opacity, stroke-opacity and text-anchor are inherited
+  properties (props.h), the presentation attributes are hints
+  (svg_hints() in cascade.c, a bare font-size being px), and svg.c
+  reads the computed style of each element (styled_paint()) instead
+  of its attributes and its style="" text. Icons that take their
+  paint from a class, from currentColor through a rule or from a
+  var() were black or missing; display: none and visibility by a
+  rule work the same way. A `<style>` inside an SVG is a sheet of the
+  page, as in browsers. An element drawn through `<use>` inherits
+  from the `<use>`, not from where it is written: the paint state
+  carries the inherited values down and an element only takes from
+  its computed style what differs from its parent's there (own()).
+  A value set to what the parent already has is then seen as
+  inherited: the same result except through a `<use>` that says
+  otherwise, rare enough. SVG images (their own document, no
+  cascade) keep the attribute path. Sizes take their units
+  (width="1.5em", "5in": ulen()).
+
 ## The browser (phase 7)
 
 - `browser/soie` (now xsoie, below) uses Xlib directly: no toolkit, a window, an XImage

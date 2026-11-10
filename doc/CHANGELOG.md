@@ -10,6 +10,10 @@ each change are in [DECISIONS.md](DECISIONS.md).
 ### Added
 - `aspect-ratio` on every box: cards, video embeds and thumbnails
   sized by a ratio were 0 px high.
+- SVG in a page styled by CSS: `fill`, `stroke` and the other paint
+  properties from rules, classes, `currentColor` and `var()`, a
+  `<style>` inside the SVG, sizes with units. Icon systems that paint
+  through a class were black or missing.
 
 ## [0.1.3] - 2026-11-04
 

@@ -379,7 +379,7 @@ static int decode_svg(const unsigned char *d, size_t len, struct image *im)
 	{
 		float w, h;
 
-		svg_size(n, &w, &h);
+		svg_size(n, 16, &w, &h);
 		im->w = (int)(w + 0.5f);
 		im->h = (int)(h + 0.5f);
 	}

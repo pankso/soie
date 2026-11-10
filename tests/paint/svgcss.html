@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<!-- SVG painted through the cascade: fill and stroke from classes,
+     currentColor, a <style> inside the SVG, display: none, sprites
+     whose symbols take the paint of the <use>, sizes with units -->
+<style>body{margin:8px;font:16px DejaVu Sans}
+.i{fill:red}.s{stroke:green;stroke-width:3;fill:none}svg{color:purple}.cc{fill:currentColor}.h{display:none}
+.o path{fill:orange}.op{opacity:.4;fill:#000}
+.icon{width:40px;height:40px;fill:currentColor}.red{color:red}.st{fill:none;stroke:blue;stroke-width:2}
+.o-fill use{fill:green}
+</style>
+<svg width=60 height=60><rect class=i width=50 height=50 /></svg>
+<svg width=60 height=60><circle class=s cx=30 cy=30 r=20 /></svg>
+<svg width=60 height=60><rect class=cc width=50 height=50 /></svg>
+<svg width=60 height=60 fill=red><rect width=50 height=50 /><rect class=h width=60 height=10 fill=black /></svg>
+<svg class=o width=60 height=60 viewBox="0 0 24 24"><path d="M2 2h20v20h-20z"/></svg>
+<svg width=60 height=60><rect class=op width=50 height=50 /></svg>
+<svg width=60 height=60 style="fill:teal"><rect width=50 height=50 /></svg>
+<svg width=60 height=60><style>.q{fill:#f0f}</style><rect class=q width=50 height=50 /></svg>
+<svg width=60 height=60><rect style="fill:var(--c,lime);stroke:#000;stroke-width:4" width=50 height=50 /></svg>
+<svg width=1.5em height=1.5em viewBox="0 0 10 10" stroke=currentColor fill=none stroke-linecap=round><path d="M2 5h6M5 2v6"/></svg>
+<br>
+<svg style="display:none"><symbol id=a viewBox="0 0 10 10"><path d="M1 1h8v8h-8z"/></symbol>
+<symbol id=b viewBox="0 0 10 10"><circle cx=5 cy=5 r=4 /><rect x=4 y=4 width=2 height=2 fill="white"/></symbol>
+<defs><g id=c><rect width=20 height=20 /><rect x=20 y=20 width=20 height=20 fill=orange /></g></defs></svg>
+<svg class=icon><use href="#a"/></svg>
+<svg class="icon red"><use href="#a"/></svg>
+<svg class="icon st"><use href="#b"/></svg>
+<svg class="icon" style="color:teal"><use xlink:href="#b"/></svg>
+<svg width=40 height=40 fill=purple><use href="#c"/></svg>
+<svg class=o-fill width=40 height=40><use href="#c"/></svg>
+<span style="color:#c0c"><svg class=icon viewBox="0 0 24 24"><path d="M12 2 2 22h20z"/></svg></span>
+<svg width=40 height=40 viewBox="0 0 24 24" fill=none stroke=currentColor stroke-width=2 stroke-linecap=round stroke-linejoin=round style="color:#080"><circle cx=11 cy=11 r=8 /><path d="m21 21-4.3-4.3"/></svg>
+<svg width=40 height=40 style="visibility:hidden"><rect width=40 height=40 /></svg>
+<svg width=40 height=40><rect width=40 height=40 visibility=hidden /><rect width=20 height=20 fill-opacity=.3 /></svg>

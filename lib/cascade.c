@@ -1144,6 +1144,12 @@ static int media_attr(struct styledb *db, const soie_node *el)
 	return r;
 }
 
+static int svg_style(const soie_node *n)
+{
+	return n->type == SOIE_ELEMENT && n->ns == SOIE_NS_SVG &&
+		!strcmp(n->name, "style");
+}
+
 static void collect_sheets(struct styledb *db, soie_node *doc,
 	const char *base)
 {
@@ -1155,8 +1161,11 @@ static void collect_sheets(struct styledb *db, soie_node *doc,
 	pc.layer = &db->roots[O_AUTHOR];
 	pc.base = base;
 	while (n) {
-		if (n->type == SOIE_ELEMENT && n->ns == SOIE_NS_HTML) {
-			if (n->tag == TAG_STYLE && media_attr(db, n)) {
+		/* an SVG's <style> is a sheet of the page as well */
+		if (n->type == SOIE_ELEMENT && (n->ns == SOIE_NS_HTML ||
+		    svg_style(n))) {
+			if ((n->tag == TAG_STYLE || n->ns == SOIE_NS_SVG) &&
+			    media_attr(db, n)) {
 				const char *t = soie_element_get_attr(n, "type");
 				struct buf b = { 0 };
 
@@ -1268,11 +1277,44 @@ static const soie_node *ancestor_table(const soie_node *el)
 	return NULL;
 }
 
+/* SVG presentation attributes (SVG 2, 6.6): hints as well. A bare
+ * number is a length in user units, px here. */
+static void svg_hints(const soie_node *el, struct svec *out)
+{
+	static const char *const names[] = { "fill", "stroke",
+		"stroke-width", "stroke-linejoin", "stroke-linecap",
+		"stroke-miterlimit", "fill-rule", "fill-opacity",
+		"stroke-opacity", "opacity", "display", "visibility", "color",
+		"font-family", "font-weight", "font-style", "text-anchor",
+		NULL };
+	const char *a;
+	char d[48];
+	int i;
+
+	for (i = 0; names[i]; i++)
+		if ((a = soie_element_get_attr(el, names[i])) && *a)
+			hint(out, names[i], a);
+	if ((a = soie_element_get_attr(el, "font-size")) && *a) {
+		const char *e = a + strlen(a) - 1;
+
+		if (((*e >= '0' && *e <= '9') || *e == '.') &&
+		    dimension(a, d, sizeof(d), 0))
+			hint(out, "font-size", d);
+		else
+			hint(out, "font-size", a);
+	}
+}
+
 static void hints(const soie_node *el, struct svec *out)
 {
 	const char *a;
 	char d[48];
 	int tag = el->ns == SOIE_NS_HTML ? el->tag : -1;
+
+	if (el->ns == SOIE_NS_SVG) {
+		svg_hints(el, out);
+		return;
+	}
 
 	if (tag < 0)
 		return;
@@ -2713,14 +2755,14 @@ static unsigned sheet_signature(soie_node *doc, const soie_style_options *o)
 	}
 	h = hash_bytes(&doc->u.doc->quirks, 1, h);
 	while (n) {
-		if (n->type == SOIE_ELEMENT && n->ns == SOIE_NS_HTML &&
+		if (n->type == SOIE_ELEMENT && ((n->ns == SOIE_NS_HTML &&
 		    (n->tag == TAG_STYLE || n->tag == TAG_LINK ||
-		     n->tag == TAG_BASE)) {
+		     n->tag == TAG_BASE)) || svg_style(n))) {
 			h = hash_bytes(&n, sizeof(n), h);
 			for (i = 0; attrs[i]; i++)
 				h = hash_str(soie_element_get_attr(n,
 					attrs[i]), h);
-			if (n->tag == TAG_STYLE) {
+			if (n->tag == TAG_STYLE || n->ns == SOIE_NS_SVG) {
 				b.len = 0;
 				text_content(n, &b);
 				h = hash_bytes(b.s ? b.s : "", b.len, h);

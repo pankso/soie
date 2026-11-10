@@ -7,9 +7,6 @@ by RMSE (the 38 sites survey of 2026-11-03).
 
 ## Rendering, in the plan
 
-- SVG styled by the page's CSS cascade: icons that take `fill`,
-  `stroke` or `currentcolor` from a class are drawn black or not at
-  all.
 - Form controls: the width of a `<select>` from its options, the
   default sizes of controls (rust-lang.org's language menu: its caret
   covers the text).
