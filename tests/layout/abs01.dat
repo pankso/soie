@@ -1,0 +1,39 @@
+#data
+<!DOCTYPE html><body style="margin:0"><div style="position:relative;height:100px"><div style="position:absolute;left:0;right:0;top:0;bottom:0;margin:auto;width:50px;height:20px"></div><div style="position:absolute;left:0;right:0;margin:0 auto;max-width:100px">a</div><div style="position:absolute;left:10px;right:10px;margin-left:auto;width:30px">b</div><div style="position:absolute;top:0;bottom:0;left:0;right:0;margin:auto;width:fit-content;height:fit-content">c</div></div>
+#errors
+#layout
+width=200
+#document
+| block <html> 0,0 200x100
+|   block <body> 0,0 200x100
+|     block <div> 0,0 200x100
+|       block abs <div> 75,40 50x20
+|       block abs <div> 50,0 100x20
+|         line 50,0 100x20
+|           text "a" 50,2 8x16
+|       block abs <div> 160,0 30x20
+|         line 160,0 30x20
+|           text "b" 160,2 8x16
+|       block abs <div> 96,40 8x20
+|         line 96,40 8x20
+|           text "c" 96,42 8x16
+
+#data
+<!DOCTYPE html><body style="margin:0">ab <span style="position:relative">cd<i style="position:absolute;left:0;top:100%;width:100%">e</i><i style="position:absolute;right:0;top:0">f</i></span>
+#errors
+#layout
+width=200
+#document
+| block <html> 0,0 200x20
+|   block <body> 0,0 200x20
+|     line 0,0 200x20
+|       text "ab " 0,2 24x16
+|       text "cd" 24,2 16x16
+|       inline <span> 24,2 16x16
+|     block abs <i> 24,18 16x20
+|       line 24,18 16x20
+|         text "e" 24,20 8x16
+|     block abs <i> 32,2 8x20
+|       line 32,2 8x20
+|         text "f" 32,4 8x16
+

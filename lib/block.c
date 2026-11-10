@@ -1407,6 +1407,46 @@ static float static_offset(int align, float room, float size, int rect)
 		0;
 }
 
+/* The padding box around the line pieces of inline box b */
+static int inline_rect(const struct box *b, float *x, float *y, float *w,
+	float *h)
+{
+	const struct box *blk;
+	float x0 = 1e30f, y0 = 1e30f, x1 = -1e30f, y1 = -1e30f;
+	int i;
+
+	for (blk = b->parent; blk && !blk->nfrags; blk = blk->parent)
+		if (blk->type != B_INLINE)
+			return 0;
+	if (!blk)
+		return 0;
+	for (i = 0; i < blk->nfrags; i++) {
+		const struct frag *f = &blk->frags[i];
+
+		if (f->box != b || f->kind != F_INLINE)
+			continue;
+		if (f->x < x0)
+			x0 = f->x;
+		if (f->y < y0)
+			y0 = f->y;
+		if (f->x + f->w > x1)
+			x1 = f->x + f->w;
+		if (f->y + f->h > y1)
+			y1 = f->y + f->h;
+	}
+	if (x1 < x0)
+		return 0;
+	*x = x0 + b->b[3];
+	*y = y0 + b->b[0];
+	*w = x1 - x0 - b->b[1] - b->b[3];
+	*h = y1 - y0 - b->b[0] - b->b[2];
+	if (*w < 0)
+		*w = 0;
+	if (*h < 0)
+		*h = 0;
+	return 1;
+}
+
 /* Absolute positioning (CSS 2 10.3.7, 10.6.4, simplified). */
 static void layout_abs(struct box *b)
 {
@@ -1416,15 +1456,26 @@ static void layout_abs(struct box *b)
 	float sx = b->sx, sy = b->sy, w, x, y, l, r, t, bt, e, h;
 	int fixed = kw(st, P_POSITION, "fixed");
 
-	for (cb = b->parent; cb && !fixed; cb = cb->parent)
-		if (cb->type != B_INLINE && cb->style &&
-		    !kw(cb->style, P_POSITION, "static")) {
-			cx = cb->x - cb->p[3];
-			cy = cb->y - cb->p[0];
-			cw = cb->w + cb->p[1] + cb->p[3];
-			ch = cb->h + cb->p[0] + cb->p[2];
-			break;
+	for (cb = b->parent; cb && !fixed; cb = cb->parent) {
+		if (!cb->style || kw(cb->style, P_POSITION, "static") ||
+		    (cb->flags & BF_ANON))
+			continue;
+		if (cb->type == B_INLINE) {
+			/* a positioned inline box: around its pieces (CSS 2
+			 * 10.1), when it has some on a line */
+			if (inline_rect(cb, &cx, &cy, &cw, &ch))
+				break;
+			cx = cy = 0;
+			cw = g.l->width;
+			ch = g.l->height;
+			continue;
 		}
+		cx = cb->x - cb->p[3];
+		cy = cb->y - cb->p[0];
+		cw = cb->w + cb->p[1] + cb->p[3];
+		ch = cb->h + cb->p[0] + cb->p[2];
+		break;
+	}
 	if (b->area && cb && cb == b->parent) {
 		/* its grid area, and its static position in it */
 		cx = sx = b->ax;
@@ -1458,12 +1509,34 @@ static void layout_abs(struct box *b)
 		}
 		if (w >= 0)
 			;
-		else if (l > -1e29f && r > -1e29f)
+		else if (l > -1e29f && r > -1e29f && kw(st, P_WIDTH, "auto"))
 			w = cw - l - r - e - b->m[1] - b->m[3];
-		else if (w < 0)
+		else if (kw(st, P_WIDTH, "min-content") ||
+			 kw(st, P_WIDTH, "max-content")) {
+			float mn, mx;
+
+			content_sizes(b, &mn, &mx);
+			w = kw(st, P_WIDTH, "min-content") ? mn : mx;
+		} else if (w < 0)
 			w = shrink_to_fit(b, cw - (l > -1e29f ? l : 0) -
 				(r > -1e29f ? r : 0) - e - b->m[1] - b->m[3]);
 		w = clamp_w(b, w < 0 ? 0 : w, cw);
+	}
+	if (l > -1e29f && r > -1e29f) {
+		/* left, right and the width set: the automatic margins take
+		 * what is left (CSS 2 10.3.7), both the same: centred */
+		int ml = is_auto(st, P_MARGIN_LEFT);
+		int mr = is_auto(st, P_MARGIN_RIGHT);
+		float rest = cw - l - r - w - e - b->m[1] - b->m[3];
+
+		if (ml && mr && rest > 0)
+			b->m[3] = b->m[1] = rest / 2;
+		else if (ml && mr)
+			b->m[1] = rest;
+		else if (ml)
+			b->m[3] = rest;
+		else if (mr)
+			b->m[1] = rest;
 	}
 	if (l > -1e29f)
 		x = cx + l + b->m[3];
@@ -1481,13 +1554,27 @@ static void layout_abs(struct box *b)
 	} else {
 		float hspec = spec_height(b, P_HEIGHT, ch);
 
-		if (hspec < 0 && t > -1e29f && bt > -1e29f)
+		if (hspec < 0 && t > -1e29f && bt > -1e29f &&
+		    kw(st, P_HEIGHT, "auto"))
 			hspec = ch - t - bt - vedges(b) - b->m[0] - b->m[2];
 		layout_alone(b, x, y, w, ch, hspec >= 0 ? hspec : -1);
 		if (hspec >= 0)
 			b->h = clamp_h(b, hspec, ch);
 	}
 	h = b->h + vedges(b);
+	if (t > -1e29f && bt > -1e29f) {
+		/* the same for top, bottom and the height (10.6.4) */
+		int mt = is_auto(st, P_MARGIN_TOP);
+		int mb = is_auto(st, P_MARGIN_BOTTOM);
+		float rest = ch - t - bt - h - b->m[0] - b->m[2];
+
+		if (mt && mb)
+			rest /= 2;
+		if (mt && rest) {
+			b->m[0] += rest;
+			translate(b, 0, rest);
+		}
+	}
 	if (t <= -1e29f && bt > -1e29f)
 		translate(b, 0, cy + ch - bt - b->m[2] - h + b->b[0] + b->p[0] -
 			b->y);
