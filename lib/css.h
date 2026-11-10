@@ -251,6 +251,7 @@ struct slen *parse_length(struct cur *c, int flags);
 void slen_free(struct slen *l);
 int slen_resolve(const struct slen *l, const struct ucontext *u,
 	struct len *out);
+void doc_units(const struct style *st, struct ucontext *u);
 float calc_eval(const struct calc *k, float pct_ref);
 void calc_release(struct calc *k);
 int slen_number(const struct slen *l, double *out);

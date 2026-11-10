@@ -55,13 +55,7 @@ static struct ucontext unit_ctx(const struct style *st)
 {
 	struct ucontext u;
 
-	memset(&u, 0, sizeof(u));
-	u.em = st->v[P_FONT_SIZE].u.len.px;
-	u.ex = u.ch = u.em / 2;
-	u.zoom = doc_zoom();
-	u.rem = 16 * u.zoom;
-	u.vw = 1024;
-	u.vh = 768;
+	doc_units(st, &u);
 	return u;
 }
 
@@ -377,6 +371,10 @@ static int named_line(const struct tracks *t, const struct area *areas,
 }
 
 /* grid-row-start and friends: line (0-based) or -1 auto; *span. */
+/* Lines beyond are clamped, as browsers do (Firefox: 10000): the
+ * occupancy grid is rows x columns */
+#define GRID_LINES 10000
+
 static int line_of(const char *s, const struct tracks *t,
 	const struct area *areas, int nareas, int end, int row, int *span)
 {
@@ -395,7 +393,8 @@ static int line_of(const char *s, const struct tracks *t,
 		if (cv_ident(v, "span"))
 			is_span = 1;
 		else if (v->type == CT_NUMBER)
-			n = (int)v->num;
+			n = v->num > GRID_LINES ? GRID_LINES : v->num <
+				-GRID_LINES ? -GRID_LINES : (int)v->num;
 		else if (v->type == CT_IDENT)
 			name = v->str;
 	}

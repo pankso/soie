@@ -542,9 +542,15 @@ static int index_is(struct styledb *db, const struct compound *c,
 		if (i < a->n)
 			continue;
 		e->multi = a->n > 1;
-		for (i = 0; i < a->n; i++)
-			add_entry(db, compound_key(db, &a->c[i].c[a->c[i].n - 1],
-				&key, &root), key, e);
+		for (i = 0; i < a->n; i++) {
+			/* the key first: the order of evaluation of arguments
+			 * is not ours to choose (:is(.a, p) was indexed
+			 * under the key before, and never matched) */
+			struct bucket *bk = compound_key(db,
+				&a->c[i].c[a->c[i].n - 1], &key, &root);
+
+			add_entry(db, bk, key, e);
+		}
 		return 1;
 	}
 	return 0;
@@ -565,7 +571,9 @@ static void index_rule(struct styledb *db, struct srule *r)
 {
 	int i;
 
-	for (i = 0; i < r->sel->n; i++) {
+	/* e.sel is a short: the selectors beyond are not indexed (a rule
+	 * of 32769 selectors read before the list) */
+	for (i = 0; i < r->sel->n && i < 32767; i++) {
 		const struct complex *x = &r->sel->c[i];
 		const struct compound *c = &x->c[x->n - 1];
 		struct entry e;
@@ -1634,6 +1642,8 @@ static void vt_put(struct vtmp *t, const char *name, const char *value,
 
 static const char *vtmp_resolve(struct vtmp *t, const char *name);
 
+#define VAR_MAX (256 * 1024)	/* a value after var() substitution */
+
 /* Append v[0..n) to out with var() replaced; 0 if invalid. */
 static int substitute(struct vtmp *t, const struct cv *v, int n,
 	struct buf *out, int depth)
@@ -1665,6 +1675,11 @@ static int substitute(struct vtmp *t, const struct cv *v, int n,
 			     k[comma].type != CT_COMMA; comma++)
 				;
 			if (val) {
+				/* a value that doubles at each level (--b:
+				 * var(--a) var(--a)) is invalid past
+				 * VAR_MAX, as browsers cap it */
+				if (out->len + strlen(val) > VAR_MAX)
+					return 0;
 				buf_putc(out, ' ');
 				buf_add(out, val, strlen(val));
 				buf_putc(out, ' ');
@@ -2798,6 +2813,24 @@ static void save_options(struct styledb *db, const soie_style_options *o)
 		memset(&db->saved, 0, sizeof(db->saved));
 	db->saved.base_url = base;
 	db->saved.user_css = css;
+}
+
+/* What the relative units of a raw value are for the document laid
+ * out or painted (font_doc) and an element's style: lengths read past
+ * the cascade (backgrounds, gradients, grid tracks) */
+void doc_units(const struct style *st, struct ucontext *u)
+{
+	const soie_node *d = font_doc;
+	const struct styledb *db = d && d->type == SOIE_DOCUMENT ?
+		d->u.doc->styles : NULL;
+
+	memset(u, 0, sizeof(*u));
+	u->zoom = db && db->vp.zoom > 0 ? db->vp.zoom : 1;
+	u->em = st ? st->v[P_FONT_SIZE].u.len.px : 16 * u->zoom;
+	u->ex = u->ch = u->em / 2;
+	u->rem = db && db->rem > 0 ? db->rem : 16 * u->zoom;
+	u->vw = db ? db->vp.vw : 1024;
+	u->vh = db ? db->vp.vh : 768;
 }
 
 static unsigned long serials;

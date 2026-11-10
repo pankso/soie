@@ -732,202 +732,616 @@ void paint_replaced(struct canvas *c, const struct box *b)
 		draw_fitted(c, b, im, cur);
 }
 
-/* Gradients */
+/* Raw values: a <length-percentage> at the cursor, with its units and
+ * calc(), for the element of style st. The caller releases l->calc. */
+static int raw_lenp(struct cur *c, const struct style *st, struct len *l)
+{
+	struct slen *sl = parse_length(c, 0);
+	struct ucontext u;
+
+	if (!sl)
+		return 0;
+	doc_units(st, &u);
+	slen_resolve(sl, &u, l);
+	slen_free(sl);
+	return 1;
+}
+
+static float len_at(const struct len *l, float ref)
+{
+	return l->calc ? calc_eval(l->calc, ref) : l->px + l->pct * ref / 100;
+}
+
+static int raw_len(struct cur *c, const struct style *st, float ref,
+	float *out)
+{
+	struct len l;
+
+	if (!raw_lenp(c, st, &l))
+		return 0;
+	*out = len_at(&l, ref);
+	if (l.calc)
+		calc_release(l.calc);
+	return 1;
+}
+
+/*
+ * A <position> (CSS Values 4): one to four values, keywords and
+ * offsets from them, up to a comma or the end. rw and rh are what the
+ * percentages are of (the area less the image); the result is from
+ * the area's top left corner.
+ */
+static int parse_position(struct cur *c, const struct style *st, float rw,
+	float rh, float *ox, float *oy)
+{
+	struct {
+		char kw;	/* l r t b c, 0: a length */
+		struct len l;
+	} it[4];
+	const struct cv *v;
+	int n = 0, i, ok = 1;
+	float x = rw / 2, y = rh / 2;
+
+	memset(it, 0, sizeof(it));
+	while (n < 4 && (v = cur_peek(c)) && v->type != CT_COMMA) {
+		if (v->type == CT_IDENT) {
+			it[n].kw = cv_ident(v, "left") ? 'l' :
+				cv_ident(v, "right") ? 'r' :
+				cv_ident(v, "top") ? 't' :
+				cv_ident(v, "bottom") ? 'b' :
+				cv_ident(v, "center") ? 'c' : 0;
+			if (!it[n].kw)
+				break;
+			cur_next(c);
+		} else if (!raw_lenp(c, st, &it[n].l)) {
+			break;
+		}
+		n++;
+	}
+	if (!n)
+		return 0;
+	if (n <= 2) {
+		/* x then y, unless the keywords say the other way */
+		int swap = it[0].kw == 't' || it[0].kw == 'b' ||
+			(n == 2 && (it[1].kw == 'l' || it[1].kw == 'r'));
+		int a = swap ? 1 : 0, b = swap ? 0 : 1;
+
+		if (a < n) {
+			if (!it[a].kw)
+				x = len_at(&it[a].l, rw);
+			else if (it[a].kw == 'l')
+				x = 0;
+			else if (it[a].kw == 'r')
+				x = rw;
+			else if (it[a].kw != 'c')
+				ok = 0;
+		}
+		if (b < n) {
+			if (!it[b].kw)
+				y = len_at(&it[b].l, rh);
+			else if (it[b].kw == 't')
+				y = 0;
+			else if (it[b].kw == 'b')
+				y = rh;
+			else if (it[b].kw != 'c')
+				ok = 0;
+		}
+	} else {
+		/* three or four: each keyword may have an offset after it */
+		for (i = 0; i < n; i++) {
+			float off = 0;
+			char k = it[i].kw;
+
+			if (!k) {
+				ok = 0;
+				break;
+			}
+			if (i + 1 < n && !it[i + 1].kw && k != 'c') {
+				off = len_at(&it[i + 1].l, k == 'l' || k == 'r' ?
+					rw : rh);
+				i++;
+			}
+			if (k == 'l')
+				x = off;
+			else if (k == 'r')
+				x = rw - off;
+			else if (k == 't')
+				y = off;
+			else if (k == 'b')
+				y = rh - off;
+		}
+	}
+	for (i = 0; i < n; i++)
+		if (it[i].l.calc)
+			calc_release(it[i].l.calc);
+	if (!ok)
+		return 0;
+	*ox = x;
+	*oy = y;
+	return 1;
+}
+
+/* Gradients (CSS Images 3 and 4) */
 
 struct stop {
-	unsigned char rgba[4];
-	float pos;		/* 0..1, -1: auto */
+	float c[4];		/* premultiplied, 0..255 */
+	float pos;		/* px along the line, turns for a conic; NAN:
+				 * to be spread */
+	float hint;		/* where the mix with the stop before is even,
+				 * NAN for the middle */
 };
 
-static int parse_stops(struct cur *c, struct stop *s, int max, float len)
-{
-	int n = 0, i, j;
+struct gradient {
+	char kind;		/* 'l'inear, 'r'adial, 'c'onic */
+	char repeating;
+	struct stop *s;
+	int n;
+	float dx, dy, len;	/* linear: the line's direction and length */
+	float cx, cy;		/* radial, conic: the centre, in the tile */
+	float rx, ry;		/* radial */
+	float from;		/* conic: the start angle, turns */
+};
 
-	while (n < max && !cur_end(c)) {
+#define MAX_STOPS 1024
+
+static int angle_of(const struct cv *v, float *deg)
+{
+	if (!v)
+		return 0;
+	if (v->type == CT_NUMBER && v->num == 0) {
+		*deg = 0;
+		return 1;
+	}
+	if (v->type != CT_DIMENSION)
+		return 0;
+	if (ascii_ieq(v->str, "deg"))
+		*deg = (float)v->num;
+	else if (ascii_ieq(v->str, "rad"))
+		*deg = (float)(v->num * 180 / M_PI);
+	else if (ascii_ieq(v->str, "turn"))
+		*deg = (float)v->num * 360;
+	else if (ascii_ieq(v->str, "grad"))
+		*deg = (float)v->num * 0.9f;
+	else
+		return 0;
+	return 1;
+}
+
+/* A stop position: a length along the line of len px, a percentage of
+ * it; an angle or a percentage of a turn for a conic */
+static int stop_pos(struct cur *c, const struct style *st,
+	const struct gradient *g, float *out)
+{
+	const struct cv *v = cur_peek(c);
+	float deg;
+
+	if (!v || v->type == CT_COMMA)
+		return 0;
+	if (g->kind != 'c')
+		return raw_len(c, st, g->len, out);
+	if (v->type == CT_PERCENT)
+		*out = (float)v->num / 100;
+	else if (angle_of(v, &deg))
+		*out = deg / 360;
+	else
+		return 0;
+	cur_next(c);
+	return 1;
+}
+
+static int parse_stops(struct cur *c, const struct style *st,
+	struct gradient *g, const unsigned char *current)
+{
+	struct stop *s = NULL;
+	int n = 0, cap = 0, i, j, k;
+	float hint = NAN, end = g->kind == 'c' ? 1 : g->len;
+
+	while (!cur_end(c) && n < MAX_STOPS) {
 		const struct cv *v;
 		struct color col;
+		unsigned char rgba[4];
+		float p;
+		int npos = 0;
 
-		if (!parse_color(c, &col))
-			return 0;
-		color_to_rgba(&col, s[n].rgba);
-		s[n].pos = -1;
-		v = cur_peek(c);
-		if (v && (v->type == CT_PERCENT || v->type == CT_DIMENSION ||
-			  v->type == CT_NUMBER)) {
-			s[n].pos = v->type == CT_PERCENT ? (float)v->num / 100 :
-				len > 0 ? (float)v->num * doc_zoom() / len : 0;
-			cur_next(c);
-			v = cur_peek(c);
-			if (v && (v->type == CT_PERCENT ||
-				  v->type == CT_DIMENSION)) {
-				/* a second position: a hard stop */
-				s[n + 1 < max ? n + 1 : n] = s[n];
+		if (n + 2 > cap) {
+			cap = cap ? cap * 2 : 8;
+			s = xrealloc(s, (size_t)cap * sizeof(*s));
+		}
+		if (!parse_color(c, &col)) {
+			/* a position alone: a hint for the next stop */
+			if (!n || !isnan(hint) || !stop_pos(c, st, g, &hint))
+				goto bad;
+			v = cur_next(c);
+			if (!v || v->type != CT_COMMA)
+				goto bad;
+			continue;
+		}
+		if (col.current)
+			memcpy(rgba, current, 4);
+		else
+			color_to_rgba(&col, rgba);
+		for (k = 0; k < 3; k++)
+			s[n].c[k] = rgba[k] * rgba[3] / 255.f;
+		s[n].c[3] = rgba[3];
+		s[n].pos = NAN;
+		s[n].hint = hint;
+		hint = NAN;
+		while (npos < 2 && stop_pos(c, st, g, &p)) {
+			if (npos) {	/* a second position: the color again */
+				s[n + 1] = s[n];
+				s[n + 1].hint = NAN;
 				n++;
-				s[n].pos = v->type == CT_PERCENT ?
-					(float)v->num / 100 : len > 0 ?
-					(float)v->num * doc_zoom() / len : 0;
-				cur_next(c);
 			}
+			s[n].pos = p;
+			npos++;
 		}
 		n++;
 		v = cur_next(c);
 		if (v && v->type != CT_COMMA)
-			return 0;
+			goto bad;
 	}
-	if (n < 1)
-		return 0;
-	if (s[0].pos < 0)
+	if (n < 1 || !isnan(hint))
+		goto bad;
+	if (isnan(s[0].pos))
 		s[0].pos = 0;
-	if (s[n - 1].pos < 0)
-		s[n - 1].pos = 1;
+	if (isnan(s[n - 1].pos))
+		s[n - 1].pos = end;
 	for (i = 1; i < n; i++) {
-		if (s[i].pos >= 0) {
+		float a, b;
+
+		if (!isnan(s[i].pos)) {
 			if (s[i].pos < s[i - 1].pos)
 				s[i].pos = s[i - 1].pos;
 			continue;
 		}
-		for (j = i; j < n && s[j].pos < 0; j++)
+		for (j = i; isnan(s[j].pos); j++)
 			;
-		{
-			float a = s[i - 1].pos, b = s[j].pos;
-			int k;
-
-			for (k = i; k < j; k++)
-				s[k].pos = a + (b - a) * (float)(k - i + 1) /
-					(float)(j - i + 1);
-		}
-	}
-	return n;
-}
-
-static void stop_color(const struct stop *s, int n, float t,
-	unsigned char *out)
-{
-	int i, k;
-
-	if (t <= s[0].pos) {
-		memcpy(out, s[0].rgba, 4);
-		return;
+		a = s[i - 1].pos;
+		b = s[j].pos < a ? a : s[j].pos;
+		for (k = i; k < j; k++)
+			s[k].pos = a + (b - a) * (float)(k - i + 1) /
+				(float)(j - i + 1);
+		/* i goes on: s[j] is checked against s[j - 1] next */
+		i = j - 1;
 	}
 	for (i = 1; i < n; i++)
-		if (t <= s[i].pos) {
+		if (!isnan(s[i].hint)) {
 			float d = s[i].pos - s[i - 1].pos;
-			float f = d > 0 ? (t - s[i - 1].pos) / d : 1;
 
-			for (k = 0; k < 4; k++)
-				out[k] = (unsigned char)(s[i - 1].rgba[k] *
-					(1 - f) + s[i].rgba[k] * f + 0.5f);
-			return;
+			s[i].hint = d > 0 ? (s[i].hint - s[i - 1].pos) / d : NAN;
 		}
-	memcpy(out, s[n - 1].rgba, 4);
+	g->s = s;
+	g->n = n;
+	return 1;
+bad:
+	free(s);
+	return 0;
 }
 
-static void gradient(struct canvas *c, const struct cv *f, float x, float y,
-	float w, float h)
+static void stop_color(const struct gradient *g, float t, unsigned char *out)
 {
+	const struct stop *s = g->s;
+	const float *a, *b = NULL;
+	float f = 0, o[4];
+	int i, k, n = g->n;
+
+	if (g->repeating) {
+		float period = s[n - 1].pos - s[0].pos;
+
+		if (period <= 0) {
+			t = s[n - 1].pos;
+		} else {
+			t = fmodf(t - s[0].pos, period);
+			if (t < 0)
+				t += period;
+			t += s[0].pos;
+		}
+	}
+	if (isnan(t) || t <= s[0].pos) {
+		a = s[0].c;
+	} else if (t >= s[n - 1].pos) {
+		a = s[n - 1].c;
+	} else {
+		for (i = 1; i < n - 1 && t > s[i].pos; i++)
+			;
+		a = s[i - 1].c;
+		b = s[i].c;
+		f = (t - s[i - 1].pos) / (s[i].pos - s[i - 1].pos);
+		if (!isnan(s[i].hint)) {
+			float h = s[i].hint;
+
+			f = h <= 0 ? 1 : h >= 1 ? 0 : powf(f, logf(0.5f) /
+				logf(h));
+		}
+	}
+	for (k = 0; k < 4; k++)
+		o[k] = b ? a[k] * (1 - f) + b[k] * f : a[k];
+	if (o[3] <= 0) {
+		memset(out, 0, 4);
+		return;
+	}
+	for (k = 0; k < 3; k++) {
+		float v = o[k] * 255 / o[3];
+
+		out[k] = (unsigned char)(v > 255 ? 255 : v + 0.5f);
+	}
+	out[3] = (unsigned char)(o[3] + 0.5f);
+}
+
+/* Skip `in <color space> [<hue> hue]`: mixed in sRGB all the same */
+static int skip_in(struct cur *c)
+{
+	const struct cv *v = cur_peek(c);
+
+	if (!cv_ident(v, "in"))
+		return 0;
+	while ((v = cur_peek(c)) && v->type == CT_IDENT)
+		cur_next(c);
+	return 1;
+}
+
+/* The size of a radial gradient: keywords, a radius, two radii */
+static void radial_size(struct gradient *g, float w, float h, int circle,
+	int sized, const char *ext, const struct len *r)
+{
+	float l = g->cx, rt = w - g->cx, t = g->cy, bt = h - g->cy;
+	float sx, sy;
+	int corner, closest;
+
+	if (sized == 1) {
+		g->rx = g->ry = len_at(&r[0], w);
+		return;
+	}
+	if (sized == 2) {
+		g->rx = len_at(&r[0], w);
+		g->ry = len_at(&r[1], h);
+		return;
+	}
+	l = fabsf(l);
+	rt = fabsf(rt);
+	t = fabsf(t);
+	bt = fabsf(bt);
+	closest = ext && !strncmp(ext, "closest", 7);
+	corner = !ext || strstr(ext, "corner") != NULL;
+	sx = closest ? fminf(l, rt) : fmaxf(l, rt);
+	sy = closest ? fminf(t, bt) : fmaxf(t, bt);
+	if (circle) {
+		if (corner)
+			g->rx = g->ry = sqrtf(sx * sx + sy * sy);
+		else
+			g->rx = g->ry = closest ? fminf(sx, sy) : fmaxf(sx, sy);
+	} else {
+		/* an ellipse through the corner keeps the sides' ratio */
+		g->rx = corner ? sx * 1.41421356f : sx;
+		g->ry = corner ? sy * 1.41421356f : sy;
+	}
+}
+
+/* What comes before the stops, for an image of w x h */
+static int gradient_parse(const struct cv *f, const struct style *st,
+	float w, float h, const unsigned char *current, struct gradient *g)
+{
+	const char *name = f->str;
 	struct cur cu;
-	struct stop s[32];
-	int radial = strstr(f->str, "radial") != NULL, n, i, j;
-	float angle = 180, len, cx = x + w / 2, cy = y + h / 2, rx, ry;
 	const struct cv *v;
+	float deg = 180;
+	int config = 0;
 
+	memset(g, 0, sizeof(*g));
+	if (!strncmp(name, "-webkit-", 8))
+		name += 8;
+	if (!strncmp(name, "repeating-", 10)) {
+		g->repeating = 1;
+		name += 10;
+	}
+	g->kind = ascii_ieq(name, "linear-gradient") ? 'l' :
+		ascii_ieq(name, "radial-gradient") ? 'r' :
+		ascii_ieq(name, "conic-gradient") ? 'c' : 0;
+	if (!g->kind)
+		return 0;
 	cur_init(&cu, &f->kids);
-	v = cur_peek(&cu);
-	if (!radial && v && v->type == CT_DIMENSION) {
-		angle = (float)v->num;
-		if (ascii_ieq(v->str, "rad"))
-			angle = angle * 180 / (float)M_PI;
-		else if (ascii_ieq(v->str, "turn"))
-			angle *= 360;
-		else if (ascii_ieq(v->str, "grad"))
-			angle *= 0.9f;
-		cur_next(&cu);
-		cur_next(&cu);	/* comma */
-	} else if (!radial && cv_ident(v, "to")) {
-		int top = 0, bottom = 0, left = 0, right = 0;
+	g->cx = w / 2;
+	g->cy = h / 2;
+	if (g->kind == 'l') {
+		int legacy = !strncmp(f->str, "-webkit-", 8);
 
-		cur_next(&cu);
-		while ((v = cur_peek(&cu)) && v->type == CT_IDENT) {
-			top |= cv_ident(v, "top");
-			bottom |= cv_ident(v, "bottom");
-			left |= cv_ident(v, "left");
-			right |= cv_ident(v, "right");
+		config = skip_in(&cu);
+		v = cur_peek(&cu);
+		if (angle_of(v, &deg) && v->type == CT_DIMENSION) {
+			/* the prefixed form counts from the right, the other
+			 * way round */
+			if (legacy)
+				deg = 90 - deg;
 			cur_next(&cu);
-		}
-		cur_next(&cu);
-		angle = top ? 0 : bottom ? 180 : 90;
-		if (left && !top && !bottom)
-			angle = 270;
-		if ((top || bottom) && (left || right)) {
-			float a = atanf(w / h) * 180 / (float)M_PI;
+			config = 1;
+		} else if (cv_ident(v, "to") || (legacy && v &&
+		    v->type == CT_IDENT && (cv_ident(v, "top") ||
+		    cv_ident(v, "bottom") || cv_ident(v, "left") ||
+		    cv_ident(v, "right")))) {
+			int top = 0, bottom = 0, left = 0, right = 0;
 
-			angle = top ? (right ? a : 360 - a) :
-				(right ? 180 - a : 180 + a);
-		}
-	} else if (radial) {
-		/* shape and position are skipped: circle at the center */
-		int k = cu.i, comma = -1;
-
-		for (; k < cu.n; k++)
-			if (cu.v[k].type == CT_COMMA) {
-				comma = k;
-				break;
+			if (cv_ident(v, "to"))
+				cur_next(&cu);
+			while ((v = cur_peek(&cu)) && v->type == CT_IDENT &&
+			       !cv_ident(v, "in")) {
+				top |= cv_ident(v, "top");
+				bottom |= cv_ident(v, "bottom");
+				left |= cv_ident(v, "left");
+				right |= cv_ident(v, "right");
+				cur_next(&cu);
 			}
-		if (comma >= 0) {
-			int has_color = 0;
-			struct cur t = cu;
-			struct color col;
+			if (legacy) {	/* it names where it starts */
+				int x = top;
 
-			has_color = parse_color(&t, &col);
-			if (!has_color)
-				cu.i = comma + 1;
+				top = bottom;
+				bottom = x;
+				x = left;
+				left = right;
+				right = x;
+			}
+			deg = top ? 0 : bottom ? 180 : left ? 270 : 90;
+			if ((top || bottom) && (left || right) && w > 0 &&
+			    h > 0) {
+				/* to a corner: the 50 % line joins the two
+				 * other corners */
+				float a = atanf(h / w) * 180 / (float)M_PI;
+
+				deg = top ? (right ? a : 360 - a) :
+					(right ? 180 - a : 180 + a);
+			}
+			config = 1;
 		}
-	}
-	{
-		float r = angle * (float)M_PI / 180;
+		config |= skip_in(&cu);
+		{
+			float r = deg * (float)M_PI / 180;
 
-		len = fabsf(w * sinf(r)) + fabsf(h * cosf(r));
-		rx = sqrtf(w * w + h * h) / 2;
-		ry = rx;
-		n = parse_stops(&cu, s, 32, radial ? rx : len);
-		if (n <= 0)
-			return;
-		for (j = (int)floorf(y - c->oy); j < (int)ceilf(y + h - c->oy);
-		     j++) {
-			if (j < c->cy0 || j >= c->cy1)
-				continue;
-			for (i = (int)floorf(x - c->ox);
-			     i < (int)ceilf(x + w - c->ox); i++) {
-				float px = (float)i + c->ox + 0.5f - cx;
-				float py = (float)j + c->oy + 0.5f - cy, t;
-				unsigned char col[4];
+			g->dx = sinf(r);
+			g->dy = -cosf(r);
+			g->len = fabsf(w * g->dx) + fabsf(h * g->dy);
+		}
+	} else if (g->kind == 'r') {
+		struct cur t = cu;
+		struct color col;
+		struct len r[2];
+		const char *ext = NULL;
+		int circle = 0, ellipse = 0, sized = 0;
 
-				if (i < c->cx0 || i >= c->cx1)
+		memset(r, 0, sizeof(r));
+		config = skip_in(&cu);
+		t = cu;
+		if (!config && parse_color(&t, &col)) {
+			/* stops right away */
+		} else {
+			while ((v = cur_peek(&cu)) && v->type != CT_COMMA) {
+				if (cv_ident(v, "circle")) {
+					circle = 1;
+				} else if (cv_ident(v, "ellipse")) {
+					ellipse = 1;
+				} else if (v->type == CT_IDENT && (strstr(v->str,
+				    "-side") || strstr(v->str, "-corner"))) {
+					ext = v->str;
+				} else if (cv_ident(v, "at")) {
+					cur_next(&cu);
+					if (!parse_position(&cu, st, w, h, &g->cx,
+					    &g->cy))
+						break;
 					continue;
-				if (radial)
-					t = sqrtf(px * px / (rx * rx) +
-						py * py / (ry * ry));
-				else
-					t = (px * sinf(r) - py * cosf(r)) / len +
-						0.5f;
-				stop_color(s, n, t, col);
-				blend_px(c, i, j, col, 1);
+				} else if (cv_ident(v, "in")) {
+					skip_in(&cu);
+					continue;
+				} else if (sized < 2 && raw_lenp(&cu, st,
+				    &r[sized])) {
+					sized++;
+					continue;
+				} else {
+					break;
+				}
+				cur_next(&cu);
 			}
+			config = 1;
+		}
+		if (sized == 1 && !ellipse)
+			circle = 1;
+		radial_size(g, w, h, circle && !ellipse, sized, ext, r);
+		if (r[0].calc)
+			calc_release(r[0].calc);
+		if (r[1].calc)
+			calc_release(r[1].calc);
+		g->len = g->rx;
+	} else {
+		struct cur t;
+		struct color col;
+
+		config = skip_in(&cu);
+		t = cu;
+		if (!config && parse_color(&t, &col)) {
+			/* stops right away */
+		} else {
+			while ((v = cur_peek(&cu)) && v->type != CT_COMMA) {
+				if (cv_ident(v, "from")) {
+					cur_next(&cu);
+					if (angle_of(cur_peek(&cu), &deg))
+						g->from = deg / 360;
+					else
+						break;
+				} else if (cv_ident(v, "at")) {
+					cur_next(&cu);
+					if (!parse_position(&cu, st, w, h, &g->cx,
+					    &g->cy))
+						break;
+					continue;
+				} else if (cv_ident(v, "in")) {
+					skip_in(&cu);
+					continue;
+				} else {
+					break;
+				}
+				cur_next(&cu);
+			}
+			config = 1;
 		}
 	}
+	if (config) {
+		v = cur_next(&cu);
+		if (!v || v->type != CT_COMMA)
+			return 0;
+	}
+	return parse_stops(&cu, st, g, current);
 }
 
-/* background-position/size from their text, for one layer. */
-static float bg_len(const struct cv *v, float ref, float dflt)
+/* One tile of gradient g at (x, y), w x h, inside the canvas clip */
+static void gradient_draw(struct canvas *c, const struct gradient *g,
+	float x, float y, float w, float h)
 {
-	if (!v)
-		return dflt;
-	if (v->type == CT_PERCENT)
-		return (float)v->num * ref / 100;
-	if (v->type == CT_DIMENSION || v->type == CT_NUMBER)
-		/* px; em and others approximated */
-		return (float)v->num * doc_zoom();
-	return dflt;
+	int i0 = (int)floorf(x - c->ox + 0.5f), i1 = (int)floorf(x + w -
+		c->ox + 0.5f);
+	int j0 = (int)floorf(y - c->oy + 0.5f), j1 = (int)floorf(y + h -
+		c->oy + 0.5f);
+	float half = g->len / 2;
+	int i, j;
+
+	if (i0 < c->cx0)
+		i0 = c->cx0;
+	if (j0 < c->cy0)
+		j0 = c->cy0;
+	if (i1 > c->cx1)
+		i1 = c->cx1;
+	if (j1 > c->cy1)
+		j1 = c->cy1;
+	for (j = j0; j < j1; j++) {
+		float py = (float)j + c->oy + 0.5f - y;
+		unsigned char col[4], last[4] = { 0, 0, 0, 0 };
+		float tl = NAN;
+
+		for (i = i0; i < i1; i++) {
+			float px = (float)i + c->ox + 0.5f - x, t;
+
+			if (g->kind == 'l') {
+				t = (px - w / 2) * g->dx + (py - h / 2) * g->dy +
+					half;
+			} else if (g->kind == 'r') {
+				float ex = px - g->cx, ey = py - g->cy;
+
+				if (g->rx <= 0 || g->ry <= 0)
+					t = 1e30f;
+				else
+					t = sqrtf(ex * ex / (g->rx * g->rx) +
+						ey * ey / (g->ry * g->ry)) * g->rx;
+			} else {
+				t = atan2f(px - g->cx, g->cy - py) /
+					(2 * (float)M_PI) - g->from;
+				t -= floorf(t);
+			}
+			/* the same place on the line: the same color (the
+			 * rows of a horizontal gradient) */
+			if (t != tl) {
+				stop_color(g, t, col);
+				memcpy(last, col, 4);
+				tl = t;
+			}
+			blend_px(c, i, j, last, 1);
+		}
+	}
 }
 
 static int nth_layer(const struct cvlist *l, int k, struct cur *out)
@@ -948,21 +1362,88 @@ static int nth_layer(const struct cvlist *l, int k, struct cur *out)
 	return 0;
 }
 
-/* The image layers of property img (background-image, mask-image) and
- * their position, size and repeat, into the box (x, y, w, h). */
-void paint_layers_of(struct canvas *c, const struct box *b, int img_p,
-	float x, float y, float w, float h)
+/* The value of layer k of a list that repeats when it is shorter */
+static int layer_value(const struct cvlist *l, int k, struct cur *out)
+{
+	int n = 1, i;
+
+	for (i = 0; i < l->n; i++)
+		if (l->v[i].type == CT_COMMA)
+			n++;
+	return nth_layer(l, k % n, out);
+}
+
+/* A box of b by its keyword: border-box (the rectangle given),
+ * padding-box (no keyword too, when padding is set), content-box */
+static void box_of(const struct box *b, const struct cv *v, int padding,
+	float *x, float *y, float *w, float *h)
+{
+	float e[4] = { 0, 0, 0, 0 };
+	int i;
+
+	if (v)
+		padding = cv_ident(v, "padding-box");
+	if (padding || cv_ident(v, "content-box"))
+		for (i = 0; i < 4; i++)
+			e[i] = b->b[i] + (!padding ? b->p[i] : 0);
+	*x += e[3];
+	*y += e[0];
+	*w -= e[1] + e[3];
+	*h -= e[0] + e[2];
+	if (*w < 0)
+		*w = 0;
+	if (*h < 0)
+		*h = 0;
+}
+
+/* Along one axis: the first tile's position and how many, for an area
+ * at a of size as, tiles of size *ts placed at off, painted from c0 to
+ * c1. mode: 'r'epeat, 'n'o-repeat, 's'pace, rou'N'd (the size was
+ * rounded by the caller). *gap is what space puts between tiles. */
+static int tiles(int mode, float a, float as, float ts, float off, float c0,
+	float c1, float *first, float *gap)
+{
+	float p = a + off, n;
+
+	*gap = 0;
+	*first = p;
+	if (mode == 'n' || ts <= 0)
+		return 1;
+	if (mode == 's') {
+		int k = (int)floorf(as / ts + 0.001f);
+
+		if (k < 2)	/* one tile: where the position says */
+			return 1;
+		*gap = (as - (float)k * ts) / (float)(k - 1);
+		p = a;
+	}
+	/* back to the first tile that reaches c0, without counting */
+	n = ceilf((p - c0) / (ts + *gap));
+	p -= n * (ts + *gap);
+	*first = p;
+	n = ceilf((c1 - p) / (ts + *gap));
+	return n < 1 ? 1 : n > 100000 ? 100000 : (int)n;
+}
+
+/*
+ * The image layers of property img (background-image, mask-image) of
+ * b, whose border box is (x, y, w, h): each in its positioning area
+ * (background-origin), at its size and position, repeated, clipped to
+ * its background-clip box. With canvas set (the root's background, CSS
+ * 2 14.2) they are clipped by the canvas alone.
+ */
+static void paint_layers(struct canvas *c, const struct box *b, int img_p,
+	float x, float y, float w, float h, int canvas)
 {
 	const struct style *st = b->style;
 	const char *img = st->v[img_p].u.str;
-	int pos_p = img_p == P_MASK_IMAGE ? P_MASK_POSITION :
-		P_BACKGROUND_POSITION;
-	int size_p = img_p == P_MASK_IMAGE ? P_MASK_SIZE : P_BACKGROUND_SIZE;
-	int rep_p = img_p == P_MASK_IMAGE ? P_MASK_REPEAT :
-		P_BACKGROUND_REPEAT;
-	struct cvlist li, lp, ls, lr;
+	int mask = img_p == P_MASK_IMAGE;
+	int pos_p = mask ? P_MASK_POSITION : P_BACKGROUND_POSITION;
+	int size_p = mask ? P_MASK_SIZE : P_BACKGROUND_SIZE;
+	int rep_p = mask ? P_MASK_REPEAT : P_BACKGROUND_REPEAT;
+	struct cvlist li, lp, ls, lr, lo, lc;
 	unsigned char cur[4];
-	int layer, nlayers = 0, i;
+	int layer, nlayers = 1, i;
 	int cx0 = c->cx0, cy0 = c->cy0, cx1 = c->cx1, cy1 = c->cy1;
 
 	if (!img || !strcmp(img, "none"))
@@ -974,141 +1455,207 @@ void paint_layers_of(struct canvas *c, const struct box *b, int img_p,
 		&ls);
 	css_component_values(st->v[rep_p].u.str, strlen(st->v[rep_p].u.str),
 		&lr);
+	memset(&lo, 0, sizeof(lo));
+	memset(&lc, 0, sizeof(lc));
+	if (!mask) {
+		const char *o = st->v[P_BACKGROUND_ORIGIN].u.str;
+		const char *k = st->v[P_BACKGROUND_CLIP].u.str;
+
+		css_component_values(o, strlen(o), &lo);
+		css_component_values(k, strlen(k), &lc);
+	}
 	color_to_rgba(st->v[P_COLOR].u.color, cur);
 	for (i = 0; i < li.n; i++)
 		if (li.v[i].type == CT_COMMA)
 			nlayers++;
-	nlayers++;
-	/* clip to the border box */
-	{
-		int a = (int)floorf(x - c->ox), bb = (int)floorf(y - c->oy);
-
-		if (a > c->cx0)
-			c->cx0 = a;
-		if (bb > c->cy0)
-			c->cy0 = bb;
-		if ((int)ceilf(x + w - c->ox) < c->cx1)
-			c->cx1 = (int)ceilf(x + w - c->ox);
-		if ((int)ceilf(y + h - c->oy) < c->cy1)
-			c->cy1 = (int)ceilf(y + h - c->oy);
-	}
 	/* the first layer is on top: paint from the last */
 	for (layer = nlayers - 1; layer >= 0; layer--) {
-		struct cur ci, cp, cs, cr;
-		const struct cv *v;
+		struct cur ci, cp, cs, cr, co;
+		const struct cv *v, *a, *bb;
 		const struct image *im = NULL;
-		float iw, ih, px, py, ox, oy, sx, sy;
-		int rx = 1, ry = 1;
+		struct gradient g;
+		float ax = x, ay = y, aw = w, ah = h;	/* positioning area */
+		float kx = x, ky = y, kw_ = w, kh = h;	/* clip box */
+		float iw = 0, ih = 0, ox = 0, oy = 0, fx, fy, gx, gy;
+		int mx = 'r', my = 'r', nx, ny, ix, iy, grad = 0, sized = 0;
 
 		if (!nth_layer(&li, layer, &ci) || !(v = cur_peek(&ci)))
 			continue;
-		if (v->type == CT_FUNCTION && strstr(v->str, "gradient")) {
-			gradient(c, v, x, y, w, h);
-			continue;
-		}
-		if (v->type == CT_URL)
+		if (v->type == CT_FUNCTION && strstr(v->str, "gradient"))
+			grad = 1;
+		else if (v->type == CT_URL)
 			im = image_get(paint_doc, v->str);
 		else if (cv_func(v, "url") && v->kids.n &&
 			 v->kids.v[0].type == CT_STRING)
 			im = image_get(paint_doc, v->kids.v[0].str);
-		if (!im || !im->w || !im->h)
+		if (!grad && (!im || !im->w || !im->h))
 			continue;
-		iw = (float)im->w * doc_zoom();
-		ih = (float)im->h * doc_zoom();
+		if (!mask) {
+			a = layer_value(&lo, layer, &co) ? cur_peek(&co) : NULL;
+			box_of(b, a, 1, &ax, &ay, &aw, &ah);
+			if (layer_value(&lc, layer, &co) && (a = cur_peek(&co)))
+				box_of(b, a, 0, &kx, &ky, &kw_, &kh);
+		}
+		if (im) {
+			iw = (float)im->w * doc_zoom();
+			ih = (float)im->h * doc_zoom();
+		}
 		/* background-size */
-		if (nth_layer(&ls, layer < 0 ? 0 : layer, &cs) ||
-		    nth_layer(&ls, 0, &cs)) {
-			const struct cv *a = cur_next(&cs), *bb = cur_next(&cs);
+		a = bb = NULL;
+		if (layer_value(&ls, layer, &cs)) {
+			struct cur t;
+			float nw = -1, nh = -1;
 
+			a = cur_peek(&cs);
 			if (cv_ident(a, "cover") || cv_ident(a, "contain")) {
-				float s = w / iw, t = h / ih;
+				if (im) {
+					float s = aw / iw, k = ah / ih;
 
-				s = cv_ident(a, "cover") ? (s > t ? s : t) :
-					(s < t ? s : t);
-				iw *= s;
-				ih *= s;
-			} else if (a && !cv_ident(a, "auto")) {
-				float nw = bg_len(a, w, iw);
-				float nh = bb && !cv_ident(bb, "auto") ?
-					bg_len(bb, h, ih) : nw * ih / iw;
-
-				iw = nw;
-				ih = nh;
-			} else if (bb && !cv_ident(bb, "auto")) {
-				float nh = bg_len(bb, h, ih);
-
-				iw = iw * nh / ih;
-				ih = nh;
-			}
-		}
-		/* background-position: keywords, lengths, percentages */
-		ox = oy = 0;
-		if (nth_layer(&lp, layer, &cp) || nth_layer(&lp, 0, &cp)) {
-			int axis = 0;
-
-			while ((v = cur_next(&cp)) && axis < 2) {
-				float *o = axis ? &oy : &ox;
-				float room = axis ? h - ih : w - iw;
-
-				if (cv_ident(v, "left") || cv_ident(v, "top")) {
-					if (cv_ident(v, "top"))
-						oy = 0, axis = 1;
-					else
-						ox = 0;
-				} else if (cv_ident(v, "right")) {
-					ox = w - iw;
-				} else if (cv_ident(v, "bottom")) {
-					oy = h - ih;
-					axis = 1;
-				} else if (cv_ident(v, "center")) {
-					*o = room / 2;
-				} else {
-					*o = v->type == CT_PERCENT ?
-						(float)v->num * room / 100 :
-						bg_len(v, room, 0);
+					s = cv_ident(a, "cover") ? (s > k ? s : k) :
+						(s < k ? s : k);
+					iw *= s;
+					ih *= s;
+					sized = 1;
 				}
-				axis++;
+			} else if (a) {
+				if (cv_ident(a, "auto"))
+					cur_next(&cs);
+				else if (!raw_len(&cs, st, aw, &nw))
+					nw = -1;
+				t = cs;
+				bb = cur_peek(&t);
+				if (bb && !cv_ident(bb, "auto") &&
+				    !raw_len(&cs, st, ah, &nh))
+					nh = -1;
+				if (nw >= 0 && nh >= 0) {
+					iw = nw;
+					ih = nh;
+				} else if (nw >= 0) {
+					ih = im && iw > 0 ? nw * ih / iw : ah;
+					iw = nw;
+				} else if (nh >= 0) {
+					iw = im && ih > 0 ? nh * iw / ih : aw;
+					ih = nh;
+				}
+				sized = nw >= 0 || nh >= 0;
 			}
 		}
-		if (nth_layer(&lr, layer, &cr) || nth_layer(&lr, 0, &cr)) {
-			v = cur_next(&cr);
-			if (cv_ident(v, "no-repeat"))
-				rx = ry = 0;
-			else if (cv_ident(v, "repeat-x"))
-				ry = 0;
-			else if (cv_ident(v, "repeat-y"))
-				rx = 0;
-			v = cur_next(&cr);
-			if (cv_ident(v, "no-repeat"))
-				ry = 0;
+		if (grad && !sized) {
+			iw = aw;
+			ih = ah;
 		}
-		if (iw < 1 || ih < 1)
+		if (layer_value(&lr, layer, &cr)) {
+			static const struct {
+				const char *n;
+				char x, y;
+			} modes[] = { { "repeat", 'r', 'r' }, { "no-repeat", 'n',
+				'n' }, { "repeat-x", 'r', 'n' }, { "repeat-y", 'n',
+				'r' }, { "space", 's', 's' }, { "round", 'N',
+				'N' } };
+			unsigned k;
+
+			v = cur_next(&cr);
+			for (k = 0; k < sizeof(modes) / sizeof(*modes); k++)
+				if (cv_ident(v, modes[k].n)) {
+					mx = modes[k].x;
+					my = modes[k].y;
+				}
+			v = cur_next(&cr);
+			for (k = 0; v && k < sizeof(modes) / sizeof(*modes); k++)
+				if (cv_ident(v, modes[k].n))
+					my = modes[k].y;
+		}
+		/* round: a whole number of tiles, the other size follows
+		 * when it was automatic */
+		if (mx == 'N' && iw > 0 && aw > 0) {
+			float n = floorf(aw / iw + 0.5f), nw = aw / (n < 1 ? 1 : n);
+
+			if (my != 'N' && im && !bb)
+				ih = ih * nw / iw;
+			iw = nw;
+			mx = 'r';
+		}
+		if (my == 'N' && ih > 0 && ah > 0) {
+			float n = floorf(ah / ih + 0.5f), nh = ah / (n < 1 ? 1 : n);
+
+			ih = nh;
+			my = 'r';
+		}
+		if (iw < 0.5f || ih < 0.5f)
 			continue;
-		px = x + ox;
-		py = y + oy;
-		if (rx)
-			while (px > x)
-				px -= iw;
-		if (ry)
-			while (py > y)
-				py -= ih;
-		for (sy = py; sy < y + h && (ry || sy == py); sy += ih)
-			for (sx = px; sx < x + w && (rx || sx == px); sx += iw)
-				draw_image(c, im, sx, sy, iw, ih, cur,
-					b->style);
+		if (layer_value(&lp, layer, &cp))
+			parse_position(&cp, st, aw - iw, ah - ih, &ox, &oy);
+		if (grad && !gradient_parse(cur_peek(&ci), st, iw, ih, cur, &g))
+			continue;
+		if (canvas) {
+			kx = c->ox + (float)cx0;
+			ky = c->oy + (float)cy0;
+			kw_ = (float)(cx1 - cx0);
+			kh = (float)(cy1 - cy0);
+		} else {
+			/* clip to its box */
+			int a0 = (int)floorf(kx - c->ox + 0.5f);
+			int b0 = (int)floorf(ky - c->oy + 0.5f);
+			int a1 = (int)floorf(kx + kw_ - c->ox + 0.5f);
+			int b1 = (int)floorf(ky + kh - c->oy + 0.5f);
+
+			c->cx0 = a0 > cx0 ? a0 : cx0;
+			c->cy0 = b0 > cy0 ? b0 : cy0;
+			c->cx1 = a1 < cx1 ? a1 : cx1;
+			c->cy1 = b1 < cy1 ? b1 : cy1;
+			/* and what is painted of it, for the tiles to walk */
+			kx = c->ox + (float)c->cx0;
+			ky = c->oy + (float)c->cy0;
+			kw_ = (float)(c->cx1 - c->cx0);
+			kh = (float)(c->cy1 - c->cy0);
+		}
+		if (kw_ > 0 && kh > 0) {
+			nx = tiles(mx, ax, aw, iw, ox, kx, kx + kw_, &fx, &gx);
+			ny = tiles(my, ay, ah, ih, oy, ky, ky + kh, &fy, &gy);
+			for (iy = 0; iy < ny; iy++)
+				for (ix = 0; ix < nx; ix++) {
+					float tx = fx + (float)ix * (iw + gx);
+					float ty = fy + (float)iy * (ih + gy);
+
+					if (grad)
+						gradient_draw(c, &g, tx, ty, iw, ih);
+					else
+						draw_image(c, im, tx, ty, iw, ih,
+							cur, st);
+				}
+		}
+		if (grad)
+			free(g.s);
+		c->cx0 = cx0;
+		c->cy0 = cy0;
+		c->cx1 = cx1;
+		c->cy1 = cy1;
 	}
-	c->cx0 = cx0;
-	c->cy0 = cy0;
-	c->cx1 = cx1;
-	c->cy1 = cy1;
 	cvlist_free(&li);
 	cvlist_free(&lp);
 	cvlist_free(&ls);
 	cvlist_free(&lr);
+	cvlist_free(&lo);
+	cvlist_free(&lc);
+}
+
+void paint_layers_of(struct canvas *c, const struct box *b, int img_p,
+	float x, float y, float w, float h)
+{
+	paint_layers(c, b, img_p, x, y, w, h, 0);
 }
 
 void paint_bg_image(struct canvas *c, const struct box *b, float x, float y,
 	float w, float h)
 {
-	paint_layers_of(c, b, P_BACKGROUND_IMAGE, x, y, w, h);
+	paint_layers(c, b, P_BACKGROUND_IMAGE, x, y, w, h, 0);
+}
+
+/* The root's (or the body's) background images over the whole canvas,
+ * placed by that element's box */
+void paint_bg_canvas(struct canvas *c, const struct box *b)
+{
+	paint_layers(c, b, P_BACKGROUND_IMAGE, b->x - b->p[3] - b->b[3],
+		b->y - b->p[0] - b->b[0], b->w + b->p[1] + b->p[3] + b->b[1] +
+		b->b[3], b->h + b->p[0] + b->p[2] + b->b[0] + b->b[2], 1);
 }

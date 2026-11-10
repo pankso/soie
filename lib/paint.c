@@ -854,19 +854,41 @@ static int round_clip(struct canvas *c, const struct box *b, int inner,
 		h - e[0] - e[2], ir, save);
 }
 
+/* The box whose background is the canvas' (canvas_background()): not
+ * painted again in its own box */
+static const struct box *bg_canvas;
+
 static void paint_background(struct canvas *c, const struct box *b,
 	float x, float y, float w, float h)
 {
 	const char *im = b->style->v[P_BACKGROUND_IMAGE].u.str;
+	const char *clip = b->style->v[P_BACKGROUND_CLIP].u.str, *last;
 	struct canvas save;
 	int rk = 0;
 	unsigned char rgba[4];
 	float r[8];
 
+	if (b == bg_canvas)
+		return;
 	snap(c, &x, &y, &w, &h);
 	style_rgba(b->style, P_BACKGROUND_COLOR, rgba);
 	radii(b, w, h, r);
-	if (rgba[3]) {
+	/* the color is clipped as the last layer's background-clip says */
+	last = clip && strrchr(clip, ',') ? strrchr(clip, ',') + 1 : clip;
+	while (last && *last == ' ')
+		last++;
+	if (rgba[3] && last && (!strncmp(last, "padding-box", 11) ||
+	    !strncmp(last, "content-box", 11))) {
+		float e[4], ir[8];
+		int i;
+
+		for (i = 0; i < 4; i++)
+			e[i] = b->b[i] + (*last == 'c' ? b->p[i] : 0);
+		inset_radii(r, e, ir);
+		if (w - e[1] - e[3] > 0 && h - e[0] - e[2] > 0)
+			fill_rrect(c, x + e[3], y + e[0], w - e[1] - e[3],
+				h - e[0] - e[2], ir, 0, 0, 0, 0, ir, rgba);
+	} else if (rgba[3]) {
 		if (r[0] || r[1] || r[2] || r[3])
 			fill_rrect(c, x, y, w, h, r, 0, 0, 0, 0, r, rgba);
 		else
@@ -966,8 +988,10 @@ static int shadows(const struct style *st, struct shadow *sh)
 				sh[n].x = px;
 			else if (nl == 1)
 				sh[n].y = px;
-			else if (nl == 2)
-				sh[n].blur = px;
+			else if (nl == 2)	/* 300 px at most, as browsers:
+						 * its buffer grows with it */
+				sh[n].blur = px > 300 * doc_zoom() ? 300 *
+					doc_zoom() : px;
 			else
 				sh[n].spread = px;
 			if (nl++ == 2 && px < 0) {
@@ -1689,14 +1713,22 @@ static void paint_layer(struct canvas *c, struct box *b)
 static void canvas_background(struct canvas *c, struct box *root)
 {
 	unsigned char rgba[4] = { 255, 255, 255, 255 }, bg[4];
-	const struct box *src = root;
+	const struct box *src = root, *k;
+	const char *im = root->style->v[P_BACKGROUND_IMAGE].u.str;
 	int i, j;
 
 	style_rgba(root->style, P_BACKGROUND_COLOR, bg);
-	if (!bg[3] && root->first && root->first->node &&
-	    is_html(root->first->node, TAG_BODY)) {
-		src = root->first;
-		style_rgba(src->style, P_BACKGROUND_COLOR, bg);
+	bg_canvas = NULL;
+	if (!bg[3] && (!im || !strcmp(im, "none"))) {
+		/* nothing on the root: the body's, colors and images, and
+		 * the body does not paint it again in its own box */
+		for (k = root->first; k; k = k->next)
+			if (k->node && is_html(k->node, TAG_BODY))
+				break;
+		if (k) {
+			src = bg_canvas = k;
+			style_rgba(src->style, P_BACKGROUND_COLOR, bg);
+		}
 	}
 	for (j = 0; j < c->h; j++)
 		for (i = 0; i < c->w; i++)
@@ -1704,7 +1736,7 @@ static void canvas_background(struct canvas *c, struct box *root)
 				(size_t)i * 4, rgba, 4);
 	if (bg[3])
 		fill_rect(c, c->ox, c->oy, (float)c->w, (float)c->h, bg);
-	(void)src;
+	paint_bg_canvas(c, src);
 }
 
 static int paint(soie_node *doc, unsigned char *rgba, int width, int height,

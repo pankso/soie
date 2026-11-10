@@ -816,6 +816,9 @@ static int sh_background(struct cur *c, struct svec *out, int mask)
 {
 	struct buf img = { 0 }, pos = { 0 }, size = { 0 }, rep = { 0 },
 		clip = { 0 }, org = { 0 };
+	/* one layer's */
+	struct buf li = { 0 }, lp = { 0 }, ls = { 0 }, lr = { 0 }, lo = { 0 },
+		lc = { 0 };
 	struct color color;
 	int have_color = 0, layer = 0, i, att = -1;
 	const struct cv *v;
@@ -828,9 +831,9 @@ static int sh_background(struct cur *c, struct svec *out, int mask)
 	buf_add(&clip, "", 0);
 	buf_add(&org, "", 0);
 	for (;;) {
-		struct buf li = { 0 }, lp = { 0 }, ls = { 0 }, lr = { 0 };
 		int boxes = 0, after_slash = 0;
 
+		li.len = lp.len = ls.len = lr.len = lo.len = lc.len = 0;
 		buf_add(&li, "", 0);
 		buf_add(&lp, "", 0);
 		buf_add(&ls, "", 0);
@@ -859,10 +862,14 @@ static int sh_background(struct cur *c, struct svec *out, int mask)
 				   "view-box|no-clip", v->str) >= 0) {
 				cur_next(c);
 			} else if (is_box_kw(v)) {
-				/* first box: origin, second: clip */
-				struct buf *bb = boxes++ ? &clip : &org;
-
-				css_serialize(bb, v, 1);
+				/* one box: the origin and the clip; two: the
+				 * origin then the clip */
+				if (boxes > 1)
+					goto bad;
+				if (!boxes++)
+					css_serialize(&lo, v, 1);
+				lc.len = 0;
+				css_serialize(&lc, v, 1);
 				cur_next(c);
 			} else if (v->type == CT_DELIM && v->delim == '/') {
 				after_slash = 1;
@@ -896,15 +903,21 @@ static int sh_background(struct cur *c, struct svec *out, int mask)
 			buf_add(&pos, ", ", 2);
 			buf_add(&size, ", ", 2);
 			buf_add(&rep, ", ", 2);
+			buf_add(&org, ", ", 2);
+			buf_add(&clip, ", ", 2);
 		}
+		/* text is a clip only */
+		if (lo.len == 4 && !memcmp(lo.s, "text", 4))
+			lo.len = 0;
+		buf_add(&org, lo.len ? lo.s : "padding-box", lo.len ? lo.len :
+			11);
+		buf_add(&clip, lc.len ? lc.s : "border-box", lc.len ? lc.len :
+			10);
+
 		buf_add(&img, li.len ? li.s : "none", li.len ? li.len : 4);
 		buf_add(&pos, lp.len ? lp.s : "0% 0%", lp.len ? lp.len : 5);
 		buf_add(&size, ls.len ? ls.s : "auto", ls.len ? ls.len : 4);
 		buf_add(&rep, lr.len ? lr.s : "repeat", lr.len ? lr.len : 6);
-		buf_free(&li);
-		buf_free(&lp);
-		buf_free(&ls);
-		buf_free(&lr);
 		layer++;
 		if (!(v = cur_next(c)))
 			break;
@@ -941,6 +954,12 @@ static int sh_background(struct cur *c, struct svec *out, int mask)
 	buf_free(&rep);
 	buf_free(&clip);
 	buf_free(&org);
+	buf_free(&li);
+	buf_free(&lp);
+	buf_free(&ls);
+	buf_free(&lr);
+	buf_free(&lo);
+	buf_free(&lc);
 	return 1;
 bad:
 	buf_free(&img);
@@ -949,6 +968,12 @@ bad:
 	buf_free(&rep);
 	buf_free(&clip);
 	buf_free(&org);
+	buf_free(&li);
+	buf_free(&lp);
+	buf_free(&ls);
+	buf_free(&lr);
+	buf_free(&lo);
+	buf_free(&lc);
 	return 0;
 }
 

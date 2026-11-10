@@ -14,6 +14,32 @@ each change are in [DECISIONS.md](DECISIONS.md).
   properties from rules, classes, `currentColor` and `var()`, a
   `<style>` inside the SVG, sizes with units. Icon systems that paint
   through a class were black or missing.
+- Gradients as real background images: `background-size`,
+  `-position` and `-repeat` apply to them; repeating and conic
+  gradients, radial shapes, sizes and centres, color hints, stops with
+  two positions.
+- `background-origin` and `background-clip`, `background-repeat:
+  space` and `round`, positions of three and four values, sizes and
+  positions with units and `calc()`.
+- A positioned inline box is the containing block of its absolute
+  descendants.
+
+### Changed
+- The background images of the root or of the body cover the whole
+  page, as their color did.
+- Background images are placed from the padding box, as specified,
+  not from the border box.
+
+### Fixed
+- Absolute boxes centred with `margin: auto` between their offsets
+  (modals, spinners) stayed in the corner.
+- `:is()` and `:where()` with arguments of different kinds (a class
+  and a tag) never matched.
+- A stack overflow on a gradient of more than 32 stops, a crash on
+  grid lines beyond 46340, on 200000 nested `display: contents`, on a
+  rule of more than 32767 selectors; endless loops and memory blow-ups
+  on huge background positions, shadow blurs, `var()` chains, `<use>`
+  trees, roman list markers and long descendant selectors.
 
 ## [0.1.3] - 2026-11-04
 

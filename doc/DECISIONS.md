@@ -410,6 +410,20 @@ reversed, edit the entry and say why; do not leave stale rules here.
   stretched in its row. Not done: min and max sizes transferred
   through the ratio. Tailwind's aspect-video cards, video embeds and
   thumbnails were 0 px high.
+- Absolute boxes (CSS 2 10.3.7, 10.6.4): with left, right and a
+  width (or a max-width that stops the fill), the automatic margins
+  take what is left, both the same; the same for top, bottom and a
+  height. `inset: 0; margin: auto`, the way modals and spinners are
+  centred, left them in the corner. fit-content, min-content and
+  max-content widths are not the fill between left and right. A
+  positioned inline box is a containing block: the padding box around
+  its pieces on the lines (inline_rect()), so a badge or a tooltip in
+  a `position: relative` span sits on the span, not on the page.
+- Bounds found by a review: grid lines are clamped to 10000 as in
+  Firefox (the occupancy grid is rows x columns; line 50000 on both
+  axes overflowed its index); display: contents counts as a level of
+  the box tree's depth limit (200000 nested ones overflowed the
+  stack); roman list markers stop at 3999, decimal beyond.
 
 ## Fonts and text (phase 4)
 
@@ -550,6 +564,35 @@ reversed, edit the entry and say why; do not leave stale rules here.
   i486 x87 FPU and x86_64 SSE round floats differently (measured: 1
   level at most on some anti-aliased edges).
 
+- Background layers were rewritten (image.c, paint_layers()): a
+  gradient is an image without a size of its own, so it takes
+  background-size, -position and -repeat like any other (the 2 px
+  underline, the grid of 1em squares, the striped progress bar were
+  one gradient over the whole box). Each layer has its positioning
+  area (background-origin, the padding box by default: it was the
+  border box) and its clip (background-clip; the color is clipped by
+  the last layer's); positions take one to four values with their
+  keywords in any order (parse_position(): `top right` and
+  `right 10px bottom 5px` were read as x then y); lengths go through
+  the real parser with their units and calc() (raw_lenp(): 2em was
+  2 px); repeat has space and round; tiles start from a division, not
+  a loop (a position of 1e10 px never ended). The root's background
+  images, or the body's when the root has none, cover the canvas (CSS
+  2 14.2): only the color did. background-clip: text is still the
+  border box.
+- Gradients (CSS Images 3 and 4): linear ones to a corner at the
+  angle that puts the 50 % line through the two other corners (atan(h
+  / w), it was w / h); radial ones are ellipses by default, with
+  circle, the four extents, one or two radii and `at <position>`;
+  conic gradients with `from` and `at`; the three repeating forms;
+  stops with two positions, color hints, lengths with units; colors
+  mixed premultiplied (a fade to transparent keeps its color); any
+  number of stops (the 33rd wrote past a stack array). `in oklch` and
+  other color spaces are read and mixed in sRGB. One sample per pixel:
+  hard stops on a slant are not anti-aliased.
+- box-shadow blurs are capped at 300 px, as browsers: the blur buffer
+  grows with it and 99999px aborted on its allocation.
+
 ## Images (phase 6)
 
 - Decoders: PNG (libpng), JPEG (libjpeg), GIF first frame (own LZW
@@ -649,6 +692,9 @@ reversed, edit the entry and say why; do not leave stale rules here.
   otherwise, rare enough. SVG images (their own document, no
   cascade) keep the attribute path. Sizes take their units
   (width="1.5em", "5in": ulen()).
+- One svg_render() draws 200000 elements at most, those reached
+  through `<use>` counted each time: the depth limit of `<use>` did
+  not bound eight levels of thirty each.
 
 ## The browser (phase 7)
 
@@ -2067,6 +2113,21 @@ run again):
   twice is kept once). Rules with a state the engine does not have
   (:hover...) are not indexed: they never match. GitHub's style went
   from 515 to 430 ms.
+- Found by a review of the selector and cascade code: the :is() and
+  :where() index took its bucket and its key in one call's arguments,
+  whose order of evaluation is the compiler's: `:is(.a, p)` (a class
+  and a tag) was filed under the wrong key and never matched, only
+  lists of one kind worked (`.markdown :is(h1, .h1)`,
+  `:where(a, .link)`). Matching a chain of descendant combinators
+  tried every ancestor at every level; match_rec() now says when no
+  ancestor further up can match either (-1), as WebKit does, and the
+  search stops: 1.2 s to 8 ms on six combinators over fifty nested
+  divs. `&` keeps the last answers for a parent list while one
+  selector is matched (`&:is(&)` nested 28 deep asked 2^28 times). A
+  value after var() substitution is invalid past 256 KB (a custom
+  property that doubles at each of 32 levels ran out of memory). A
+  rule's selectors past the 32767th are not indexed (their index is a
+  short, the 32769th read before the list).
 - intern_style() hashes the 3 KB struct style 8 bytes at a time:
   -16 ms of cascade on Wikipedia.
 - Setting an attribute to the value it has changes nothing (no
