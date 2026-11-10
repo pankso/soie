@@ -12,3 +12,10 @@ var c = new CSSStyleSheet(); c.replaceSync('#p { color: rgb(1, 2, 3) }'); docume
 console.log(c.cssRules.length, getComputedStyle(document.getElementById('p')).color, c instanceof CSSStyleSheet, r[0] instanceof CSSStyleRule, CSSRule.MEDIA_RULE);
 c.insertRule('#p { color: rgb(4, 5, 6) }', 1); console.log(getComputedStyle(document.getElementById('p')).color);
 </script>
+<style id=s2>.b{color:blue;background:url(data:image/png;base64,AAAA)} @media screen{.a{color:red}} .c{color:red}</style><p class=a id=a>a</p><p class=c id=c>c</p>
+<script>
+var s2 = document.getElementById('s2').sheet;
+s2.cssRules[0].style.color = 'green'; console.log(s2.cssRules[0].cssText, getComputedStyle(document.getElementById('c')).color);
+s2.cssRules[1].cssRules[0].style.color = 'green'; console.log(getComputedStyle(document.getElementById('a')).color, document.getElementById('s2').textContent.indexOf('.a { color: green }') > 0);
+s2.cssRules[1].insertRule('#a { color: rgb(9, 9, 9) }', 1); console.log(getComputedStyle(document.getElementById('a')).color);
+</script>

@@ -834,6 +834,11 @@ static int nest_match(const struct sellist *l, const soie_node *el)
 {
 	int i, r;
 
+	/* only while match_from() runs: it empties the memo first; a
+	 * compound matched from elsewhere would read answers of another
+	 * time */
+	if (!nest_depth)
+		return matches_list(l, el);
 	for (i = 0; i < NEST_MEMO && i < nest_n; i++)
 		if (nest_memo[i].l == l && nest_memo[i].el == el)
 			return nest_memo[i].r;

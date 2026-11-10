@@ -331,10 +331,10 @@ static void counter_ops(const char *s, int op)
 		while (*s == ' ')
 			s++;
 		if (*s == '-' || *s == '+' || (*s >= '0' && *s <= '9')) {
-			long x = strtol(s, &end, 10);
+			long long x = strtoll(s, &end, 10);
 
-			v = x > 1000000000 ? 1000000000 : x < -1000000000 ?
-				-1000000000 : (int)x;
+			v = x > 2147483647 ? 2147483647 : x < -2147483647 ?
+				-2147483647 : (int)x;
 			has = 1;
 			s = end;
 		}
@@ -347,10 +347,14 @@ static void counter_ops(const char *s, int op)
 		}
 		if (!(k = counter_find(name)))
 			k = counter_new(name, 0);
-		if (op == 'i')
-			k->value = k->value > 1000000000 - v && v > 0 ?
-				k->value : k->value + v;
-		else
+		if (op == 'i') {
+			/* one that would overflow is not done (CSS Lists 3,
+			 * 4.3), as browsers */
+			long long sum = (long long)k->value + v;
+
+			if (sum <= 2147483647 && sum >= -2147483647)
+				k->value = (int)sum;
+		} else
 			k->value = v;
 	}
 }

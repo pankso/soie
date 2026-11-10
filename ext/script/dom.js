@@ -1881,6 +1881,39 @@ function cssSplit(text) {
 		.filter((r) => r && r !== ';');
 }
 
+/* The declarations of a block, cut at the semicolons that are not in
+ * a string nor in parentheses (url(data:image/png;base64,...)) */
+function cssDecls(body, map) {
+	let depth = 0, start = 0, q = null;
+	const put = (d) => {
+		const i = d.indexOf(':');
+		if (i > 0)
+			map.set(d.slice(0, i).trim().toLowerCase(),
+				d.slice(i + 1).trim());
+	};
+	for (let i = 0; i < body.length; i++) {
+		const c = body[i];
+		if (q) {
+			if (c === '\\')
+				i++;
+			else if (c === q)
+				q = null;
+		} else if (c === '"' || c === "'") {
+			q = c;
+		} else if (c === '(') {
+			depth++;
+		} else if (c === ')') {
+			if (depth)
+				depth--;
+		} else if (c === ';' && !depth) {
+			put(body.slice(start, i));
+			start = i + 1;
+		}
+	}
+	put(body.slice(start));
+	return map;
+}
+
 class CSSRule {
 	constructor(text, sheet, parent) {
 		const at = /^@(-[a-z]+-)?([a-z-]+)/i.exec(text);
@@ -1915,19 +1948,12 @@ class CSSRule {
 	get style() {
 		if (this._style)
 			return this._style;
-		const map = new Map();
-		for (const d of this._body.split(';')) {
-			const i = d.indexOf(':');
-			if (i > 0)
-				map.set(d.slice(0, i).trim().toLowerCase(),
-					d.slice(i + 1).trim());
-		}
+		const map = cssDecls(this._body, new Map());
 		const rule = this;
 		const sync = () => {
 			rule._body = [...map].map(([k, v]) => k + ': ' + v).join('; ');
 			rule._text = rule._head + ' { ' + rule._body + ' }';
-			if (rule.parentStyleSheet)
-				rule.parentStyleSheet._write();
+			rule._changed();
 		};
 		const dash = (k) => k.replace(/[A-Z]/g, (c) => '-' + c.toLowerCase());
 		const api_ = {
@@ -1967,12 +1993,7 @@ class CSSRule {
 			set(t, k, v) {
 				if (k === 'cssText') {
 					map.clear();
-					for (const d of String(v).split(';')) {
-						const i = d.indexOf(':');
-						if (i > 0)
-							map.set(d.slice(0, i).trim().toLowerCase(),
-								d.slice(i + 1).trim());
-					}
+					cssDecls(String(v), map);
 					sync();
 				} else if (typeof k === 'string') {
 					t.setProperty(k === 'cssFloat' ? 'float' : dash(k), v);
@@ -1982,6 +2003,16 @@ class CSSRule {
 		});
 		return this._style;
 	}
+	/* its text changed: the groups around it are written again from
+	 * their rules, then the sheet */
+	_changed() {
+		for (let p = this.parentRule; p; p = p.parentRule) {
+			p._body = p.cssRules.map((x) => x._text).join('\n');
+			p._text = p._head + ' {\n' + p._body + '\n}';
+		}
+		if (this.parentStyleSheet)
+			this.parentStyleSheet._write();
+	}
 	insertRule(r, i) {
 		const rules = this.cssRules;
 		i = i === undefined ? 0 : i;
@@ -1989,16 +2020,14 @@ class CSSRule {
 			this.parentStyleSheet, this));
 		this._body = rules.map((x) => x._text).join('\n');
 		this._text = this._head + ' {\n' + this._body + '\n}';
-		if (this.parentStyleSheet)
-			this.parentStyleSheet._write();
+		this._changed();
 		return i;
 	}
 	deleteRule(i) {
 		this.cssRules.splice(i, 1);
 		this._body = this.cssRules.map((x) => x._text).join('\n');
 		this._text = this._head + ' {\n' + this._body + '\n}';
-		if (this.parentStyleSheet)
-			this.parentStyleSheet._write();
+		this._changed();
 	}
 }
 for (const [k, v] of [['STYLE_RULE', 1], ['CHARSET_RULE', 2],

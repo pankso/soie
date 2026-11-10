@@ -503,7 +503,7 @@ static void draw_text(struct canvas *c, const struct style *st,
 		const char *fc = st->v[P_WEBKIT_TEXT_FILL_COLOR].u.str;
 
 		style_rgba(st, P_COLOR, rgba);
-		if (fc && *fc != 'c' && *fc != 'C') {
+		if (fc && !ascii_ieq(fc, "currentcolor")) {
 			struct cvlist l;
 			struct cur k;
 			struct color col;
@@ -1321,22 +1321,6 @@ static void paint_decor(struct canvas *c, const struct box *b, float x,
 
 	if (text_mask_pass)
 		return;
-	if (native_control(b)) {
-		/* a control left with the style sheet's own border: as
-		 * browsers draw it, a thin rounded ring, not the 2 px inset
-		 * or outset bevel its computed style says */
-		static const unsigned char ring[4] = { 143, 143, 157, 255 };
-		unsigned char bg[4];
-
-		snap(c, &sx, &sy, &sw, &shh);
-		style_rgba(b->style, P_BACKGROUND_COLOR, bg);
-		if (!bg[3])
-			bg[0] = bg[1] = bg[2] = bg[3] = 255;
-		fill_round(c, sx, sy, sw, shh, 4, ring);
-		fill_round(c, sx + 1, sy + 1, sw - 2, shh - 2, 3, bg);
-		return;
-	}
-
 	if (n) {
 		snap(c, &sx, &sy, &sw, &shh);
 		radii(b, sw, shh, r);
@@ -1347,13 +1331,31 @@ static void paint_decor(struct canvas *c, const struct box *b, float x,
 					sx + b->b[3], sy + b->b[0], sw - b->b[1] -
 					b->b[3], shh - b->b[0] - b->b[2], ir);
 	}
-	paint_background(c, b, x, y, w, h);
+	if (native_control(b)) {
+		/* a control left with the style sheet's own border: as
+		 * browsers draw it, a thin rounded ring, not the 2 px inset
+		 * or outset bevel its computed style says (its shadows are
+		 * the page's: painted as for any box) */
+		static const unsigned char ring[4] = { 143, 143, 157, 255 };
+		unsigned char bg[4];
+		float nx = x, ny = y, nw = w, nh = h;
+
+		snap(c, &nx, &ny, &nw, &nh);
+		style_rgba(b->style, P_BACKGROUND_COLOR, bg);
+		if (!bg[3])
+			bg[0] = bg[1] = bg[2] = bg[3] = 255;
+		fill_round(c, nx, ny, nw, nh, 4, ring);
+		fill_round(c, nx + 1, ny + 1, nw - 2, nh - 2, 3, bg);
+	} else {
+		paint_background(c, b, x, y, w, h);
+	}
 	for (i = n - 1; i >= 0; i--)
 		if (sh[i].inset)
 			paint_shadow(c, &sh[i], sx, sy, sw, shh, r, sx + b->b[3],
 				sy + b->b[0], sw - b->b[1] - b->b[3], shh -
 				b->b[0] - b->b[2], ir);
-	paint_borders(c, b, x, y, w, h);
+	if (!native_control(b))
+		paint_borders(c, b, x, y, w, h);
 }
 
 static void paint_outline(struct canvas *c, const struct box *b, float x,
@@ -1715,6 +1717,18 @@ static void paint_out_of_flow(struct canvas *c, struct box *b)
 }
 
 static void paint_context(struct canvas *c, struct box *b);
+static void paint_context_in(struct canvas *c, struct box *b,
+	struct zent *outer, struct zent *neg);
+
+/* Painted through a matrix (paint_transformed()), a stacking context
+ * of its own whatever its position */
+static int transformed(const struct box *b)
+{
+	float m[6];
+
+	return b->style && b->parent && b->type != B_TEXT &&
+		box_transform(b, m) == 2;
+}
 
 /* Where b and everything below it are, untransformed */
 static void subtree_bounds(const struct box *b, float *r, int depth)
@@ -2050,6 +2064,10 @@ static void negatives(struct box *b, struct zent **v, int *n, int *cap)
 			if (stacking_context(k))
 				continue;
 		}
+		/* a transformed box is painted whole, with its own layers:
+		 * they are not this context's */
+		if (transformed(k))
+			continue;
 		negatives(k, v, n, cap);
 	}
 }
@@ -2074,6 +2092,19 @@ static void paint_layers(struct canvas *c)
 static void paint_context(struct canvas *c, struct box *b)
 {
 	struct zent *outer = zlist, *neg = NULL;
+	float tm[6];
+
+	/* transformed: all of it through its matrix, its background and
+	 * its negative layers too (they were painted upright as well) */
+	if (b != tf_now && b->style && b->parent && box_transform(b, tm) == 2 &&
+	    paint_transformed(c, b, tm))
+		return;
+	paint_context_in(c, b, outer, neg);
+}
+
+static void paint_context_in(struct canvas *c, struct box *b,
+	struct zent *outer, struct zent *neg)
+{
 	int onz = nz, ocap = capz, nneg = 0, capneg = 0, i;
 	float alpha = c->alpha;
 	float op = b->style ? (float)b->style->v[P_OPACITY].u.num : 1;

@@ -784,9 +784,11 @@ static size_t piece_end(const char *t, size_t i, size_t n)
 		if (!(c < 0x80 && x < 0x80 && alnum(c) && alnum(x))) {
 			size_t left = 0;
 
+			/* two are enough to know: not to the end of the
+			 * word at each hyphen (40000 times abc-: seconds) */
 			if (c == '-')
-				for (e = k; e < n && t[e] != ' ' && t[e] != '\n';
-				     e++)
+				for (e = k; e < n && left < 2 && t[e] != ' ' &&
+				     t[e] != '\n'; e++)
 					left += ((unsigned char)t[e] & 0xc0) != 0x80;
 			if (break_between(p, c, x, done, left))
 				return k;
@@ -1058,7 +1060,10 @@ float layout_inline(struct box *b, struct bfc *f, float x, float y, float w,
 
 			s.snap.valid = 0;	/* placed once: no going back */
 			box_sizes(c, &mn, &mx);
-			if (!s.content || s.pen + mx <= s.lr) {
+			/* not above a float that waits for the next line: a
+			 * float is never higher than one before it in the
+			 * source (CSS 2 9.5.1, rule 5) */
+			if (!s.npending && (!s.content || s.pen + mx <= s.lr)) {
 				float old = s.lx, pen = s.pen;
 
 				place_float(c, f, s.y, x, x + w, w, cbh);

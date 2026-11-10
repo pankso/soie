@@ -522,6 +522,25 @@ reversed, edit the entry and say why; do not leave stale rules here.
   60 random changes on 7 site copies, no difference; it caught two
   wrong versions of this rule) and by the layouts of 11 site copies
   at two widths, the same with the rule on and off.
+- A float that waits for the next line holds the floats after it
+  there too: none is higher than one before it in the source (CSS 2
+  9.5.1, rule 5). docs.python.org's theme menu, a float after its
+  search box's, went up to the first line alone. What a replaced box
+  gives its container (box_sizes()) is within its min-width and
+  max-width; its content size is not (a flex base size ignores them).
+- A transformed box is the containing block of its absolute and fixed
+  descendants (CSS Transforms 1, 3), and a stacking context when it is
+  painted through its matrix: its negative layers and its background
+  belong to its own canvas (they were painted a second time upright).
+- A second review of this whole change set (another model, read
+  only) found eight defects, all fixed: the two above; the scan to
+  the end of the word at each hyphen (quadratic on 40000 `abc-`); a
+  rule's declarations cut at every semicolon in the CSSOM (a data:
+  URL lost its end), and changes to a rule inside @media not written
+  back; the page's box-shadow dropped on controls drawn with the thin
+  ring; -webkit-text-fill-color ignored for colors starting with a c;
+  a counter increment that overflows is now not done, as specified;
+  the `&` memo is only used while match_from() runs.
 - Bounds found by a review: grid lines are clamped to 10000 as in
   Firefox (the occupancy grid is rows x columns; line 50000 on both
   axes overflowed its index); display: contents counts as a level of

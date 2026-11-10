@@ -470,6 +470,15 @@ void box_sizes(struct box *b, float *mn, float *mx)
 	float e;
 
 	content_sizes(b, mn, mx);
+	if (b->type == B_REPLACED) {
+		/* what it gives its container is within its min-width and
+		 * max-width (a button of min-width: 40px counted for its 17
+		 * px of text: the float around it was too narrow, its last
+		 * word on a line of its own); its content size is not: a
+		 * flex base size ignores them */
+		*mn = clamp_w(b, *mn, -1);
+		*mx = clamp_w(b, *mx, -1);
+	}
 	e = hedges(b) + b->m[1] + b->m[3];
 	*mn += e;
 	*mx += e;
@@ -1715,9 +1724,15 @@ static void layout_abs(struct box *b)
 	float sx = b->sx, sy = b->sy, w, x, y, l, r, t, bt, e, h;
 	int fixed = kw(st, P_POSITION, "fixed");
 
-	for (cb = b->parent; cb && !fixed; cb = cb->parent) {
-		if (!cb->style || kw(cb->style, P_POSITION, "static") ||
-		    (cb->flags & BF_ANON))
+	for (cb = b->parent; cb; cb = cb->parent) {
+		float tm[6];
+
+		/* a transformed box holds its absolute and fixed
+		 * descendants (CSS Transforms 1, 3): they turn with it */
+		if (!cb->style || (cb->flags & BF_ANON))
+			continue;
+		if ((fixed || kw(cb->style, P_POSITION, "static")) &&
+		    (cb->type == B_INLINE || !box_transform(cb, tm)))
 			continue;
 		if (cb->type == B_INLINE) {
 			/* a positioned inline box: around its pieces (CSS 2

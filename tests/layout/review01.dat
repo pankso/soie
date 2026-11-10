@@ -80,3 +80,49 @@ width=200
 |           line 0,70 50x20
 |             text "b" 0,72 8x16
 
+#data
+<!DOCTYPE html><style>body{margin:0}i{float:right}</style><div>aaaa bbbb cccc dddd <i style="width:120px">x</i><i style="width:20px">y</i></div>
+#errors
+#layout
+width=200
+#document
+| block <html> 0,0 200x40
+|   block <body> 0,0 200x20
+|     block <div> 0,0 200x20
+|       line 0,0 200x20
+|         text "aaaa bbbb cccc dddd" 0,2 152x16
+|       block float <i> 80,20 120x20
+|         line 80,20 120x20
+|           text "x" 80,22 8x16
+|       block float <i> 60,20 20x20
+|         line 60,20 20x20
+|           text "y" 60,22 8x16
+
+#data
+<!DOCTYPE html><body style="margin:0"><div style="float:left">a <input type=submit value=Go style="min-width:40px;border:0;padding:0;font:16px sans-serif"> b</div>
+#errors
+#layout
+width=200
+#document
+| block <html> 0,0 200x26
+|   block <body> 0,0 200x0
+|     block float <div> 0,0 72x26
+|       line 0,0 72x26
+|         text "a " 0,8 16x16
+|         replaced <input> 16,0 40x20
+|         text " b" 56,8 16x16
+
+#data
+<!DOCTYPE html><body style="margin:0"><div style="margin:20px;width:100px;height:50px;transform:rotate(90deg)"><i style="position:absolute;left:5px;top:5px;width:10px;height:10px"></i><b style="position:fixed;right:0;bottom:0;width:10px;height:10px"></b></div><div style="width:100px;height:20px;transform:translate(10px,10px)"><i style="position:absolute;right:0;top:0;width:10px;height:10px"></i></div>
+#errors
+#layout
+width=200
+#document
+| block <html> 0,0 200x110
+|   block <body> 0,20 200x90
+|     block <div> 20,20 100x50
+|       block abs <i> 25,25 10x10
+|       block abs <b> 110,60 10x10
+|     block <div> 10,100 100x20
+|       block abs <i> 100,100 10x10
+

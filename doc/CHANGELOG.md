@@ -66,6 +66,8 @@ each change are in [DECISIONS.md](DECISIONS.md).
 - An endless loop on a body wrongly said compressed.
 
 ### Fixed
+- Floats keep their source order when one waits for the next line; a
+  transformed box holds its absolute descendants.
 - Deeply nested flex containers took exponential time to lay out (4.5
   s for 22 levels, now 4 ms).
 - JavaScript: `form.submit()` of a POST form (logins and payments
