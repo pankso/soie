@@ -1,0 +1,6 @@
+log: object string [object Intl]
+log: 1,234,567.891 -0.5 1,234.5 26% $1,234.50 15K 3.00
+log: 11/9/2026 | Monday, November 9, 2026 | 2:05:07 PM | 11/9/2026, 2:05:07 PM | Nov 9, 2026, 2:05 PM | 14:05
+log: month=Nov,literal= ,day=9
+log: one other two 3 days ago tomorrow a, b, and c
+log: a2,a10,b,B -1 2 fr

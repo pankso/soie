@@ -17,3 +17,4 @@ try { nope; console.log('NO THROW'); } catch(e) { console.log('unknown', e.name)
 console.log(typeof nope, typeof foo, 'nope' in window, 'foo' in window, Object.keys(window).indexOf('foo'));
 foo = 5; console.log(foo);
 </script>
+<script>console.log(Object.prototype.toString.call([]), Object.prototype.toString.call({}), Object.prototype.toString.call(document.querySelectorAll('p')), Object.prototype.toString.call(new Date()).length, Object.prototype.toString.call(new Map()), Object.prototype.toString.call(null));</script>

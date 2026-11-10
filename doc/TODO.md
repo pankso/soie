@@ -39,8 +39,8 @@ by RMSE (the 38 sites survey of 2026-11-03).
 
 - form.submit() of a POST form (through the host, guarded): logins
   that post by script (SAML, OAuth form_post, payment redirects).
-- `Intl` (at least DateTimeFormat().resolvedOptions(), NumberFormat)
-  and toLocale* with a locale.
+- `Intl` in other languages than English (CLDR data), real time zone
+  names.
 - The JS heap limit from the memory free at start, without the
   256 MB floor: on a 512 MB live system the kernel kills the browser
   on github.com before the limit is reached.

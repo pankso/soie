@@ -2021,6 +2021,18 @@ on the same frozen DOM.
   sent whole (it was cut at 16 KB), a select's options are found in
   its optgroups.
 
+- Intl exists, the smallest that keeps scripts going (dom.js, 300
+  lines): NumberFormat, DateTimeFormat, Collator, PluralRules,
+  RelativeTimeFormat, ListFormat, Segmenter, DisplayNames and Locale
+  with English conventions whatever the locale asked, the machine's
+  time zone as an Etc/GMT name. QuickJS has no Intl, and a script
+  that calls it (most date and number code does) stopped its whole
+  bundle on a ReferenceError (OpenStreetMap's). toLocaleString(),
+  toLocaleDateString(), toLocaleTimeString() and localeCompare() go
+  through it and take their options. Other languages' month names,
+  separators and collations would need CLDR data: megabytes, not for
+  now.
+
 ## Audio and video (phase 11)
 
 - The engine owns the `<video>`/`<audio>` side (`lib/player.c`):

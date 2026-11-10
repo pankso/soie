@@ -36,6 +36,8 @@ each change are in [DECISIONS.md](DECISIONS.md).
 - Form controls sized as in browsers (text fields, selects as wide
   as their options, list boxes) and drawn: `range`, `color`, `file`,
   `<progress>`, `<meter>`; unstyled controls get a thin rounded ring.
+- JavaScript: a minimal `Intl` (English conventions) and the
+  `toLocale...` methods with their options.
 - `revert`.
 - CSS counters: `counter-reset`, `counter-increment`, `counter-set`,
   `counter()` and `counters()`.

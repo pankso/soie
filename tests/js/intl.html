@@ -1,0 +1,10 @@
+<!doctype html><script>
+var d = new Date(Date.UTC(2026, 10, 9, 14, 5, 7));
+var U = { timeZone: 'UTC' };
+console.log(typeof Intl, typeof Intl.DateTimeFormat().resolvedOptions().timeZone, String(Intl));
+console.log(new Intl.NumberFormat('en').format(1234567.891), Intl.NumberFormat().format(-0.5), (1234.5).toLocaleString('de-DE'), new Intl.NumberFormat('en', { style: 'percent' }).format(0.256), new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(1234.5), new Intl.NumberFormat('en', { notation: 'compact' }).format(15300), new Intl.NumberFormat('en', { minimumFractionDigits: 2 }).format(3));
+console.log(new Intl.DateTimeFormat('en-US', U).format(d) + ' | ' + d.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric', timeZone: 'UTC' }) + ' | ' + d.toLocaleTimeString('en-US', U) + ' | ' + d.toLocaleString('en-US', U) + ' | ' + new Intl.DateTimeFormat('en', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'UTC' }).format(d) + ' | ' + new Intl.DateTimeFormat('en', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'UTC' }).format(d));
+console.log(new Intl.DateTimeFormat('en', { month: 'short', day: 'numeric', timeZone: 'UTC' }).formatToParts(d).map(function (p) { return p.type + '=' + p.value; }).join(','));
+console.log(new Intl.PluralRules('en').select(1), new Intl.PluralRules('en').select(2), new Intl.PluralRules('en', { type: 'ordinal' }).select(22), new Intl.RelativeTimeFormat('en').format(-3, 'day'), new Intl.RelativeTimeFormat('en', { numeric: 'auto' }).format(1, 'day'), new Intl.ListFormat('en').format(['a', 'b', 'c']));
+console.log(['b', 'a10', 'a2', 'B'].sort(new Intl.Collator('en', { numeric: true }).compare).join(), 'a'.localeCompare('b'), [...new Intl.Segmenter('en', { granularity: 'word' }).segment('Hi, you')].filter(function (s) { return s.isWordLike; }).length, new Intl.Locale('fr-CH').language);
+</script>

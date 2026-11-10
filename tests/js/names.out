@@ -1,5 +1,6 @@
-log: hello | true | b | hello | 2 | true | 1 | true | [object URLSearchParams] | [object Window] | [object HTMLDivElement] | [object Blob] | [object Document] | string | true | 1
+log: hello | true | b | hello | 2 | true | 1 | true | [object URLSearchParams] | [object Window] | [object HTMLDivElement] | [object Blob] | [object EventTarget] | string | true | 1
 log: named foo FORM string my-id
 log: unknown ReferenceError
 log: undefined object false true -1
 log: 5
+log: [object Array] [object Object] [object Array] 13 [object Map] [object Null]

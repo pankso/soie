@@ -5503,6 +5503,410 @@ const selection = {
 	toString() { return ''; }, empty() {}, extend() {}, setBaseAndExtent() {},
 };
 
+/*
+ * Intl, the smallest that keeps scripts going: English conventions
+ * whatever the locale asked, the machine's time zone. Pages test for
+ * it less than they call it, and a ReferenceError stops their bundle.
+ */
+const INTL_MONTHS = ['January', 'February', 'March', 'April', 'May', 'June',
+	'July', 'August', 'September', 'October', 'November', 'December'];
+const INTL_DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday',
+	'Friday', 'Saturday'];
+const intlLocale = (l) => {
+	const v = Array.isArray(l) ? l[0] : l;
+	return typeof v === 'string' && v ? v : 'en-US';
+};
+const intlGroup = (s) => s.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+
+class IntlNumberFormat {
+	constructor(locales, o) {
+		this._l = intlLocale(locales);
+		this._o = Object.assign({}, o);
+	}
+	format(v) {
+		const o = this._o;
+		let n = Number(v);
+		if (!isFinite(n))
+			return isNaN(n) ? 'NaN' : n < 0 ? '-∞' : '∞';
+		if (o.style === 'percent')
+			n *= 100;
+		let suffix = '';
+		if (o.notation === 'compact') {
+			const a = Math.abs(n);
+			const u = a >= 1e12 ? [1e12, 'T'] : a >= 1e9 ? [1e9, 'B'] :
+				a >= 1e6 ? [1e6, 'M'] : a >= 1e3 ? [1e3, 'K'] : null;
+			if (u) {
+				n /= u[0];
+				suffix = u[1];
+			}
+		}
+		const cur = o.style === 'currency';
+		let min = o.minimumFractionDigits, max = o.maximumFractionDigits;
+		if (min === undefined)
+			min = cur ? 2 : 0;
+		if (max === undefined)
+			max = cur ? 2 : suffix ? (Math.abs(n) < 10 ? 1 : 0) :
+				o.style === 'percent' ? 0 : 3;
+		if (max < min)
+			max = min;
+		let s = Math.abs(n).toFixed(Math.min(20, Math.max(0, max)));
+		if (max > min && s.includes('.')) {
+			s = s.replace(/0+$/, '');
+			const d = s.split('.')[1] || '';
+			s = s.replace(/\.$/, '');
+			if (d.length < min)
+				s = (s.includes('.') ? s : s + '.') +
+					'0'.repeat(min - d.length);
+		}
+		let [i, f] = s.split('.');
+		if (o.minimumIntegerDigits)
+			i = i.padStart(o.minimumIntegerDigits, '0');
+		if (o.useGrouping !== false)
+			i = intlGroup(i);
+		s = f ? i + '.' + f : i;
+		if (cur) {
+			const sym = { USD: '$', EUR: '€', GBP: '£', JPY: '¥',
+				CHF: 'CHF ' }[o.currency] ||
+				(o.currency ? o.currency + ' ' : '');
+			s = sym + s;
+		} else if (o.style === 'percent') {
+			s += '%';
+		} else if (o.style === 'unit' && o.unit) {
+			s += ' ' + o.unit;
+		}
+		return (n < 0 ? '-' : '') + s + suffix;
+	}
+	formatToParts(v) {
+		return [{ type: 'literal', value: this.format(v) }];
+	}
+	resolvedOptions() {
+		return Object.assign({ locale: this._l, numberingSystem: 'latn',
+			style: 'decimal', minimumFractionDigits: 0,
+			maximumFractionDigits: 3, useGrouping: true }, this._o);
+	}
+	static supportedLocalesOf(l) { return [].concat(l || []); }
+}
+
+const intlTZ = () => {
+	const m = -new Date().getTimezoneOffset();
+	if (!m)
+		return 'UTC';
+	const a = Math.abs(m);
+	/* Etc/GMT signs are the other way round */
+	return a % 60 ? 'UTC' : 'Etc/GMT' + (m < 0 ? '+' : '-') + a / 60;
+};
+
+class IntlDateTimeFormat {
+	constructor(locales, o) {
+		this._l = intlLocale(locales);
+		this._o = Object.assign({}, o);
+	}
+	_parts(d) {
+		const o = this._o;
+		const t = d === undefined ? new Date() : new Date(d);
+		if (isNaN(t))
+			throw new RangeError('Invalid time value');
+		const utc = o.timeZone === 'UTC' || o.timeZone === 'GMT';
+		const G = (k) => t[(utc ? 'getUTC' : 'get') + k]();
+		const p2 = (n) => String(n).padStart(2, '0');
+		const some = ['weekday', 'year', 'month', 'day', 'hour', 'minute',
+			'second', 'dateStyle', 'timeStyle'].some((k) => k in o);
+		const ds = o.dateStyle, ts = o.timeStyle;
+		const out = [];
+		const mon = ds === 'full' || ds === 'long' ? 'long' :
+			ds === 'medium' ? 'short' : ds === 'short' ? 'numeric' :
+			o.month || (!some ? 'numeric' : null);
+		const wd = ds === 'full' ? 'long' : o.weekday;
+		const yr = ds ? (ds === 'short' ? '2-digit' : 'numeric') :
+			o.year || (!some ? 'numeric' : null);
+		const day = ds ? 'numeric' : o.day || (!some ? 'numeric' : null);
+		const word = mon === 'long' || mon === 'short' || mon === 'narrow';
+		const M = () => mon === 'long' ? INTL_MONTHS[G('Month')] :
+			mon === 'short' ? INTL_MONTHS[G('Month')].slice(0, 3) :
+			mon === 'narrow' ? INTL_MONTHS[G('Month')][0] :
+			mon === '2-digit' ? p2(G('Month') + 1) :
+			String(G('Month') + 1);
+		const Y = () => yr === '2-digit' ? p2(G('FullYear') % 100) :
+			String(G('FullYear'));
+		const D = () => day === '2-digit' ? p2(G('Date')) : String(G('Date'));
+		if (wd)
+			out.push({ type: 'weekday', value: wd === 'long' ?
+				INTL_DAYS[G('Day')] : INTL_DAYS[G('Day')].slice(0,
+				wd === 'narrow' ? 1 : 3) });
+		const date = [];
+		if (word) {
+			if (mon)
+				date.push({ type: 'month', value: M() });
+			if (day)
+				date.push({ type: 'literal', value: ' ' },
+					{ type: 'day', value: D() });
+			if (yr)
+				date.push({ type: 'literal', value: day ? ', ' : ' ' },
+					{ type: 'year', value: Y() });
+		} else {
+			for (const [k, v] of [['month', mon && M()], ['day', day && D()],
+			    ['year', yr && Y()]])
+				if (v) {
+					if (date.length)
+						date.push({ type: 'literal', value: '/' });
+					date.push({ type: k, value: v });
+				}
+		}
+		if (date.length) {
+			if (out.length)
+				out.push({ type: 'literal', value: ', ' });
+			out.push(...date);
+		}
+		const hr = ts ? 'numeric' : o.hour, mi = ts ? '2-digit' : o.minute;
+		const se = ts ? (ts === 'short' ? null : '2-digit') : o.second;
+		if (hr || mi || se) {
+			const h12 = o.hour12 !== undefined ? o.hour12 :
+				o.hourCycle ? /^h1/.test(o.hourCycle) : true;
+			let h = G('Hours');
+			const pm = h >= 12;
+			if (out.length)
+				out.push({ type: 'literal', value: ', ' });
+			if (h12)
+				h = h % 12 || 12;
+			const time = [];
+			if (hr)
+				time.push({ type: 'hour', value: hr === '2-digit' || !h12 ?
+					p2(h) : String(h) });
+			if (mi)
+				time.push({ type: 'minute', value: p2(G('Minutes')) });
+			if (se)
+				time.push({ type: 'second', value: p2(G('Seconds')) });
+			time.forEach((x, i) => {
+				if (i)
+					out.push({ type: 'literal', value: ':' });
+				out.push(x);
+			});
+			if (h12 && hr)
+				out.push({ type: 'literal', value: ' ' },
+					{ type: 'dayPeriod', value: pm ? 'PM' : 'AM' });
+			if (o.timeZoneName)
+				out.push({ type: 'literal', value: ' ' },
+					{ type: 'timeZoneName', value: utc ? 'UTC' :
+					'GMT' + (t.getTimezoneOffset() ? (t.getTimezoneOffset() <
+					0 ? '+' : '-') + Math.abs(t.getTimezoneOffset()) /
+					60 : '') });
+		}
+		return out;
+	}
+	format(d) { return this._parts(d).map((p) => p.value).join(''); }
+	formatToParts(d) { return this._parts(d); }
+	formatRange(a, b) { return this.format(a) + ' – ' + this.format(b); }
+	resolvedOptions() {
+		return Object.assign({ locale: this._l, calendar: 'gregory',
+			numberingSystem: 'latn', timeZone: this._o.timeZone ||
+			intlTZ() }, this._o);
+	}
+	static supportedLocalesOf(l) { return [].concat(l || []); }
+}
+
+class IntlCollator {
+	constructor(locales, o) {
+		this._l = intlLocale(locales);
+		this._o = Object.assign({}, o);
+		/* letters first, without their accents and their case, then
+		 * the accents, then lower case before upper case */
+		const base = (x) => x.normalize('NFD').replace(/\p{M}/gu, '')
+			.toLowerCase();
+		const cmp = (x, y) => x < y ? -1 : x > y ? 1 : 0;
+		const text = (x, y) => {
+			const s = this._o.sensitivity;
+			return cmp(base(x), base(y)) || (s === 'base' ? 0 :
+				cmp(x.toLowerCase(), y.toLowerCase()) ||
+				(s === 'accent' ? 0 : -cmp(x, y)));
+		};
+		this.compare = (a, b) => {
+			const x = String(a), y = String(b);
+			if (!this._o.numeric)
+				return text(x, y);
+			const ra = x.match(/\d+|\D+/g) || [];
+			const rb = y.match(/\d+|\D+/g) || [];
+			for (let i = 0; i < ra.length && i < rb.length; i++) {
+				const c = /^\d/.test(ra[i]) && /^\d/.test(rb[i]) ?
+					Math.sign(Number(ra[i]) - Number(rb[i])) :
+					text(ra[i], rb[i]);
+				if (c)
+					return c;
+			}
+			return Math.sign(ra.length - rb.length);
+		};
+	}
+	resolvedOptions() {
+		return Object.assign({ locale: this._l, usage: 'sort',
+			sensitivity: 'variant' }, this._o);
+	}
+	static supportedLocalesOf(l) { return [].concat(l || []); }
+}
+
+class IntlPluralRules {
+	constructor(locales, o) {
+		this._l = intlLocale(locales);
+		this._o = Object.assign({}, o);
+	}
+	select(n) {
+		if (this._o.type === 'ordinal') {
+			const a = n % 10, b = n % 100;
+			return a === 1 && b !== 11 ? 'one' : a === 2 && b !== 12 ?
+				'two' : a === 3 && b !== 13 ? 'few' : 'other';
+		}
+		return n === 1 ? 'one' : 'other';
+	}
+	resolvedOptions() {
+		return Object.assign({ locale: this._l, type: 'cardinal' }, this._o);
+	}
+	static supportedLocalesOf(l) { return [].concat(l || []); }
+}
+
+class IntlRelativeTimeFormat {
+	constructor(locales, o) {
+		this._l = intlLocale(locales);
+		this._o = Object.assign({}, o);
+	}
+	format(v, unit) {
+		const u = String(unit).replace(/s$/, ''), a = Math.abs(v);
+		if (this._o.numeric === 'auto' && u === 'day' && a <= 1)
+			return v === 0 ? 'today' : v < 0 ? 'yesterday' : 'tomorrow';
+		const s = intlGroup(String(a)) + ' ' + u + (a === 1 ? '' : 's');
+		return v < 0 || Object.is(v, -0) ? s + ' ago' : 'in ' + s;
+	}
+	formatToParts(v, unit) {
+		return [{ type: 'literal', value: this.format(v, unit) }];
+	}
+	resolvedOptions() {
+		return Object.assign({ locale: this._l, style: 'long',
+			numeric: 'always', numberingSystem: 'latn' }, this._o);
+	}
+	static supportedLocalesOf(l) { return [].concat(l || []); }
+}
+
+class IntlListFormat {
+	constructor(locales, o) {
+		this._l = intlLocale(locales);
+		this._o = Object.assign({}, o);
+	}
+	format(list) {
+		const a = [...list].map(String);
+		const w = this._o.type === 'disjunction' ? 'or' : 'and';
+		if (this._o.type === 'unit')
+			return a.join(', ');
+		if (a.length < 3)
+			return a.join(' ' + w + ' ');
+		return a.slice(0, -1).join(', ') + ', ' + w + ' ' + a[a.length - 1];
+	}
+	formatToParts(list) {
+		return [{ type: 'literal', value: this.format(list) }];
+	}
+	resolvedOptions() {
+		return Object.assign({ locale: this._l, type: 'conjunction',
+			style: 'long' }, this._o);
+	}
+	static supportedLocalesOf(l) { return [].concat(l || []); }
+}
+
+class IntlSegmenter {
+	constructor(locales, o) {
+		this._l = intlLocale(locales);
+		this._o = Object.assign({ granularity: 'grapheme' }, o);
+	}
+	segment(str) {
+		const s = String(str), gr = this._o.granularity, out = [];
+		const re = gr === 'word' ? /[\p{L}\p{N}_'’]+|\s+|[^\p{L}\p{N}_\s]/gu :
+			gr === 'sentence' ? /[^.!?]+[.!?]*\s*/g :
+			/\P{M}\p{M}*/gu;
+		let m;
+		while ((m = re.exec(s)))
+			out.push({ segment: m[0], index: m.index, input: s,
+				isWordLike: gr === 'word' ? /[\p{L}\p{N}]/u.test(m[0]) :
+				undefined });
+		out.containing = (i) => out.find((x) => i >= x.index &&
+			i < x.index + x.segment.length);
+		return out;
+	}
+	resolvedOptions() {
+		return Object.assign({ locale: this._l }, this._o);
+	}
+	static supportedLocalesOf(l) { return [].concat(l || []); }
+}
+
+class IntlDisplayNames {
+	constructor(locales, o) {
+		this._l = intlLocale(locales);
+		this._o = Object.assign({}, o);
+	}
+	of(code) { return String(code); }
+	resolvedOptions() {
+		return Object.assign({ locale: this._l }, this._o);
+	}
+	static supportedLocalesOf(l) { return [].concat(l || []); }
+}
+
+class IntlLocale {
+	constructor(tag, o) {
+		const t = String(tag).split('-');
+		this.language = (o && o.language) || t[0].toLowerCase();
+		this.region = (o && o.region) || (t.find((x, i) => i &&
+			/^([A-Za-z]{2}|\d{3})$/.test(x)) || undefined);
+		this.script = t.find((x, i) => i && /^[A-Za-z]{4}$/.test(x));
+		this.baseName = [this.language, this.script, this.region]
+			.filter(Boolean).join('-');
+	}
+	toString() { return this.baseName; }
+	maximize() { return this; }
+	minimize() { return this; }
+}
+
+if (typeof g.Intl === 'undefined') {
+	const callable = (C) => new Proxy(C, {
+		apply: (t, th, a) => new t(...a) });
+	Object.defineProperty(g, 'Intl', { value: {
+		NumberFormat: callable(IntlNumberFormat),
+		DateTimeFormat: callable(IntlDateTimeFormat),
+		Collator: callable(IntlCollator),
+		PluralRules: IntlPluralRules,
+		RelativeTimeFormat: IntlRelativeTimeFormat,
+		ListFormat: IntlListFormat, Segmenter: IntlSegmenter,
+		DisplayNames: IntlDisplayNames, Locale: IntlLocale,
+		getCanonicalLocales: (l) => [].concat(l || []),
+		supportedValuesOf: () => [],
+		[Symbol.toStringTag]: 'Intl',
+	}, writable: true, configurable: true });
+	/* the toLocale methods through it: the locale argument and the
+	 * options were ignored */
+	const def = (o, k, f) => Object.defineProperty(o, k, { value: f,
+		writable: true, configurable: true });
+	def(Number.prototype, 'toLocaleString', function (l, o) {
+		return new IntlNumberFormat(l, o).format(this);
+	});
+	def(Date.prototype, 'toLocaleDateString', function (l, o) {
+		return new IntlDateTimeFormat(l, o && Object.keys(o).length ? o :
+			{ year: 'numeric', month: 'numeric', day: 'numeric' })
+			.format(this);
+	});
+	def(Date.prototype, 'toLocaleTimeString', function (l, o) {
+		const tz = o && o.timeZone ? { timeZone: o.timeZone } : {};
+		return new IntlDateTimeFormat(l, o && Object.keys(o).some((k) =>
+			k !== 'timeZone') ? o : Object.assign({ hour: 'numeric',
+			minute: '2-digit', second: '2-digit' }, tz)).format(this);
+	});
+	def(Date.prototype, 'toLocaleString', function (l, o) {
+		const tz = o && o.timeZone ? { timeZone: o.timeZone } : {};
+		return new IntlDateTimeFormat(l, o && Object.keys(o).some((k) =>
+			k !== 'timeZone') ? o : Object.assign({ year: 'numeric',
+			month: 'numeric', day: 'numeric', hour: 'numeric',
+			minute: '2-digit', second: '2-digit' }, tz)).format(this);
+	});
+	def(String.prototype, 'localeCompare', function (that, l, o) {
+		return new IntlCollator(l, o).compare(String(this), String(that));
+	});
+	def(Array.prototype, 'toLocaleString', function () {
+		return this.map((x) => x == null ? '' : x.toLocaleString()).join(',');
+	});
+}
+
 /* Globals */
 const globals = {
 	window: g, self: g, top: g, parent: g, frames: g, opener: null,
@@ -5713,9 +6117,13 @@ Object.defineProperty(g, 'location', { get: () => location,
  * it (axios sent the first as JSON) */
 for (const k of Object.keys(globals)) {
 	const c = globals[k];
+	/* our own classes only: NodeList is Array here, and a tag on
+	 * Array.prototype named every array a NodeList */
 	if (typeof c === 'function' && /^[A-Z]/.test(k) && c.prototype &&
 	    !Object.prototype.hasOwnProperty.call(c.prototype,
-	    Symbol.toStringTag))
+	    Symbol.toStringTag) &&
+	    Object.prototype.toString.call(c.prototype) === '[object Object]' &&
+	    Object.getPrototypeOf(c.prototype) !== null && c !== Date)
 		Object.defineProperty(c.prototype, Symbol.toStringTag,
 			{ value: k, configurable: true });
 }
