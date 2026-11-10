@@ -65,7 +65,7 @@ struct sctx {
 	const soie_script_host *host;
 	char *url;
 	JSValue api;
-	JSValue proto_for, dispatch, tick, frame, next_timer;
+	JSValue proto_for, dispatch, tick, frame, next_timer, names;
 	/* nodes with a wrapper (struct wref their user pointer) */
 	soie_node **wrapped;
 	size_t nwrapped, capwrapped;
@@ -1766,6 +1766,43 @@ static JSValue n_current(JSContext *js, JSValueConst this, int argc,
 	return wrap(c, soie_script_current(c->doc));
 }
 
+/* ids(): the ids of the document's elements, and the names of its
+ * forms, images and frames: what the window has as named properties */
+static JSValue n_ids(JSContext *js, JSValueConst this, int argc,
+	JSValueConst *argv)
+{
+	soie_node *doc = ctx_of(js)->doc, *n;
+	JSValue a = JS_NewArray(js);
+	uint32_t k = 0;
+
+	(void)this;
+	(void)argc;
+	(void)argv;
+	for (n = soie_node_first_child(doc); n; ) {
+		if (soie_node_get_type(n) == SOIE_ELEMENT) {
+			const char *t = soie_element_name(n), *v;
+
+			if ((v = soie_element_get_attr(n, "id")) && *v)
+				JS_SetPropertyUint32(js, a, k++,
+					JS_NewString(js, v));
+			if ((!strcmp(t, "form") || !strcmp(t, "img") ||
+			     !strcmp(t, "iframe") || !strcmp(t, "embed") ||
+			     !strcmp(t, "object")) &&
+			    (v = soie_element_get_attr(n, "name")) && *v)
+				JS_SetPropertyUint32(js, a, k++,
+					JS_NewString(js, v));
+		}
+		if (soie_node_first_child(n)) {
+			n = soie_node_first_child(n);
+			continue;
+		}
+		while (n && n != doc && !soie_node_next_sibling(n))
+			n = soie_node_parent(n);
+		n = n && n != doc ? soie_node_next_sibling(n) : NULL;
+	}
+	return a;
+}
+
 /* Audio and video elements */
 static JSValue n_player(JSContext *js, JSValueConst this, int argc,
 	JSValueConst *argv)
@@ -2548,6 +2585,7 @@ static const JSCFunctionListEntry natives[] = {
 	JS_CFUNC_DEF("message", 2, n_message),
 	JS_CFUNC_DEF("now", 0, n_now),
 	JS_CFUNC_DEF("currentScript", 0, n_current),
+	JS_CFUNC_DEF("ids", 0, n_ids),
 	JS_CFUNC_DEF("random", 1, n_random),
 	JS_CFUNC_DEF("player", 3, n_player),
 	JS_CFUNC_DEF("playerState", 1, n_player_state),
@@ -2760,6 +2798,7 @@ static struct sctx *ctx_new(soie_node *doc, const char *url,
 	c->proto_for = JS_GetPropertyStr(c->js, c->api, "protoFor");
 	c->dispatch = JS_GetPropertyStr(c->js, c->api, "dispatch");
 	c->tick = JS_GetPropertyStr(c->js, c->api, "tick");
+	c->names = JS_GetPropertyStr(c->js, c->api, "names");
 	c->frame = JS_GetPropertyStr(c->js, c->api, "frame");
 	c->next_timer = JS_GetPropertyStr(c->js, c->api, "nextTimer");
 	c->received = JS_GetPropertyStr(c->js, c->api, "received");
@@ -2822,6 +2861,7 @@ static void stop(void *ctx)
 	JS_FreeValue(c->js, c->proto_for);
 	JS_FreeValue(c->js, c->dispatch);
 	JS_FreeValue(c->js, c->tick);
+	JS_FreeValue(c->js, c->names);
 	JS_FreeValue(c->js, c->frame);
 	JS_FreeValue(c->js, c->next_timer);
 	JS_FreeValue(c->js, c->received);
@@ -2866,6 +2906,10 @@ static void run(void *ctx, soie_node *el, const char *src, size_t len,
 	code[len] = 0;
 	c->deadline = now_ms() + RUN_MS;
 	c->written = NULL;
+	/* the elements parsed so far, by their id, for this script */
+	if (JS_IsFunction(c->js, c->names))
+		JS_FreeValue(c->js, JS_Call(c->js, c->names, JS_UNDEFINED, 0,
+			NULL));
 	v = JS_Eval(c->js, code, len, url, module ? JS_EVAL_TYPE_MODULE :
 		JS_EVAL_TYPE_GLOBAL);
 	free(code);

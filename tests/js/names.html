@@ -1,0 +1,19 @@
+<!doctype html><form name=login id=f1 method=get><input name=q value=hello><input type=radio name=r value=a><input type=radio name=r value=b checked><select name=s><option>x</select></form>
+<div id=d><p>1</p><p>2</p><span><p>3</p></span></div><a id=l href="javascript:window.ran=1">x</a>
+<script>
+var o=[];
+o.push(document.forms[0].q.value, document.forms.login===document.forms[0], document.forms[0].r.value, document.forms[0].elements.q.value);
+var d=document.getElementById('d');
+o.push(d.querySelectorAll(':scope > p').length, d.matches(':scope'), document.querySelectorAll(':scope').length, d.querySelector(':scope')===null);
+o.push(Object.prototype.toString.call(new URLSearchParams('a=1')), Object.prototype.toString.call(window), Object.prototype.toString.call(d), Object.prototype.toString.call(new Blob([])), Object.prototype.toString.call(document));
+o.push(typeof location.href, location===window.location);
+document.getElementById('l').click(); o.push(window.ran);
+console.log(o.join(' | '));
+</script>
+<div id=foo>x</div><form name=bar></form><div id=my-id></div>
+<script>
+try { console.log('named', foo.id, bar.tagName, typeof location.href, window['my-id'].id); } catch(e) { console.log('E1', e.message); }
+try { nope; console.log('NO THROW'); } catch(e) { console.log('unknown', e.name); }
+console.log(typeof nope, typeof foo, 'nope' in window, 'foo' in window, Object.keys(window).indexOf('foo'));
+foo = 5; console.log(foo);
+</script>

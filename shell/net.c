@@ -629,9 +629,13 @@ static int read_response(struct conn *c, struct response *raw,
 		}
 		k = conn_read(c, buf, sizeof(buf));
 		if (k <= 0) {
-			/* the peer closed: fine when that frames the body */
+			/* the peer closed: fine when that frames the body;
+			 * before a Content-Length or the last chunk, it is
+			 * a body cut short */
 			*reuse = 0;
 			free(hb);
+			if (have && mode)
+				raw->cut = 1;
 			return raw->len && have ? 0 : -1;
 		}
 		add(raw, buf, (size_t)k);
@@ -793,7 +797,7 @@ static int inflate_body(struct response *r)
 	z_stream z;
 	struct response out;
 	char buf[16384];
-	int ret;
+	int ret, raw = 0;
 
 	memset(&z, 0, sizeof(z));
 	memset(&out, 0, sizeof(out));
@@ -805,13 +809,16 @@ static int inflate_body(struct response *r)
 		z.next_out = (unsigned char *)buf;
 		z.avail_out = sizeof(buf);
 		ret = inflate(&z, Z_NO_FLUSH);
-		if (ret == Z_DATA_ERROR && !out.len) {
-			/* raw deflate, as some servers send */
+		if (ret == Z_DATA_ERROR && !out.len && !raw) {
+			/* raw deflate, as some servers send: tried once (a
+			 * body that is neither came back here for ever) */
+			raw = 1;
 			inflateEnd(&z);
 			memset(&z, 0, sizeof(z));
 			inflateInit2(&z, -15);
 			z.next_in = (unsigned char *)r->body;
 			z.avail_in = (unsigned)r->len;
+			ret = Z_OK;
 			continue;
 		}
 		if (ret != Z_OK && ret != Z_STREAM_END)
@@ -825,6 +832,12 @@ static int inflate_body(struct response *r)
 		}
 	} while (ret != Z_STREAM_END && z.avail_in);
 	inflateEnd(&z);
+	if (ret != Z_OK && ret != Z_STREAM_END && !out.len && r->len) {
+		/* not compressed at all, whatever the header says (an
+		 * error page of a proxy): as it came */
+		free(out.body);
+		return 0;
+	}
 	free(r->body);
 	r->body = out.body;
 	r->len = out.len;
@@ -1315,13 +1328,20 @@ static int request(const char *url, const soie_request *rq,
 	snprintf(key, sizeof(key), "%s://%s:%s", u.scheme, u.host, u.port);
 	{
 		char line[1024];
+		int dflt;
 
 		snprintf(line, sizeof(line), "%s ", method);
 		adds(&req, line);
 		adds(&req, u.path);
-		snprintf(line, sizeof(line), " HTTP/1.1\r\nHost: %s\r\n"
+		/* the port with the host when it is not the scheme's (RFC
+		 * 9110 7.2): servers build their redirects and check Origin
+		 * against it */
+		dflt = !strcmp(u.port, !strcmp(u.scheme, "https") ? "443" :
+			"80");
+		snprintf(line, sizeof(line), " HTTP/1.1\r\nHost: %s%s%s\r\n"
 			"User-Agent: Mozilla/5.0 (X11; Linux) Soie/0.1\r\n"
-			"Accept-Encoding: gzip, deflate\r\n", u.host);
+			"Accept-Encoding: gzip, deflate\r\n", u.host,
+			dflt ? "" : ":", dflt ? "" : u.port);
 		adds(&req, line);
 	}
 	if (!has_header(headers, "Accept"))
@@ -1376,6 +1396,7 @@ static int request(const char *url, const soie_request *rq,
 		}
 		r->level = c.level;
 		raw.len = 0;
+		raw.cut = 0;
 		raw.dl = r->dl;
 		if (!conn_write(&c, req.body, req.len) &&
 		    !read_response(&c, &raw, method, &reuse) && raw.len)
@@ -1396,6 +1417,7 @@ static int request(const char *url, const soie_request *rq,
 		set_error(r, "no response");
 		goto out;
 	}
+	r->cut = raw.cut;
 	if (sscanf(raw.body, "HTTP/%*s %d", &r->status) != 1) {
 		set_error(r, "not HTTP");
 		goto out;
@@ -1594,7 +1616,8 @@ int net_fetch(const soie_request *rq, struct response *r)
 			continue;
 		}
 		/* not a body that went to a file (a download) */
-		if (*key && !loc && (!r->dl || r->dl->state == DL_NONE))
+		if (*key && !loc && !r->cut && (!r->dl ||
+		    r->dl->state == DL_NONE))
 			cache_put(key, r, t);
 		if (strcmp(method, "GET") && strcmp(method, "HEAD") &&
 		    r->status < 400)

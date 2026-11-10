@@ -49,6 +49,8 @@ struct response {
 	int level;		/* NET_*: the address it came from (file://:
 				 * NET_LOOPBACK, the others NET_PUBLIC) */
 	struct download *dl;	/* the caller's, or NULL: all in memory */
+	int cut;		/* the body ended before its Content-Length or
+				 * its last chunk: shown, never cached */
 };
 
 /* A request flag beside SOIE_REQ_*: the user's reload, the page is

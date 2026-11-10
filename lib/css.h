@@ -186,6 +186,7 @@ void sellist_free(struct sellist *s);
 int selector_match(const struct sellist *l, int i, const soie_node *el);
 int word_in(const char *list, const char *w, int ci);
 int sellist_match(const struct sellist *l, const soie_node *el);
+void selector_scope(const soie_node *el);
 unsigned sellist_max_spec(const struct sellist *s, const soie_node *el);
 /*
  * What a change can affect beyond the changed element's subtree. The

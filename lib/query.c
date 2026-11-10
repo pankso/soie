@@ -31,7 +31,9 @@ int soie_element_matches(const soie_node *el, const char *selectors)
 
 	if (!sel)
 		return -1;
+	selector_scope(el);
 	m = el->type == SOIE_ELEMENT && sellist_match(sel, el);
+	selector_scope(NULL);
 	sellist_free(sel);
 	return m;
 }
@@ -47,6 +49,7 @@ soie_node **soie_query(soie_node *root, const char *selectors, size_t max,
 	if (!sel)
 		return NULL;
 	v = xmalloc(cap * sizeof(*v));
+	selector_scope(root->type == SOIE_ELEMENT ? root : NULL);
 	for (n = root->first; n && (!max || k < max); ) {
 		if (n->type == SOIE_ELEMENT && sellist_match(sel, n)) {
 			if (k + 1 == cap) {
@@ -63,6 +66,7 @@ soie_node **soie_query(soie_node *root, const char *selectors, size_t max,
 			n = n->parent;
 		n = n && n != root ? n->next : NULL;
 	}
+	selector_scope(NULL);
 	v[k] = NULL;
 	*count = k;
 	sellist_free(sel);

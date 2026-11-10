@@ -29,7 +29,22 @@ by RMSE (the 38 sites survey of 2026-11-03).
 - Mojeek: "Mojeek User Survey" drawn inside the search box, icons
   right of "News" drawn as thin lines. To study on a saved copy.
 
+## Security
+
+- Same-origin and CORS checks of fetch, XMLHttpRequest and
+  importScripts() enforced in script.c and net.c, not in dom.js that
+  a page can rewrite; Origin, Referer and Sec- headers refused from
+  scripts.
+
 ## JavaScript
+
+- form.submit() of a POST form (through the host, guarded): logins
+  that post by script (SAML, OAuth form_post, payment redirects).
+- `Intl` (at least DateTimeFormat().resolvedOptions(), NumberFormat)
+  and toLocale* with a locale.
+- The JS heap limit from the memory free at start, without the
+  256 MB floor: on a 512 MB live system the kernel kills the browser
+  on github.com before the limit is reached.
 
 - `unhandledrejection` is never fired.
 - Error and DOMException objects cannot be cloned (postMessage,

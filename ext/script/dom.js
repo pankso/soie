@@ -470,6 +470,8 @@ const POINTER = /^pointer/;
 const NO_BUBBLE = /^(focus|blur|load|unload|error|abort|scroll|resize|mouseenter|mouseleave|pointerenter|pointerleave|loadstart|loadend|progress|play|pause|playing|ended|timeupdate|durationchange|volumechange|loadeddata|loadedmetadata|canplay|canplaythrough|seeking|seeked|waiting|emptied|ratechange|invalid|toggle)$/;
 const NOT_CANCELABLE = /^(input|change|focus|blur|focusin|focusout|load|unload|error|scroll|resize|mouseenter|mouseleave|DOMContentLoaded|readystatechange|keyup|play|pause|ended|timeupdate)$/;
 api.dispatch = function (target, type, init) {
+	if (api.names)
+		api.names();
 	const t = target || g;
 	const opts = { bubbles: !NO_BUBBLE.test(type) || (type === 'scroll' &&
 		t === document), cancelable: !NOT_CANCELABLE.test(type),
@@ -481,6 +483,7 @@ api.dispatch = function (target, type, init) {
 	let ev;
 	if (type === 'readystatechange' && t === document) {
 		readyState = 'interactive';
+		document.forms;		/* the parsed forms' controls by name */
 	} else if (type === 'load' && !target) {
 		for (const el of query(document, 'link', 0))
 			linkLoad(el, true);
@@ -527,19 +530,19 @@ function activation(el, host) {
 		if (n.namespaceURI !== NS_URI[NS_HTML])
 			continue;
 		if (tag === 'a' && n.hasAttribute('href')) {
-			if (!host) {
-				const h = n.getAttribute('href');
-				if (!/^\s*javascript:/i.test(h))
-					api.navigate(n.href, newWindow(n.target) ?
-						2 : false);
-				else
-					try {
-						(0, eval)(decodeURIComponent(
-							h.replace(/^\s*javascript:/i, '')));
-					} catch (e) {
-						report(e);
-					}
-			}
+			/* a javascript: link runs here on the user's click
+			 * too: the host follows no such address */
+			const h = n.getAttribute('href');
+			if (/^\s*javascript:/i.test(h))
+				try {
+					(0, eval)(decodeURIComponent(
+						h.replace(/^\s*javascript:/i, '')));
+				} catch (e) {
+					report(e);
+				}
+			else if (!host)
+				api.navigate(n.href, newWindow(n.target) ?
+					2 : false);
 			return;
 		}
 		if ((tag === 'button' && (n.type === 'submit')) ||
@@ -1929,15 +1932,46 @@ html('HTMLLabelElement', ['label'], (B) => class extends B {
 	get form() { return formOf(this); }
 });
 reflect(HTMLLabelElement, [['htmlFor', 'for']]);
+/* The controls of a form named n (name or id): one, or the list of a
+ * radio group with its value */
+function formNamed(a, n) {
+	const m = a.filter((e) => e.name === n || e.id === n);
+	if (m.length < 2)
+		return m[0] || null;
+	Object.defineProperty(m, 'value', {
+		get() { const c = m.find((e) => e.checked); return c ? c.value : ''; },
+		set(v) { for (const e of m) if (e.value === str(v)) e.checked = true; },
+	});
+	return m;
+}
+
+/* form.q, form.email: a getter per named control, looked up when read
+ * (set again when the form's controls are listed, and once the page is
+ * parsed: no proxy on every form) */
+function formNames(form, a) {
+	for (const e of a)
+		for (const n of [e.name, e.id])
+			if (n && !(n in form))
+				Object.defineProperty(form, n, {
+					get() { return formNamed(form.elements, n); },
+					set(v) {
+						Object.defineProperty(form, n, { value: v,
+							writable: true, configurable: true });
+					},
+					configurable: true });
+}
+
 html('HTMLFormElement', ['form'], (B) => class extends B {
 	get elements() {
 		const a = list(query(this, 'input, select, textarea, button, ' +
 			'fieldset, output, object', 0));
-		a.namedItem = (n) => a.find((e) => e.name === n || e.id === n) ||
-			null;
+		a.namedItem = (n) => formNamed(a, n);
 		for (const e of a)
-			if (e.name && !(e.name in a))
-				a[e.name] = e;
+			for (const n of [e.name, e.id])
+				if (n && !(n in a))
+					Object.defineProperty(a, n, { get: () =>
+						formNamed(a, n), configurable: true });
+		formNames(this, a);
 		return a;
 	}
 	get length() { return this.elements.length; }
@@ -3094,7 +3128,16 @@ class Document extends Node {
 	get visibilityState() { return 'visible'; }
 	get fullscreenElement() { return null; }
 	get scrollingElement() { return this.documentElement; }
-	get forms() { return list(query(this, 'form', 0)); }
+	get forms() {
+		const a = list(query(this, 'form', 0));
+		for (const f of a) {
+			f.elements;	/* their controls by name: form.q */
+			for (const n of [f.getAttribute('name'), f.id])
+				if (n && !(n in a))
+					a[n] = f;
+		}
+		return a;
+	}
 	get images() { return list(query(this, 'img', 0)); }
 	get links() { return list(query(this, 'a[href], area[href]', 0)); }
 	get scripts() { return list(query(this, 'script', 0)); }
@@ -5626,6 +5669,70 @@ if (api.worker) {
 for (const k of Object.keys(globals))
 	Object.defineProperty(g, k, { value: globals[k], writable: true,
 		configurable: true, enumerable: false });
+/*
+ * Named access on the window (HTML 7.3.3): an element by its id, a
+ * form or an image by its name, as a global (`<div id=out>` then
+ * `out.textContent = ...`, old pages count on it). Properties defined
+ * ahead on an object of the window's prototype chain, before each
+ * script and each event: a proxy there would make every unknown name
+ * undefined, where scripts expect a ReferenceError.
+ */
+const namedProps = Object.create(Object.getPrototypeOf(Window.prototype));
+Object.setPrototypeOf(Window.prototype, namedProps);
+let namedGen = -1;
+api.names = function () {
+	const gen = api.gen();
+	if (gen === namedGen)
+		return;
+	namedGen = gen;
+	for (const n of api.ids()) {
+		if (n in g)
+			continue;
+		Object.defineProperty(namedProps, n, {
+			get() {
+				return document.getElementById(n) ||
+					document.querySelector('form[name="' +
+					CSS.escape(n) + '"], img[name="' +
+					CSS.escape(n) + '"]') || undefined;
+			},
+			/* foo = 1 without var: a global of the page's own */
+			set(v) {
+				Object.defineProperty(g, n, { value: v,
+					writable: true, configurable: true,
+					enumerable: true });
+			},
+			configurable: true });
+	}
+};
+
+/* location = url navigates; the property stays the Location object */
+Object.defineProperty(g, 'location', { get: () => location,
+	set(v) { location.href = v; }, configurable: true });
+/* Object.prototype.toString.call(x) names the interface: libraries
+ * tell a URLSearchParams, a FormData or a Blob from a plain object by
+ * it (axios sent the first as JSON) */
+for (const k of Object.keys(globals)) {
+	const c = globals[k];
+	if (typeof c === 'function' && /^[A-Z]/.test(k) && c.prototype &&
+	    !Object.prototype.hasOwnProperty.call(c.prototype,
+	    Symbol.toStringTag))
+		Object.defineProperty(c.prototype, Symbol.toStringTag,
+			{ value: k, configurable: true });
+}
+Object.defineProperty(g, Symbol.toStringTag, { value: 'Window',
+	configurable: true });
+/* elements: their own interface (HTMLDivElement), found by its name
+ * among the globals */
+Object.defineProperty(Element.prototype, Symbol.toStringTag, {
+	get() {
+		for (let p = Object.getPrototypeOf(this); p && p !== Object.prototype;
+		     p = Object.getPrototypeOf(p)) {
+			const n = p.constructor && p.constructor.name;
+			if (n && g[n] === p.constructor)
+				return n;
+		}
+		return 'Element';
+	}, configurable: true });
 for (const [k, i] of [['innerWidth', 0], ['innerHeight', 1],
 	['outerWidth', 0], ['outerHeight', 1], ['scrollX', 2], ['scrollY', 3],
 	['pageXOffset', 2], ['pageYOffset', 3]])

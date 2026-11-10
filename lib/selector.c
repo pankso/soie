@@ -11,6 +11,12 @@
 #include <string.h>
 #include "css.h"
 
+#if defined(__GNUC__)
+#define THREAD_LOCAL __thread	/* workers match selectors too */
+#else
+#define THREAD_LOCAL
+#endif
+
 static const struct {
 	const char *name;
 	int id;
@@ -174,6 +180,14 @@ static int parse_attr(const struct cv *block, struct simple *s)
 			return 0;
 	}
 	return 1;
+}
+
+/* What :scope is while a query runs (query.c), else the root */
+static THREAD_LOCAL const soie_node *sel_scope;
+
+void selector_scope(const soie_node *el)
+{
+	sel_scope = el;
 }
 
 static int find_pseudo_class(const char *name)
@@ -361,6 +375,7 @@ static int parse_compound(struct sp *p, struct compound *c, int *pe)
 						goto bad;
 					s.type = SEL_PSEUDO;
 					s.pseudo = (unsigned char)id;
+					s.op = ascii_ieq(v->str, "scope");
 				}
 			} else if (v->type == CT_FUNCTION && element) {
 				/* ::slotted(), ::part(), ::highlight()... */
@@ -807,11 +822,6 @@ static int matches_list(const struct sellist *l, const soie_node *el);
  * match starts, nothing changes meanwhile): `&:is(&)` asked twice at
  * each level of nesting, 2^n times in all.
  */
-#if defined(__GNUC__)
-#define THREAD_LOCAL __thread	/* workers match selectors too */
-#else
-#define THREAD_LOCAL
-#endif
 #define NEST_MEMO 16
 static THREAD_LOCAL struct {
 	const struct sellist *l;
@@ -903,6 +913,9 @@ static int match_pseudo(const struct simple *s, const soie_node *el)
 
 	switch (s->pseudo) {
 	case PC_ROOT:
+		/* :scope in a query from an element is that element */
+		if (s->op && sel_scope)
+			return el == sel_scope;
 		return el->parent && el->parent->type == SOIE_DOCUMENT;
 	case PC_EMPTY:
 		for (n = el->first; n; n = n->next)

@@ -34,7 +34,20 @@ each change are in [DECISIONS.md](DECISIONS.md).
 - Background images are placed from the padding box, as specified,
   not from the border box.
 
+### Security
+- A response that is not HTML (JSON, a script) is never parsed as
+  HTML.
+- A navigation started by the page alone is held by the private
+  network guard, like its other requests.
+- An endless loop on a body wrongly said compressed.
+
 ### Fixed
+- JavaScript: `:scope` in queries, `location = url`, forms' controls
+  and the page's elements by name (`form.q`, `out.textContent`),
+  `javascript:` links, `Object.prototype.toString` on platform
+  objects, checkboxes changed before their click event.
+- Forms: long textareas sent whole, options in an `<optgroup>`.
+- The Host header carries the port; a body cut short is not cached.
 - `white-space: nowrap`: a nowrap run moves to the next line whole,
   inline-blocks no longer wrap inside it.
 - A word made of several inline boxes (`<b>W</b>ord`, a comma after a

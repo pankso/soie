@@ -1919,6 +1919,28 @@ on the same frozen DOM.
   are writable, so pages can wrap sendBeacon. Test:
   `tests/js/compat.html`.
 
+- Found by the same review, in the bindings: `:scope` in
+  querySelector, querySelectorAll, matches and closest is the element
+  asked (selector_scope(); it was the root: `el.querySelectorAll(
+  ':scope > p')` found nothing). `location = url` navigates.
+  Object.prototype.toString names the interface (Symbol.toStringTag on
+  every global class, elements by their own): axios tells a
+  URLSearchParams from an object by it and sent it as JSON. A
+  javascript: link runs on the user's click, not only on click(). A
+  form has its controls by name (form.q, form.email; a radio group is
+  a list with a value), document.forms its forms by name: getters set
+  when the controls are listed and once the page is parsed, not a
+  proxy on every form. The window has the elements by their id and
+  the forms and images by their name (HTML 7.3.3), set before each
+  script and each event from a native list of the ids (api.ids()): a
+  proxy in the window's prototype chain was tried first, and made
+  every unknown name undefined where scripts expect a ReferenceError.
+- On a real click a checkbox or a radio changes before its click
+  event and goes back if a handler cancels it, as the synthetic
+  click() did: handlers read the new state. A submitted textarea is
+  sent whole (it was cut at 16 KB), a select's options are found in
+  its optgroups.
+
 ## Audio and video (phase 11)
 
 - The engine owns the `<video>`/`<audio>` side (`lib/player.c`):
@@ -2156,6 +2178,28 @@ check it fails then):
   path, other schemes all but the fragment): dom.js throws
   SecurityError, and the shell refuses the address on its own too
   (js_url()), either one enough.
+
+- From a third review (shell, network, scripts), fixed:
+  a body said gzip that is neither gzip, zlib nor raw deflate made
+  inflate_body() try raw deflate for ever (a fetch thread at 100 %):
+  tried once, then the body as it came. A response that is not HTML
+  (JSON, a script, text of any case) is shown as text, never parsed
+  as HTML: a JSON answer that echoes `<script>` ran it in the site's
+  origin. A body cut before its Content-Length or its last chunk is
+  shown but not cached (it was kept as fresh). The Host header has
+  the port when it is not the scheme's. A navigation the page starts
+  by itself (location, a meta refresh, a scripted click, without a
+  click or a key of the user) is guarded like its other requests: a
+  public page could send a GET to the router or to the machine that
+  way. With the user's click it goes anywhere, as before. Known
+  cost: a public page that redirects by script to a loopback address
+  on its own (some command line logins) is refused.
+- Not fixed yet, from the same review: the same-origin and CORS
+  checks of fetch and XMLHttpRequest live in dom.js, which a page can
+  rewrite (URL.prototype.origin, Headers.prototype.get), and
+  importScripts() has none; they belong in script.c and net.c, with
+  the Origin, Referer and Sec- headers refused from scripts. See
+  TODO.
 
 ## Speed
 

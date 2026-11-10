@@ -108,6 +108,7 @@ struct shell {
 	int dark;		/* prefers-color-scheme: dark */
 	int private;		/* SOIE_REQ_PRIVATE: a private window */
 	int reload;		/* the next load is the user's reload */
+	int pending_guard;	/* pending_nav is the page's own: guarded */
 	int nav_guard;		/* the next load is a form the page sends:
 				 * its guard (SOIE_REQ_NO_LAN...) */
 	/* The front's pixels are B G R A (shell_bgra()); what shell_paint()
@@ -549,6 +550,9 @@ static void js_navigate(void *data, const char *url, int replace)
 	free(s->pending_nav);
 	s->pending_nav = strdup(url);
 	s->pending_replace = replace;
+	/* without a click or a key of the user it is the page's own
+	 * request: guarded as such */
+	s->pending_guard = !s->in_input;
 }
 
 static void js_message(void *data, int kind, const char *text)
@@ -735,7 +739,10 @@ static int after_scripts(struct shell *s)
 		char *u = s->pending_nav;
 
 		s->pending_nav = NULL;
+		if (s->pending_guard)
+			s->nav_guard = page_flags(s) & ~SOIE_REQ_PRIVATE;
 		navigate_to(s, u, s->pending_replace);
+		s->nav_guard = 0;
 		free(u);
 		return 1;
 	}
@@ -918,6 +925,7 @@ static int refresh_due(struct shell *s)
 		return 0;
 	s->pending_nav = s->refresh_url;
 	s->pending_replace = 1;
+	s->pending_guard = 1;	/* the page's doing, not the user's */
 	s->refresh_url = NULL;
 	return 1;
 }
@@ -1063,8 +1071,12 @@ static void doc_arrived(struct shell *s, struct job *j)
 			r->body = NULL;
 			src = html;
 			len = strlen(html);
-		} else if (!strncmp(r->type, "text/", 5) &&
-			   strcmp(r->type, "text/html")) {
+		} else if (r->type[0] && strcasecmp(r->type, "text/html") &&
+			   strcasecmp(r->type, "application/xhtml+xml") &&
+			   !strstr(r->type, "xml")) {
+			/* text, JSON, scripts: shown as text, never parsed
+			 * as HTML (a JSON answer that echoes a <script> ran
+			 * it with the site's cookies) */
 			char *t = escape_html(src);
 
 			html = malloc(strlen(t) + 64);
@@ -1884,22 +1896,43 @@ static void collect(soie_node *n, soie_node *submitter, char **q, size_t *len)
 				if (c == submitter)
 					pair(q, len, name, v ? v : "");
 			} else if (!strcmp(tag, "textarea")) {
-				char t[16384] = "";
+				/* whole, whatever its length (a wiki page of
+				 * more than 16 KB was saved cut) */
+				if (v) {
+					pair(q, len, name, v);
+				} else {
+					size_t max = 4 << 20;
+					char *t = malloc(max);
 
-				if (v)
-					snprintf(t, sizeof(t), "%s", v);
-				else
-					text_of(c, t, sizeof(t));
-				pair(q, len, name, t);
+					if (t) {
+						*t = '\0';
+						text_of(c, t, max);
+						pair(q, len, name, t);
+						free(t);
+					}
+				}
 			} else if (!strcmp(tag, "select")) {
 				soie_node *o, *pick = NULL;
 
-				for (o = find_tag(c, "option"); o;
-				     o = soie_node_next_sibling(o))
+				/* every option, those of an <optgroup> too */
+				for (o = soie_node_first_child(c); o; ) {
 					if (soie_node_get_type(o) == SOIE_ELEMENT &&
+					    !strcmp(soie_element_name(o), "option") &&
 					    (!pick || soie_element_get_attr(o,
 						    "selected")))
 						pick = o;
+					if (soie_node_first_child(o) &&
+					    soie_node_get_type(o) == SOIE_ELEMENT &&
+					    strcmp(soie_element_name(o), "option")) {
+						o = soie_node_first_child(o);
+						continue;
+					}
+					while (o && o != c &&
+					       !soie_node_next_sibling(o))
+						o = soie_node_parent(o);
+					o = o && o != c ?
+						soie_node_next_sibling(o) : NULL;
+				}
 				if (pick) {
 					char t[1024] = "";
 
@@ -2026,6 +2059,49 @@ static int toggle_details(struct shell *s, soie_node *sm, soie_node *n)
 	return 1;
 }
 
+static void toggle_box(soie_node *n, int on)
+{
+	if (on)
+		soie_element_set_attr(n, "checked", "");
+	else
+		soie_element_remove_attr(n, "checked");
+}
+
+/* Check radio n, the others of its group unchecked; returns the one
+ * that was checked */
+static soie_node *check_radio(struct shell *s, soie_node *n)
+{
+	const char *name = soie_element_get_attr(n, "name");
+	soie_node *form = ancestor(n, "form");
+	soie_node *in = form ? form : s->page.doc, *o, *was = NULL;
+
+	for (o = in; o; ) {
+		const char *t;
+
+		if (soie_node_get_type(o) == SOIE_ELEMENT &&
+		    !strcmp(soie_element_name(o), "input") &&
+		    (t = soie_element_get_attr(o, "type")) &&
+		    !strcasecmp(t, "radio") &&
+		    name && soie_element_get_attr(o, "name") &&
+		    !strcmp(soie_element_get_attr(o, "name"), name) &&
+		    soie_element_get_attr(o, "checked")) {
+			was = o;
+			soie_element_remove_attr(o, "checked");
+		}
+		if (soie_node_first_child(o)) {
+			o = soie_node_first_child(o);
+			continue;
+		}
+		while (o && o != in && !soie_node_next_sibling(o))
+			o = soie_node_parent(o);
+		o = o && o != in ? soie_node_next_sibling(o) : NULL;
+	}
+	if (!name && soie_element_get_attr(n, "checked"))
+		was = n;
+	soie_element_set_attr(n, "checked", "");
+	return was;
+}
+
 static void click(struct shell *s, int x, int y, int mods)
 {
 	soie_node *n = s->page.doc ? soie_hit_test(s->page.doc, (float)x,
@@ -2034,10 +2110,45 @@ static void click(struct shell *s, int x, int y, int mods)
 	float cy = (float)y;
 
 	if (n) {
+		soie_node *was = NULL;
+		int box = 0;
+
 		fire(s, n, "mousedown", (float)x, cy, NULL, mods);
 		fire(s, n, "mouseup", (float)x, cy, NULL, mods);
-		if (fire(s, n, "click", (float)x, cy, NULL, mods) ||
-		    s->pending_nav)
+		/* a checkbox or a radio changes before its click event, and
+		 * goes back if a handler cancels it (HTML 4.10.5.4): handlers
+		 * read the new state (React's controlled checkboxes) */
+		if (!strcmp(soie_element_name(n), "input") &&
+		    (t = soie_element_get_attr(n, "type")) &&
+		    !soie_element_get_attr(n, "disabled")) {
+			if (!strcasecmp(t, "checkbox")) {
+				box = soie_element_get_attr(n, "checked") ? 2 : 1;
+				toggle_box(n, box == 1);
+			} else if (!strcasecmp(t, "radio")) {
+				box = 3;
+				was = check_radio(s, n);
+			}
+		}
+		if (fire(s, n, "click", (float)x, cy, NULL, mods)) {
+			if (box == 3 && was != n) {
+				soie_element_remove_attr(n, "checked");
+				if (was)
+					soie_element_set_attr(was, "checked", "");
+			} else if (box && box != 3) {
+				toggle_box(n, box == 2);
+			}
+			if (box)
+				relayout(s);
+			return;
+		}
+		if (box) {
+			set_page_focus(s, NULL, 0);
+			if (box != 3 || was != n)
+				changed(s, n);
+			relayout(s);
+			return;
+		}
+		if (s->pending_nav)
 			return;
 		/* play, pause, seek */
 		if (((a = ancestor(n, "video")) || (a = ancestor(n, "audio"))) &&
@@ -2056,39 +2167,6 @@ static void click(struct shell *s, int x, int y, int mods)
 	form = ancestor(n, "form");
 	if (!strcmp(soie_element_name(n), "input")) {
 		t = soie_element_get_attr(n, "type");
-		if (t && !strcasecmp(t, "checkbox")) {
-			if (soie_element_get_attr(n, "checked"))
-				soie_element_remove_attr(n, "checked");
-			else
-				soie_element_set_attr(n, "checked", "");
-			changed(s, n);
-			relayout(s);
-			return;
-		}
-		if (t && !strcasecmp(t, "radio")) {
-			const char *name = soie_element_get_attr(n, "name");
-			soie_node *in = form ? form : s->page.doc, *o;
-
-			for (o = in; o; ) {
-				if (soie_node_get_type(o) == SOIE_ELEMENT &&
-				    !strcmp(soie_element_name(o), "input") &&
-				    name && soie_element_get_attr(o, "name") &&
-				    !strcmp(soie_element_get_attr(o, "name"),
-					    name))
-					soie_element_remove_attr(o, "checked");
-				if (soie_node_first_child(o)) {
-					o = soie_node_first_child(o);
-					continue;
-				}
-				while (o && o != in && !soie_node_next_sibling(o))
-					o = soie_node_parent(o);
-				o = o && o != in ? soie_node_next_sibling(o) : NULL;
-			}
-			soie_element_set_attr(n, "checked", "");
-			changed(s, n);
-			relayout(s);
-			return;
-		}
 		if (t && (!strcasecmp(t, "submit") || !strcasecmp(t, "image")) &&
 		    form) {
 			submit(s, form, n);
