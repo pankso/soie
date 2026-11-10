@@ -1,0 +1,45 @@
+#data
+<!DOCTYPE html><style>:root{--bg:light-dark(rgb(255,255,255),rgb(20,20,20))}.d{color-scheme:dark;background-color:var(--bg)}.l{color-scheme:light}i{color:light-dark(rgb(1,1,1),rgb(2,2,2))}@supports (color:light-dark(red,red)){u{color:rgb(9,9,9)}}</style><div class=d><i>x</i><b class=l><i>y</i></b></div><i>z</i><u>s</u>
+#errors
+#properties
+color,background-color
+#document
+| <!DOCTYPE html>
+| <html>
+|   @color: rgb(0, 0, 0)
+|   @background-color: rgba(0, 0, 0, 0)
+|   <head>
+|     @color: rgb(0, 0, 0)
+|     @background-color: rgba(0, 0, 0, 0)
+|     <style>
+|       @color: rgb(0, 0, 0)
+|       @background-color: rgba(0, 0, 0, 0)
+|       ":root{--bg:light-dark(rgb(255,255,255),rgb(20,20,20))}.d{color-scheme:dark;background-color:var(--bg)}.l{color-scheme:light}i{color:light-dark(rgb(1,1,1),rgb(2,2,2))}@supports (color:light-dark(red,red)){u{color:rgb(9,9,9)}}"
+|   <body>
+|     @color: rgb(0, 0, 0)
+|     @background-color: rgba(0, 0, 0, 0)
+|     <div>
+|       class="d"
+|       @color: rgb(0, 0, 0)
+|       @background-color: rgb(20, 20, 20)
+|       <i>
+|         @color: rgb(2, 2, 2)
+|         @background-color: rgba(0, 0, 0, 0)
+|         "x"
+|       <b>
+|         class="l"
+|         @color: rgb(0, 0, 0)
+|         @background-color: rgba(0, 0, 0, 0)
+|         <i>
+|           @color: rgb(1, 1, 1)
+|           @background-color: rgba(0, 0, 0, 0)
+|           "y"
+|     <i>
+|       @color: rgb(1, 1, 1)
+|       @background-color: rgba(0, 0, 0, 0)
+|       "z"
+|     <u>
+|       @color: rgb(9, 9, 9)
+|       @background-color: rgba(0, 0, 0, 0)
+|       "s"
+

@@ -19,6 +19,9 @@ each change are in [DECISIONS.md](DECISIONS.md).
   showed nothing. Library: `soie_attach_shadow()`,
   `soie_shadow_root()`, `soie_shadow_host()`, `soie_shadow_open()`,
   `soie_shadow_css()`, `soie_assigned_slot()`.
+- `color-scheme`, and `light-dark()` follows it element by element:
+  a dark section of a light page (MDN's home page header) was light,
+  its text unreadable.
 - `:defined` is real: a custom element matches it once its class
   came. Pages hide their components until then
   (`x-menu:not(:defined) { display: none }`), and lit.dev showed its

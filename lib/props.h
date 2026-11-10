@@ -64,6 +64,9 @@ PROP(TEXT_UNDERLINE_OFFSET, "text-underline-offset", 1, K_LEN, 0, "auto",
  * background clipped to the text) */
 PROP(WEBKIT_TEXT_FILL_COLOR, "-webkit-text-fill-color", 1, K_RAW, 0, "",
 	"currentcolor")
+/* light, dark, both or normal: which color light-dark() gives below
+ * (compute_style()); nothing else follows it yet */
+PROP(COLOR_SCHEME, "color-scheme", 1, K_RAW, 0, "", "normal")
 /* SVG painting (svg.c): presentation attributes are hints of these */
 PROP(FILL, "fill", 1, K_RAW, 0, "", "black")
 PROP(STROKE, "stroke", 1, K_RAW, 0, "", "none")

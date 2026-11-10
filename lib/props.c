@@ -105,8 +105,11 @@ int has_var(const struct cv *v, int n)
 	int i;
 
 	for (i = 0; i < n; i++)
+		/* light-dark() too: its color is the element's to choose
+		 * (color-scheme), not the rule's */
 		if ((v[i].type == CT_FUNCTION && (ascii_ieq(v[i].str, "var") ||
-		     ascii_ieq(v[i].str, "env"))) ||
+		     ascii_ieq(v[i].str, "env") ||
+		     ascii_ieq(v[i].str, "light-dark"))) ||
 		    ((v[i].type == CT_FUNCTION || v[i].type == CT_BLOCK) &&
 		     has_var(v[i].kids.v, v[i].kids.n)))
 			return 1;

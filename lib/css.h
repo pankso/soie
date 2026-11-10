@@ -258,6 +258,9 @@ struct ucontext {
 };
 /* Set when a length was resolved with viewport units (vw, vh...) */
 extern int vp_units_used;
+/* light-dark() gives its dark color: set by the cascade for the
+ * element it computes, from its color-scheme */
+extern int color_dark;
 
 int parse_color(struct cur *c, struct color *out);
 void serialize_color(struct buf *b, const struct color *col);

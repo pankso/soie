@@ -561,13 +561,15 @@ int parse_color(struct cur *c, struct color *out)
 	else if (cv_func(v, "color"))
 		ok = color_func(&v->kids, out);
 	else if (cv_func(v, "light-dark")) {
-		/* CSS Color 5: the light one, the engine renders light */
+		/* CSS Color 5: the one of the element's color scheme */
 		struct cur in;
 		struct color dark;
 
 		cur_init(&in, &v->kids);
 		ok = parse_color(&in, out) && cur_next(&in) &&
 			parse_color(&in, &dark) && cur_end(&in);
+		if (ok && color_dark)
+			*out = dark;
 	}
 	if (ok)
 		cur_next(c);
@@ -1130,6 +1132,7 @@ void slen_free(struct slen *l)
 }
 
 int vp_units_used;
+int color_dark;
 
 static void lin_resolve(const struct lin *l, const struct ucontext *u,
 	float *px, float *pct)

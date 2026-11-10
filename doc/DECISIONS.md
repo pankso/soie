@@ -172,6 +172,14 @@ reversed, edit the entry and say why; do not leave stale rules here.
   touches every slot and restyles the host's children. node_detach()
   looks at slots once the node is out: the list must not keep it.
   docinfo.shadows (roots made) keeps all of this off pages without.
+- color-scheme is an inherited property that only light-dark()
+  reads: "dark" alone is dark, "light dark" is what the user prefers
+  (prefers-color-scheme), anything else light. compute_style() computes
+  it first and sets color_dark for the element's other values; a
+  declaration holding light-dark() is kept pending like one with
+  var(), since its color is the element's to choose. Not done: the
+  canvas and the default text color of a page that is dark by
+  color-scheme alone, form controls, the meta tag.
 - `:defined`: a node flag set by the script extension when a custom
   element is upgraded or constructed (soie_element_set_defined()); an
   HTML element with a hyphen in its name does not match before, any

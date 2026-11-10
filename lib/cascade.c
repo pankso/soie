@@ -2246,13 +2246,34 @@ static int resolve_pending(struct vtmp *t, const struct sval *sv,
 	return ok;
 }
 
+/* Is a color-scheme value dark here: "dark" alone, or with "light"
+ * when the user prefers dark */
+static int scheme_dark(const struct styledb *db, const char *v)
+{
+	int light = 0, dark = 0;
+	char w[8];
+	size_t n;
+
+	for (; v && *v; v += n) {
+		v += strspn(v, " \t\n");
+		n = strcspn(v, " \t\n");
+		if (n < sizeof(w)) {
+			memcpy(w, v, n);
+			w[n] = '\0';
+			dark |= ascii_ieq(w, "dark");
+			light |= ascii_ieq(w, "light");
+		}
+	}
+	return dark && (!light || db->env.dark);
+}
+
 static const struct style *compute_style(struct styledb *db,
 	struct cascade *cs, const struct style *parent, int root, float rem)
 {
 	struct style s;
 	struct cctx c;
 	struct vtmp t;
-	int i;
+	int i, k;
 
 	memset(&s, 0, sizeof(s));
 	s.vars = compute_custom(db, cs, parent, &t);
@@ -2264,11 +2285,17 @@ static const struct style *compute_style(struct styledb *db,
 	c.u.em = parent ? parent->v[P_FONT_SIZE].u.len.px : 16 * db->vp.zoom;
 	c.u.ex = c.u.ch = c.u.em / 2;
 	c.u.rem = rem;
-	for (i = 0; i < NPROPS; i++) {
-		const struct sval *sv = cs->best[i].sv;
+	/* color-scheme first: the light-dark() colors of the others
+	 * follow it */
+	for (k = -1; k < NPROPS; k++) {
+		const struct sval *sv;
 		struct sval tmp;
 		int mode, used = 0;
 
+		i = k < 0 ? P_COLOR_SCHEME : k;
+		if (k == P_COLOR_SCHEME)
+			continue;
+		sv = cs->best[i].sv;
 		/* revert: back to what the user agent's sheet says (div {
 		 * display: revert } is a block), unset when it says nothing */
 		if (sv && sv->type == SV_REVERT)
@@ -2294,6 +2321,8 @@ static const struct style *compute_style(struct styledb *db,
 			compute_value(i, sv, &c, &s.v[i]);
 		if (used)
 			sval_free(&tmp);
+		if (i == P_COLOR_SCHEME)
+			color_dark = scheme_dark(db, s.v[i].u.str);
 		if (i == P_FONT_SIZE) {
 			c.u.em = s.v[P_FONT_SIZE].u.len.px;
 			c.u.ex = c.u.ch = c.u.em / 2;
@@ -2301,6 +2330,7 @@ static const struct style *compute_style(struct styledb *db,
 				c.u.rem = c.u.em;
 		}
 	}
+	color_dark = 0;
 	vtmp_free(&t);
 	fixups(&s, parent, root);
 	return intern_style(db, &s);
