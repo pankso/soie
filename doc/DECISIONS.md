@@ -183,7 +183,7 @@ reversed, edit the entry and say why; do not leave stale rules here.
 - Properties layout and painting will need later (grid templates,
   transforms, shadows, background positions) are kept as normalized
   text and parsed by the phase that uses them.
-- `revert` and `revert-layer` behave like `unset`. `@container`,
+- `revert-layer` behaves like `revert` (see below). `@container`,
   `@scope`, `@page` and `@counter-style` are ignored.
   `@font-face` blocks are stored for phase 4.
 - Animations do not run, but an element is shown as its animations
@@ -487,6 +487,18 @@ reversed, edit the entry and say why; do not leave stale rules here.
   shared by the rows; `<col>` and `<colgroup>` widths size the
   columns, in the automatic layout as a cell's width would, in the
   fixed layout before the first row (their boxes were thrown away).
+- CSS counters (CSS Lists 3): counter-reset, counter-increment and
+  counter-set, counter() and counters() in content with the decimal,
+  alphabetic and roman styles. The counters live in a stack while the
+  box tree is built (boxes.c): one made by an element is seen by it,
+  its descendants and its later siblings, until its parent ends; a
+  pseudo-element counts as a child. Numbered headings, nested 1.2.3
+  lists and footnotes had no number. A layout that used counters
+  keeps no box for the next one (layout.counters): a number may
+  depend on any element before. List markers still count by
+  themselves (ordinal(): start, value, reversed), not through the
+  implicit list-item counter: an author's counter-reset on an ol does
+  not stop them as it does in browsers.
 - Bounds found by a review: grid lines are clamped to 10000 as in
   Firefox (the occupancy grid is rows x columns; line 50000 on both
   axes overflowed its index); display: contents counts as a level of

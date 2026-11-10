@@ -203,7 +203,177 @@ static void intrinsic(struct box *b, const soie_node *n)
 	}
 }
 
-/* Text of ::before/::after: strings, attr(), quotes. */
+static void roman(struct buf *b, int n, int upper);
+static void alpha(struct buf *b, int n, int upper);
+
+/*
+ * CSS counters (CSS Lists 3, 4): the counters alive while the box tree
+ * is built, in tree order. One made by counter-reset on an element is
+ * seen by that element, its descendants and its later siblings with
+ * theirs, until its parent ends: level is the depth of the element
+ * that made it, counters deeper than an element die when it ends.
+ */
+static struct counter {
+	char name[48];
+	int value, level;
+} *ctrs;
+static int nctrs, capctrs, clevel, counters_seen;
+
+static struct counter *counter_find(const char *name)
+{
+	int i;
+
+	for (i = nctrs - 1; i >= 0; i--)
+		if (!strcmp(ctrs[i].name, name))
+			return &ctrs[i];
+	return NULL;
+}
+
+static struct counter *counter_new(const char *name, int value)
+{
+	struct counter *k;
+	int i;
+
+	/* one of an earlier sibling, same name: this one takes its place */
+	for (i = nctrs - 1; i >= 0 && ctrs[i].level >= clevel; i--)
+		if (ctrs[i].level == clevel && !strcmp(ctrs[i].name, name)) {
+			ctrs[i].value = value;
+			return &ctrs[i];
+		}
+	if (nctrs == capctrs) {
+		capctrs = capctrs ? capctrs * 2 : 16;
+		ctrs = xrealloc(ctrs, (size_t)capctrs * sizeof(*ctrs));
+	}
+	k = &ctrs[nctrs++];
+	snprintf(k->name, sizeof(k->name), "%s", name);
+	k->value = value;
+	k->level = clevel;
+	return k;
+}
+
+/* counter-reset, counter-increment, counter-set: `name [integer]`
+ * pairs; op 'r', 'i' or 's' */
+static void counter_ops(const char *s, int op)
+{
+	if (!s || !strcmp(s, "none"))
+		return;
+	counters_seen = 1;
+	while (*s) {
+		char name[48];
+		struct counter *k;
+		size_t n = 0;
+		int v = op == 'i', has = 0;
+		char *end;
+
+		while (*s == ' ')
+			s++;
+		while (*s && *s != ' ' && n < sizeof(name) - 1)
+			name[n++] = *s++;
+		name[n] = '\0';
+		while (*s && *s != ' ')
+			s++;
+		while (*s == ' ')
+			s++;
+		if (*s == '-' || *s == '+' || (*s >= '0' && *s <= '9')) {
+			long x = strtol(s, &end, 10);
+
+			v = x > 1000000000 ? 1000000000 : x < -1000000000 ?
+				-1000000000 : (int)x;
+			has = 1;
+			s = end;
+		}
+		(void)has;
+		if (!n || !strcmp(name, "none"))
+			continue;
+		if (op == 'r') {
+			counter_new(name, v);
+			continue;
+		}
+		if (!(k = counter_find(name)))
+			k = counter_new(name, 0);
+		if (op == 'i')
+			k->value = k->value > 1000000000 - v && v > 0 ?
+				k->value : k->value + v;
+		else
+			k->value = v;
+	}
+}
+
+static void counters_enter(const struct style *st)
+{
+	clevel++;
+	counter_ops(st->v[P_COUNTER_RESET].u.str, 'r');
+	counter_ops(st->v[P_COUNTER_INCREMENT].u.str, 'i');
+	counter_ops(st->v[P_COUNTER_SET].u.str, 's');
+}
+
+static void counters_leave(void)
+{
+	while (nctrs && ctrs[nctrs - 1].level > clevel)
+		nctrs--;
+	clevel--;
+}
+
+/* A counter's value as its style writes it */
+static void counter_text(struct buf *b, int n, const char *style)
+{
+	char num[16];
+
+	if (style && (!strcmp(style, "none")))
+		return;
+	if (style && (!strcmp(style, "disc") || !strcmp(style, "circle") ||
+	    !strcmp(style, "square"))) {
+		buf_add(b, *style == 'd' ? "\xe2\x80\xa2" : *style == 'c' ?
+			"\xe2\x97\xa6" : "\xe2\x96\xaa", 3);
+	} else if (style && strstr(style, "roman") && n >= 1 && n <= 3999) {
+		roman(b, n, *style == 'u');
+	} else if (style && (strstr(style, "alpha") || strstr(style, "latin")) &&
+	    n >= 1) {
+		alpha(b, n, *style == 'u');
+	} else {
+		snprintf(num, sizeof(num), style && !strcmp(style,
+			"decimal-leading-zero") ? "%02d" : "%d", n);
+		buf_add(b, num, strlen(num));
+	}
+}
+
+/* counter(name, style) and counters(name, "sep", style) */
+static void counter_fn(struct buf *b, const struct cv *f, int all)
+{
+	struct cur k;
+	const struct cv *v, *name, *sep = NULL, *style = NULL;
+	int i, first = 1;
+
+	cur_init(&k, &f->kids);
+	name = cur_next(&k);
+	if (!name || name->type != CT_IDENT)
+		return;
+	counters_seen = 1;
+	while ((v = cur_next(&k))) {
+		if (v->type == CT_STRING && all && !sep)
+			sep = v;
+		else if (v->type == CT_IDENT)
+			style = v;
+	}
+	if (!all) {
+		const struct counter *c = counter_find(name->str);
+
+		counter_text(b, c ? c->value : 0, style ? style->str : NULL);
+		return;
+	}
+	for (i = 0; i < nctrs; i++) {
+		if (strcmp(ctrs[i].name, name->str))
+			continue;
+		if (!first && sep)
+			buf_add(b, sep->str, strlen(sep->str));
+		counter_text(b, ctrs[i].value, style ? style->str : NULL);
+		first = 0;
+	}
+	if (first)
+		counter_text(b, 0, style ? style->str : NULL);
+}
+
+/* Text of ::before/::after: strings, attr(), quotes, counters. */
 static char *content_text(const char *content, const soie_node *el)
 {
 	struct cvlist l;
@@ -228,8 +398,10 @@ static char *content_text(const char *content, const soie_node *el)
 
 			if (a)
 				buf_add(&b, a, strlen(a));
+		} else if (cv_func(v, "counter") || cv_func(v, "counters")) {
+			counter_fn(&b, v, cv_func(v, "counters"));
 		}
-		/* counter(), url(): not yet */
+		/* url(): not yet */
 	}
 	cvlist_free(&l);
 	return b.s;
@@ -475,7 +647,8 @@ static struct box *kept_box(soie_node *n)
 {
 	struct box *b = n->u.el.box, *p, *c, *prev = NULL;
 
-	if (!old_tree || n->u.el.box_tree != old_tree->serial || !b ||
+	if (!old_tree || old_tree->counters ||
+	    n->u.el.box_tree != old_tree->serial || !b ||
 	    b->node != n || b->style != n->u.el.style ||
 	    n->lchg > old_tree->built)
 		return NULL;
@@ -545,14 +718,35 @@ static struct box *gen_pseudo(soie_node *el, const struct style *st,
 	b->flags = BF_PSEUDO;
 	b->pseudo = (unsigned char)which;
 	set_flags(b);
+	/* a pseudo-element counts as a child would (h2::before {
+	 * counter-increment: section }) */
+	counters_enter(st);
 	text = content_text(st->v[P_CONTENT].u.str, el);
+	counters_leave();
 	if (*text)
 		box_append(b, text_box(st, text, strlen(text)));
 	free(text);
 	return b;
 }
 
+static void gen_element(struct box *parent, soie_node *n);
+
 static void gen_node(struct box *parent, soie_node *n)
+{
+	const struct style *st = n->type == SOIE_ELEMENT ? n->u.el.style :
+		NULL;
+
+	/* an element with a box (or display: contents) and its counters */
+	if (st && !kw(st, P_DISPLAY, "none")) {
+		counters_enter(st);
+		gen_element(parent, n);
+		counters_leave();
+	} else {
+		gen_element(parent, n);
+	}
+}
+
+static void gen_element(struct box *parent, soie_node *n)
 {
 	const struct style *st;
 	struct box *b, *m;
@@ -1045,7 +1239,9 @@ int soie_layout_document(soie_node *doc, int width, int height)
 	damage_before(doc);
 	old_tree = old && old->rules == l->rules ? old : NULL;
 	new_tree = l;
+	nctrs = clevel = counters_seen = 0;
 	l->root = build_boxes(doc);
+	l->counters = counters_seen;
 	old_tree = new_tree = NULL;
 	if (old)
 		layout_free(old);	/* what was not kept */

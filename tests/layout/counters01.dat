@@ -1,0 +1,71 @@
+#data
+<!DOCTYPE html><style>body{margin:0;counter-reset:sec}h3{counter-increment:sec;counter-reset:sub;margin:0;font:inherit}h3:before{content:counter(sec) ". "}p{counter-increment:sub;margin:0}p:before{content:counter(sec) "." counter(sub,lower-alpha) " "}</style><h3>A</h3><p>x</p><p>y</p><h3>B</h3><p>z</p>
+#errors
+#layout
+width=200
+#document
+| block <html> 0,0 200x100
+|   block <body> 0,0 200x100
+|     block <h3> 0,0 200x20
+|       line 0,0 200x20
+|         text "1. " 0,2 24x16
+|         inline ::before 0,2 24x16
+|         text "A" 24,2 8x16
+|     block <p> 0,20 200x20
+|       line 0,20 200x20
+|         text "1.a " 0,22 32x16
+|         inline ::before 0,22 32x16
+|         text "x" 32,22 8x16
+|     block <p> 0,40 200x20
+|       line 0,40 200x20
+|         text "1.b " 0,42 32x16
+|         inline ::before 0,42 32x16
+|         text "y" 32,42 8x16
+|     block <h3> 0,60 200x20
+|       line 0,60 200x20
+|         text "2. " 0,62 24x16
+|         inline ::before 0,62 24x16
+|         text "B" 24,62 8x16
+|     block <p> 0,80 200x20
+|       line 0,80 200x20
+|         text "2.a " 0,82 32x16
+|         inline ::before 0,82 32x16
+|         text "z" 32,82 8x16
+
+#data
+<!DOCTYPE html><style>body{margin:0}ol{counter-reset:item;list-style:none;margin:0;padding:0}li{counter-increment:item}li:before{content:counters(item,".") " "}i:after{content:counter(none-yet,upper-roman) counter(item,decimal-leading-zero)}</style><ol><li>x<ol><li>y</li><li style="counter-set:item 9">z</li></ol></li><li>w</li></ol><i></i>
+#errors
+#layout
+width=200
+#document
+| block <html> 0,0 200x100
+|   block <body> 0,0 200x100
+|     block <ol> 0,0 200x80
+|       block <li> 0,0 200x60
+|         block anonymous 0,0 200x20
+|           line 0,0 200x20
+|             text "1 " 0,2 16x16
+|             inline ::before 0,2 16x16
+|             text "x" 16,2 8x16
+|         block <ol> 0,20 200x40
+|           block <li> 0,20 200x20
+|             line 0,20 200x20
+|               text "1.1 " 0,22 32x16
+|               inline ::before 0,22 32x16
+|               text "y" 32,22 8x16
+|           block <li> 0,40 200x20
+|             line 0,40 200x20
+|               text "1.9 " 0,42 32x16
+|               inline ::before 0,42 32x16
+|               text "z" 32,42 8x16
+|       block <li> 0,60 200x20
+|         line 0,60 200x20
+|           text "2 " 0,62 16x16
+|           inline ::before 0,62 16x16
+|           text "w" 16,62 8x16
+|     block anonymous 0,80 200x20
+|       line 0,80 200x20
+|         text "002" 0,82 24x16
+|         inline ::after 0,82 24x16
+|         inline <i> 0,82 24x16
+

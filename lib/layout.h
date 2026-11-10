@@ -122,6 +122,8 @@ struct layout {
 	unsigned long serial;	/* this tree, for soie_node box_tree */
 	unsigned long built;	/* the document's lstamp when built */
 	unsigned long rules;	/* style_serial() of its styles */
+	int counters;		/* it has CSS counters: no box is kept from
+				 * it, a number may depend on any element */
 };
 
 /* damage.c: around a layout, the focus moved, the document freed */

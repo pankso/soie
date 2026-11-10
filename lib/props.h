@@ -229,6 +229,10 @@ PROP(OBJECT_FIT, "object-fit", 0, K_KW, 0,
 PROP(OBJECT_POSITION, "object-position", 0, K_RAW, 0, "", "50% 50%")
 PROP(BOX_SHADOW, "box-shadow", 0, K_RAW, 0, "", "none")
 PROP(TABLE_LAYOUT, "table-layout", 0, K_KW, 0, "auto|fixed", "auto")
+/* counters (boxes.c): names and integers, kept as text */
+PROP(COUNTER_RESET, "counter-reset", 0, K_RAW, 0, "", "none")
+PROP(COUNTER_INCREMENT, "counter-increment", 0, K_RAW, 0, "", "none")
+PROP(COUNTER_SET, "counter-set", 0, K_RAW, 0, "", "none")
 /* animations: only where they end (cascade.c), each a list by commas */
 PROP(ANIMATION_NAME, "animation-name", 0, K_RAW, 0, "", "none")
 PROP(ANIMATION_ITERATION_COUNT, "animation-iteration-count", 0, K_RAW, 0,

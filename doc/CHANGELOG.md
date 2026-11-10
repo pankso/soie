@@ -25,6 +25,8 @@ each change are in [DECISIONS.md](DECISIONS.md).
   animation leaves in its last keyframe (`forwards`) is shown there;
   content faded in from `opacity: 0` stayed invisible.
 - `revert`.
+- CSS counters: `counter-reset`, `counter-increment`, `counter-set`,
+  `counter()` and `counters()`.
 - A positioned inline box is the containing block of its absolute
   descendants.
 - Lines break after hyphens and slashes, and between Chinese,
