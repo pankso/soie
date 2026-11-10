@@ -170,6 +170,9 @@ void abs_area(struct box *b, float x, float y, float w, float h);
 float box_baseline(const struct box *b, int last);
 float box_content_height(struct box *b, float w);
 int box_has_ratio(const struct box *b);
+/* through the preferred aspect ratio: a content size from the other */
+float box_ratio_w(const struct box *b, float h);
+float box_ratio_h(const struct box *b, float w);
 void box_edges(struct box *b, float cbw);
 void content_sizes(struct box *b, float *min, float *max);
 void layout_cell(struct box *c, float x, float y, float w);

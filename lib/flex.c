@@ -203,7 +203,7 @@ static void base_size(struct item *it, int row, float W, float H,
 			float ch = box_spec_h(b, P_HEIGHT, H);
 
 			if (box_has_ratio(b) && ch >= 0) {
-				smn = box_clamp_h(b, ch, H) * b->iw / b->ih;
+				smn = box_ratio_w(b, box_clamp_h(b, ch, H));
 			} else {
 				content_sizes(b, &mn, &mx);
 				smn = mn;
@@ -223,8 +223,8 @@ static void base_size(struct item *it, int row, float W, float H,
 		 * a basis of 0: go.dev's <main> was 0 high, the footer
 		 * over it) */
 		if (smn < 0 && !scrolls(st, P_OVERFLOW_Y)) {
-			if (box_has_ratio(b))
-				smn = cw * b->ih / b->iw;
+			if (b->type == B_REPLACED && box_has_ratio(b))
+				smn = box_ratio_h(b, cw);
 			else if (b->type == B_REPLACED)
 				smn = b->ih;
 			else

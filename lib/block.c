@@ -358,6 +358,9 @@ static int establishes_bfc(const struct box *b)
 /* Intrinsic sizes (CSS Sizing 3): content widths, then outer. */
 
 static int has_ratio(const struct box *b);
+static float ratio_of(const struct box *b, int *own);
+static float ratio_w(const struct box *b, float h);
+static float ratio_width(const struct box *b, float cbh);
 
 void content_sizes(struct box *b, float *mn, float *mx)
 {
@@ -376,8 +379,8 @@ void content_sizes(struct box *b, float *mn, float *mx)
 		w = spec_width(b, P_WIDTH, -1);
 		/* width auto, a height given: through the ratio (a 256 px
 		 * SVG logo at height: 28px is 28 wide, not 256) */
-		if (w < 0 && h >= 0 && b->iw > 0 && b->ih > 0 && has_ratio(b))
-			w = h * b->iw / b->ih;
+		if (w < 0 && h >= 0 && ratio_of(b, NULL) > 0)
+			w = ratio_w(b, clamp_h(b, h, -1));
 		*mn = *mx = w >= 0 ? w : b->iw > 0 ? b->iw : 0;
 		/* compressible (CSS Sizing 3, 5.2.2): a percentage width
 		 * or max-width makes its min-content contribution 0
@@ -388,6 +391,8 @@ void content_sizes(struct box *b, float *mn, float *mx)
 		return;
 	}
 	w = spec_width(b, P_WIDTH, -1);
+	if (w < 0)
+		w = ratio_width(b, -1);
 	if (w >= 0) {
 		*mn = *mx = w;
 		return;
@@ -705,6 +710,109 @@ static int has_ratio(const struct box *b)
 		strcmp(n->name, "audio") && strcmp(n->name, "iframe");
 }
 
+/*
+ * The preferred aspect ratio (CSS Sizing 4, 5.1), width / height, 0 for
+ * none: aspect-ratio, else a replaced box's natural one. `auto 16 / 9`
+ * is the natural ratio when the box has one. *own is set when the
+ * ratio comes from the property: box-sizing says which box it shapes.
+ */
+static float ratio_of(const struct box *b, int *own)
+{
+	const char *s = b->style ? b->style->v[P_ASPECT_RATIO].u.str : NULL;
+	float nat = 0, r = 0;
+	int autok = 0;
+
+	if (own)
+		*own = 0;
+	if (b->type == B_REPLACED && b->iw > 0 && b->ih > 0 && has_ratio(b))
+		nat = b->iw / b->ih;
+	else if (b->type != B_REPLACED && (b->type == B_INLINE || !b->style ||
+	    (b->flags & BF_ANON) || b->role))
+		return 0;
+	while (s && *s) {
+		char *end;
+		double x, y = 1;
+
+		while (*s == ' ')
+			s++;
+		if (!strncmp(s, "auto", 4)) {
+			autok = 1;
+			s += 4;
+			continue;
+		}
+		x = strtod(s, &end);
+		if (end == s)
+			break;
+		s = end;
+		while (*s == ' ')
+			s++;
+		if (*s == '/') {
+			y = strtod(s + 1, &end);
+			if (end == s + 1)
+				break;
+			s = end;
+		}
+		/* a zero or infinite ratio is no ratio (degenerate) */
+		if (x > 0 && y > 0 && x / y < 1e6 && y / x < 1e6)
+			r = (float)(x / y);
+	}
+	if (nat > 0 && (autok || r <= 0))
+		return nat;
+	if (r > 0 && own)
+		*own = 1;
+	return r;
+}
+
+/* The content height its ratio gives a content width, or -1 */
+static float ratio_h(const struct box *b, float w)
+{
+	int own;
+	float r = ratio_of(b, &own), h;
+
+	if (r <= 0)
+		return -1;
+	if (!own || !border_box(b->style))
+		return w / r;
+	h = (w + hedges(b)) / r - vedges(b);
+	return h < 0 ? 0 : h;
+}
+
+/* The content width its ratio gives a content height, or -1 */
+static float ratio_w(const struct box *b, float h)
+{
+	int own;
+	float r = ratio_of(b, &own), w;
+
+	if (r <= 0)
+		return -1;
+	if (!own || !border_box(b->style))
+		return h * r;
+	w = (h + vedges(b)) * r - hedges(b);
+	return w < 0 ? 0 : w;
+}
+
+/* A box whose ratio gives the height grows with its content all the
+ * same (the automatic minimum size), unless it clips or scrolls it */
+static int ratio_grows(const struct box *b)
+{
+	return kw(b->style, P_MIN_HEIGHT, "auto") &&
+		kw(b->style, P_OVERFLOW_Y, "visible");
+}
+
+/* An automatic width from a definite height through the ratio (boxes
+ * that are not replaced), or -1 */
+static float ratio_width(const struct box *b, float cbh)
+{
+	float h;
+
+	if (b->type == B_REPLACED || !kw(b->style, P_WIDTH, "auto"))
+		return -1;
+	h = spec_height(b, P_HEIGHT, cbh);
+	if (h < 0)
+		return -1;
+	return ratio_w(b, clamp_h(b, h, cbh));
+}
+
 /* Replaced elements: CSS 2 10.3.2 and 10.6.2 */
 /* Both auto, with a ratio: the min/max table of CSS 2 10.4 */
 static void replaced_minmax(struct box *b, float w, float h, float cbw,
@@ -763,10 +871,12 @@ static void replaced_size(struct box *b, float cbw, float cbh)
 		cbh);
 	float iw = b->iw > 0 ? b->iw : 0, ih = b->ih > 0 ? b->ih : 0;
 
-	int ratio = iw > 0 && ih > 0 && has_ratio(b);
+	float r = ratio_of(b, NULL);
+	int ratio = r > 0;
 
-	if (ratio && w < 0 && h < 0) {
-		replaced_minmax(b, iw, ih, cbw, cbh);
+	if (ratio && w < 0 && h < 0 && iw > 0 && ih > 0) {
+		/* aspect-ratio against the natural one: the natural width */
+		replaced_minmax(b, iw, iw / r, cbw, cbh);
 		return;
 	}
 	/* the auto one from the other's used size (CSS 2 10.3.2, 10.6.2):
@@ -776,10 +886,10 @@ static void replaced_size(struct box *b, float cbw, float cbh)
 		h = ih;
 	} else if (w < 0) {
 		h = clamp_h(b, h, cbh);
-		w = ratio ? h * iw / ih : iw;
+		w = ratio ? ratio_w(b, h) : iw;
 	} else if (h < 0) {
 		w = clamp_w(b, w, cbw);
-		h = ratio ? w * ih / iw : ih;
+		h = ratio ? ratio_h(b, w) : ih;
 	}
 	b->w = clamp_w(b, w, cbw);
 	b->h = clamp_h(b, h, cbh);
@@ -798,7 +908,7 @@ static int webkit_center(const struct box *b)
 }
 
 /* Width and horizontal margins in flow (CSS 2 10.3.3). */
-static void block_width(struct box *b, float avail, float cbw)
+static void block_width(struct box *b, float avail, float cbw, float cbh)
 {
 	const struct style *st = b->style;
 	int center = webkit_center(b);
@@ -807,8 +917,10 @@ static void block_width(struct box *b, float avail, float cbw)
 	float w = spec_width(b, P_WIDTH, cbw), e = hedges(b), rest;
 
 	if (b->type == B_REPLACED) {
-		replaced_size(b, cbw, -1);
+		replaced_size(b, cbw, cbh);
 		w = b->w;
+	} else if (w < 0 && (w = ratio_width(b, cbh)) >= 0) {
+		/* a definite height and a ratio: not stretched */
 	} else if (w < 0 && is_auto(st, P_WIDTH) &&
 		   !kw(st, P_WIDTH, "auto")) {
 		/* min-content, max-content, fit-content */
@@ -863,7 +975,7 @@ static float layout_block(struct box *b, struct bfc *f, float cbx, float cbw,
 {
 	int bfc = establishes_bfc(b), side = clear_side(b->style);
 	int ctop, cbot;
-	float avail_x = cbx, avail_w = cbw, hspec, h, top, dx, dy;
+	float avail_x = cbx, avail_w = cbw, hspec, h, top, dx, dy, rh = -1;
 
 	struct bfc own;
 
@@ -906,10 +1018,12 @@ static float layout_block(struct box *b, struct bfc *f, float cbx, float cbw,
 			translate(b, dx, dy);
 		return b->y - dy + b->h + b->p[2] + b->b[2];
 	}
-	block_width(b, avail_w, cbw);
+	block_width(b, avail_w, cbw, cbh);
 	b->x = avail_x + b->m[3] + b->b[3] + b->p[3];
 	ctop = !bfc && b->type == B_BLOCK && !b->b[0] && !b->p[0];
 	hspec = b->type == B_REPLACED ? b->h : spec_height(b, P_HEIGHT, cbh);
+	if (hspec < 0)
+		hspec = rh = ratio_h(b, b->w);
 	cbot = !bfc && b->type == B_BLOCK && hspec < 0 && !b->b[2] && !b->p[2];
 	if (b->type == B_REPLACED) {
 		top = y + strut_val(s);
@@ -943,6 +1057,8 @@ static float layout_block(struct box *b, struct bfc *f, float cbx, float cbw,
 			h = fb;
 	}
 	free(own.v);
+	if (rh >= 0 && h > rh && ratio_grows(b))
+		hspec = h;
 	b->h = clamp_h(b, hspec >= 0 ? hspec : h, cbh);
 	if (b->h != h)
 		s->pos = s->neg = 0;
@@ -996,6 +1112,8 @@ void place_float(struct box *b, struct bfc *f, float y, float x0, float x1,
 		w = b->w;
 	} else {
 		w = spec_width(b, P_WIDTH, cbw);
+		if (w < 0)
+			w = ratio_width(b, -1);
 		if (w < 0)
 			w = shrink_to_fit(b, cbw - b->m[1] - b->m[3] -
 				hedges(b));
@@ -1061,7 +1179,7 @@ static void layout_alone(struct box *b, float x, float y, float w,
 {
 	struct bfc own;
 	struct strut s = { 0, 0 };
-	float h, hspec;
+	float h, hspec, rh = -1;
 	int first;
 
 	if (b->type == B_REPLACED) {
@@ -1095,6 +1213,8 @@ static void layout_alone(struct box *b, float x, float y, float w,
 	hspec = b == g.measured ? -1 : spec_height(b, P_HEIGHT, cbh);
 	if (hspec < 0)
 		hspec = defh;
+	if (hspec < 0 && b != g.measured)
+		hspec = rh = ratio_h(b, w);
 	memset(&own, 0, sizeof(own));
 	first = g.nlog;
 	h = layout_contents(b, &own, y, &s, 0, hspec);
@@ -1118,6 +1238,8 @@ static void layout_alone(struct box *b, float x, float y, float w,
 	if (own.n && bfc_bottom(&own) - y > h)
 		h = bfc_bottom(&own) - y;
 	free(own.v);
+	if (rh >= 0 && h > rh && ratio_grows(b))
+		hspec = h;
 	b->h = clamp_h(b, hspec >= 0 ? hspec : h, cbh);
 	b->lok = !g.trial;	/* without its absolute boxes */
 	b->lw = w;
@@ -1150,8 +1272,17 @@ void layout_cell(struct box *c, float x, float y, float w)
 
 int box_has_ratio(const struct box *b)
 {
-	return b->type == B_REPLACED && b->iw > 0 && b->ih > 0 &&
-		has_ratio(b);
+	return ratio_of(b, NULL) > 0;
+}
+
+float box_ratio_w(const struct box *b, float h)
+{
+	return ratio_w(b, h);
+}
+
+float box_ratio_h(const struct box *b, float w)
+{
+	return ratio_h(b, w);
 }
 
 /* The height of b's content laid out at width w, its height property
@@ -1232,8 +1363,8 @@ void layout_item(struct box *b, float x, float y, float w, float h)
 		/* no height given: the width's through the natural ratio, or
 		 * the natural height (it was left 0: icons and images of
 		 * flex rows vanished) */
-		if (h < 0 && b->iw > 0 && b->ih > 0 && has_ratio(b))
-			h = w * b->ih / b->iw;
+		if (h < 0 && ratio_of(b, NULL) > 0)
+			h = ratio_h(b, w);
 		else if (h < 0)
 			h = b->ih > 0 ? b->ih : 0;
 		b->h = clamp_h(b, h, -1);
@@ -1257,6 +1388,8 @@ void layout_atomic(struct box *b, float cbw, float cbh)
 		return;
 	}
 	w = spec_width(b, P_WIDTH, cbw);
+	if (w < 0)
+		w = ratio_width(b, cbh);
 	if (w < 0)
 		w = shrink_to_fit(b, cbw - b->m[1] - b->m[3] - hedges(b));
 	w = clamp_w(b, w, cbw);
@@ -1314,7 +1447,18 @@ static void layout_abs(struct box *b)
 		w = b->w;
 	} else {
 		w = spec_width(b, P_WIDTH, cw);
-		if (w < 0 && l > -1e29f && r > -1e29f)
+		if (w < 0 && (l <= -1e29f || r <= -1e29f)) {
+			/* through the ratio, from its height or its top and
+			 * bottom */
+			w = ratio_width(b, ch);
+			if (w < 0 && t > -1e29f && bt > -1e29f &&
+			    is_auto(st, P_HEIGHT))
+				w = ratio_w(b, clamp_h(b, ch - t - bt - vedges(b) -
+					b->m[0] - b->m[2], ch));
+		}
+		if (w >= 0)
+			;
+		else if (l > -1e29f && r > -1e29f)
 			w = cw - l - r - e - b->m[1] - b->m[3];
 		else if (w < 0)
 			w = shrink_to_fit(b, cw - (l > -1e29f ? l : 0) -

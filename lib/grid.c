@@ -1059,7 +1059,7 @@ float layout_grid(struct box *gb, float cbh)
 			dy = v[i].bl == 1 ? la[0] - v[i].asc :
 				ah - la[1] - v[i].asc;
 		} else if (aal == 's' && is_auto(b->style, P_HEIGHT) &&
-		    b->type != B_REPLACED)
+		    b->type != B_REPLACED && !box_has_ratio(b))
 			b->h = box_clamp_h(b, ah - eh, ah);
 		else if (aal == 'c')
 			dy = (ah - b->h - eh) / 2;

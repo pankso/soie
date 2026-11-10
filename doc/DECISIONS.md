@@ -396,6 +396,20 @@ reversed, edit the entry and say why; do not leave stale rules here.
 - text-transform maps ASCII and the letters that are two bytes in both
   cases (Latin-1, Latin Extended-A, Greek, Cyrillic), in place: the É
   of "LA COMMUNAUTÉ" stayed é. ß stays, its capital being two letters.
+- aspect-ratio (CSS Sizing 4, 5.1) for every box, not only the
+  natural ratio of replaced ones: ratio_of() in block.c gives the
+  preferred ratio (the property, else the natural one; `auto 16 / 9`
+  is the natural one when there is one), ratio_w() and ratio_h() one
+  content size from the other, on the border box when box-sizing says
+  so and the ratio is the property's. An automatic height comes from
+  the used width, and is definite for the children; an automatic width
+  comes from a definite height wherever the width would be shrink to
+  fit, and for a block in the flow too (not stretched, as browsers).
+  The box still grows with its content (the automatic minimum size)
+  unless it sets min-height or clips. A grid item with a ratio is not
+  stretched in its row. Not done: min and max sizes transferred
+  through the ratio. Tailwind's aspect-video cards, video embeds and
+  thumbnails were 0 px high.
 
 ## Fonts and text (phase 4)
 

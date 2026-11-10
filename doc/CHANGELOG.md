@@ -7,6 +7,10 @@ each change are in [DECISIONS.md](DECISIONS.md).
 
 ## [Unreleased]
 
+### Added
+- `aspect-ratio` on every box: cards, video embeds and thumbnails
+  sized by a ratio were 0 px high.
+
 ## [0.1.3] - 2026-11-04
 
 ### Added

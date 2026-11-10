@@ -1,0 +1,55 @@
+#data
+<!DOCTYPE html><body style="margin:0"><div style="aspect-ratio:2/1;width:100px"></div><div style="aspect-ratio:4;height:10px"></div><div style="aspect-ratio:1;width:50px;padding:5px;box-sizing:border-box"></div><div style="aspect-ratio:10;width:100px">a<br>b</div><div style="aspect-ratio:10;width:100px;overflow:hidden">a<br>b</div>
+#errors
+#layout
+width=200
+#document
+| block <html> 0,0 200x160
+|   block <body> 0,0 200x160
+|     block <div> 0,0 100x50
+|     block <div> 0,50 40x10
+|     block <div> 0,60 50x50
+|     block <div> 0,110 100x40
+|       line 0,110 100x20
+|         text "a" 0,112 8x16
+|       line 0,130 100x20
+|         text "b" 0,132 8x16
+|     block <div> 0,150 100x10
+|       line 0,150 100x20
+|         text "a" 0,152 8x16
+|       line 0,170 100x20
+|         text "b" 0,172 8x16
+
+#data
+<!DOCTYPE html><body style="margin:0"><span style="display:inline-block;aspect-ratio:3/2;height:20px"></span><div style="float:left;aspect-ratio:1;height:30px"></div><div style="position:relative;height:40px"><div style="position:absolute;top:0;bottom:0;left:0;aspect-ratio:2"></div></div><img style="aspect-ratio:2;width:60px">
+#errors
+#layout
+width=200
+#document
+| block <html> 0,0 200x102
+|   block <body> 0,0 200x102
+|     block anonymous 0,0 200x26
+|       line 30,0 170x26
+|         inline-block <span> 30,0 30x20
+|       block float <div> 0,0 30x30
+|     block <div> 0,26 200x40
+|       block abs <div> 0,26 80x40
+|     block anonymous 0,66 200x36
+|       line 0,66 200x36
+|         replaced <img> 0,66 60x30
+
+#data
+<!DOCTYPE html><body style="margin:0"><div style="display:flex"><div style="flex:1;aspect-ratio:1"></div><div style="flex:1;aspect-ratio:1"></div></div><div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr"><div style="aspect-ratio:2"></div><div style="aspect-ratio:2"></div></div>
+#errors
+#layout
+width=200
+#document
+| block <html> 0,0 200x125
+|   block <body> 0,0 200x125
+|     block <div> 0,0 200x100
+|       block <div> 0,0 100x100
+|       block <div> 100,0 100x100
+|     block <div> 0,100 200x25
+|       block <div> 0,100 50x25
+|       block <div> 50,100 50x25
+

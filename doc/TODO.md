@@ -7,8 +7,6 @@ by RMSE (the 38 sites survey of 2026-11-03).
 
 ## Rendering, in the plan
 
-- `aspect-ratio` of boxes that are not replaced: cards, embedded
-  videos (16 / 9 boxes collapse to their content).
 - SVG styled by the page's CSS cascade: icons that take `fill`,
   `stroke` or `currentcolor` from a class are drawn black or not at
   all.
