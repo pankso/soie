@@ -37,3 +37,23 @@ width=200
 |       line 32,2 8x20
 |         text "f" 32,4 8x16
 
+#data
+<!DOCTYPE html><body style="margin:0">ab <a style="position:relative;top:10px;left:4px">cd <b>e</b><i style="display:inline-block;width:8px;height:8px"></i></a> f <span style="position:relative;bottom:3px"><u style="position:relative;left:2px">g</u></span>
+#errors
+#layout
+width=200
+#document
+| block <html> 0,0 200x20
+|   block <body> 0,0 200x20
+|     line 0,0 200x20
+|       text "ab " 0,2 24x16
+|       text "cd " 28,12 24x16
+|       text "e" 52,12 8x16
+|       inline <b> 52,12 8x16
+|       inline-block <i> 60,16 8x8
+|       inline <a> 28,12 40x16
+|       text " f " 64,2 24x16
+|       text "g" 90,-1 8x16
+|       inline <u> 90,-1 8x16
+|       inline <span> 88,-1 8x16
+

@@ -541,6 +541,27 @@ static void finish_line(struct ls *s, int forced, int last)
 			if (dx || dy)
 				translate(f->box, dx, dy);
 		}
+		{
+			/* the inline boxes around it that are position:
+			 * relative move it with them, the line stays as it is */
+			const struct box *a = f->kind == F_INLINE ? f->box :
+				f->box->parent;
+			float dx = 0, dy = 0, ax, ay;
+
+			for (; a && a != b && a->type == B_INLINE; a = a->parent)
+				if (a->style && !kw(a->style, P_POSITION, "static")) {
+					rel_offset(a, s->w0, &ax, &ay);
+					dx += ax;
+					dy += ay;
+				}
+			if (dx || dy) {
+				f->x += dx;
+				f->y += dy;
+				f->baseline += dy;
+				if (f->kind == F_ATOMIC)
+					translate(f->box, dx, dy);
+			}
+		}
 	}
 	/* outside markers stick to the first line */
 	if (b->nlines == 1)
