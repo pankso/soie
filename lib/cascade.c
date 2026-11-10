@@ -156,6 +156,11 @@ struct styledb {
 	int anon_layers;
 	struct reg *regs;
 	int nregs, noninherit;
+	struct keyframes {		/* @keyframes: their two ends */
+		char *name;
+		struct svec from, to;
+	} *kfs;
+	int nkfs;
 	char **fontfaces;		/* @font-face blocks, for later */
 	char **fontbases;		/* their sheets' URLs, for src */
 	int nfontfaces;
@@ -362,6 +367,12 @@ void styledb_free(struct styledb *db)
 	for (i = 0; i < 3; i++)
 		layer_free(&db->roots[i]);
 	free(db->regs);
+	for (i = 0; i < db->nkfs; i++) {
+		free(db->kfs[i].name);
+		svec_free(&db->kfs[i].from);
+		svec_free(&db->kfs[i].to);
+	}
+	free(db->kfs);
 	for (i = 0; i < db->nfontfaces; i++) {
 		free(db->fontfaces[i]);
 		free(db->fontbases[i]);
@@ -966,6 +977,77 @@ static void conditional_block(struct styledb *db, struct crule *r,
 	free(tmp.rules);
 }
 
+/*
+ * @keyframes: the declarations of its first (from, 0%) and last (to,
+ * 100%) keyframes are kept. Animations do not run; an element shows
+ * where its animation ends when it stays there (compute_animated()).
+ */
+static void at_keyframes(struct styledb *db, struct crule *r,
+	const struct pctx *pc)
+{
+	struct crule tmp;
+	struct keyframes *kf;
+	const char *name = NULL;
+	int i, j, k;
+
+	for (i = 0; i < r->prelude.n && !name; i++)
+		if (r->prelude.v[i].type == CT_IDENT ||
+		    r->prelude.v[i].type == CT_STRING)
+			name = r->prelude.v[i].str;
+	if (!name)
+		return;
+	/* the last rule of a name wins */
+	for (i = 0; i < db->nkfs && strcmp(db->kfs[i].name, name); i++)
+		;
+	if (i == db->nkfs) {
+		db->kfs = xrealloc(db->kfs, (size_t)(db->nkfs + 1) *
+			sizeof(*db->kfs));
+		memset(&db->kfs[i], 0, sizeof(*db->kfs));
+		db->kfs[i].name = xstrndup(name, strlen(name));
+		db->nkfs++;
+	}
+	kf = &db->kfs[i];
+	svec_free(&kf->from);
+	svec_free(&kf->to);
+	memset(&kf->from, 0, sizeof(kf->from));
+	memset(&kf->to, 0, sizeof(kf->to));
+	memset(&tmp, 0, sizeof(tmp));
+	css_parse_block(&r->block, &tmp, 1);
+	for (i = 0; i < tmp.nrules; i++) {
+		const struct crule *q = tmp.rules[i];
+
+		if (q->type != R_QUALIFIED)
+			continue;
+		for (j = 0; j < q->prelude.n; j++) {
+			const struct cv *v = &q->prelude.v[j];
+			struct svec *into = cv_ident(v, "from") ||
+				(v->type == CT_PERCENT && v->num == 0) ?
+				&kf->from : cv_ident(v, "to") ||
+				(v->type == CT_PERCENT && v->num == 100) ?
+				&kf->to : NULL;
+
+			for (k = 0; into && k < q->ndecls; k++) {
+				struct decl *d = &q->decls[k];
+
+				if (!strncmp(d->name, "--", 2))
+					continue;
+				if (pc->base && has_url(d->value.v, d->value.n))
+					resolve_urls(d->value.v, d->value.n,
+						pc->base);
+				parse_declaration(d->name, &d->value, 0, into);
+			}
+		}
+	}
+	for (i = 0; i < tmp.ndecls; i++) {
+		free(tmp.decls[i].name);
+		cvlist_free(&tmp.decls[i].value);
+	}
+	free(tmp.decls);
+	for (i = 0; i < tmp.nrules; i++)
+		crule_free(tmp.rules[i]);
+	free(tmp.rules);
+}
+
 static void at_rule(struct styledb *db, struct crule *r,
 	const struct pctx *pc)
 {
@@ -1023,7 +1105,11 @@ static void at_rule(struct styledb *db, struct crule *r,
 			xstrndup(pc->base, strlen(pc->base)) : NULL;
 		db->fontfaces[db->nfontfaces++] = b.s;
 	}
-	/* @container, @scope, @keyframes, @page...: not supported yet */
+	else if ((ascii_ieq(n, "keyframes") ||
+	    ascii_ieq(n, "-webkit-keyframes")) && r->has_block) {
+		at_keyframes(db, r, pc);
+	}
+	/* @container, @scope, @page...: not supported yet */
 }
 
 static void process_rules(struct styledb *db, struct crule **rules, int n,
@@ -1502,6 +1588,8 @@ struct cwin {
 
 struct cascade {
 	struct win best[NPROPS];
+	struct win low[NPROPS];	/* among the user agent's and the user's
+				 * normal declarations: what revert means */
 	struct cwin *custom;
 	int ncustom, capcustom;
 };
@@ -1519,6 +1607,13 @@ static void cascade_decls(struct cascade *cs, const struct svec *d,
 		if (!w->sv || k >= w->key) {
 			w->sv = sv;
 			w->key = k;
+		}
+		if (k >> 61 < O_AUTHOR) {
+			w = &cs->low[sv->prop];
+			if (!w->sv || k >= w->key) {
+				w->sv = sv;
+				w->key = k;
+			}
 		}
 	}
 }
@@ -2098,6 +2193,10 @@ static const struct style *compute_style(struct styledb *db,
 		struct sval tmp;
 		int mode, used = 0;
 
+		/* revert: back to what the user agent's sheet says (div {
+		 * display: revert } is a block), unset when it says nothing */
+		if (sv && sv->type == SV_REVERT)
+			sv = cs->low[i].sv != sv ? cs->low[i].sv : NULL;
 		mode = sv ? sv->type : (props[i].inherited ? SV_INHERIT :
 			SV_INITIAL);
 		if (mode == SV_PENDING) {
@@ -2200,6 +2299,95 @@ static void collect(struct styledb *db, const soie_node *el,
 #undef ADD
 }
 
+/* Item i of a list by commas, the list repeated when it is shorter */
+static void list_item(const char *s, int i, char *out, size_t size)
+{
+	const char *p = s, *e;
+	int n = 1;
+	size_t len;
+
+	for (p = s; *p; p++)
+		n += *p == ',';
+	i %= n;
+	for (p = s; i; p++)
+		i -= *p == ',';
+	while (*p == ' ')
+		p++;
+	for (e = p; *e && *e != ','; e++)
+		;
+	while (e > p && e[-1] == ' ')
+		e--;
+	len = (size_t)(e - p) < size - 1 ? (size_t)(e - p) : size - 1;
+	memcpy(out, p, len);
+	out[len] = '\0';
+	if (len > 1 && (*out == '"' || *out == '\'') && out[len - 1] == *out) {
+		memmove(out, out + 1, len - 2);
+		out[len - 2] = '\0';
+	}
+}
+
+static ckey anim_key(const struct sval *sv, const void *data)
+{
+	(void)sv;
+	(void)data;
+	/* over the author's declarations, inline ones too, under the
+	 * important ones (CSS Cascade 4, 6.1) */
+	return make_key(O_AUTHOR, 0, 1, 16383, ~0u, 524287);
+}
+
+/*
+ * Animations do not run: the element is shown as each of its
+ * animations leaves it. One that ends and fills forwards (or both)
+ * leaves its last keyframe, the first when it ran backwards: those
+ * declarations join the cascade. The others (no fill, infinite) leave
+ * the style as it is. `opacity: 0; animation: fade-in .3s forwards`,
+ * the usual way to bring content in, stayed invisible. Returns 1 when
+ * the cascade changed.
+ */
+static int animated(struct styledb *db, struct cascade *cs,
+	const struct style *st)
+{
+	const char *names = st->v[P_ANIMATION_NAME].u.str;
+	const char *iters = st->v[P_ANIMATION_ITERATION_COUNT].u.str;
+	const char *dirs = st->v[P_ANIMATION_DIRECTION].u.str;
+	const char *fills = st->v[P_ANIMATION_FILL_MODE].u.str;
+	const char *p;
+	int i, k, n = 1, changed = 0;
+
+	if (!names || !iters || !dirs || !fills || !strcmp(names, "none"))
+		return 0;
+	for (p = names; *p; p++)
+		n += *p == ',';
+	for (i = 0; i < n && i < 16; i++) {
+		char name[128], it[32], dir[32], fill[32];
+		const struct svec *end;
+		int count, rev;
+
+		list_item(names, i, name, sizeof(name));
+		list_item(iters, i, it, sizeof(it));
+		list_item(dirs, i, dir, sizeof(dir));
+		list_item(fills, i, fill, sizeof(fill));
+		if (strcmp(fill, "forwards") && strcmp(fill, "both"))
+			continue;
+		if (!strcmp(it, "infinite"))
+			continue;
+		for (k = 0; k < db->nkfs && strcmp(db->kfs[k].name, name); k++)
+			;
+		if (k == db->nkfs)
+			continue;
+		count = atof(it) < 1 ? 1 : (int)(atof(it) + 0.999);
+		rev = !strcmp(dir, "reverse") ||
+			(!strcmp(dir, "alternate") && !(count & 1)) ||
+			(!strcmp(dir, "alternate-reverse") && (count & 1));
+		end = rev ? &db->kfs[k].from : &db->kfs[k].to;
+		if (end->n) {
+			cascade_decls(cs, end, anim_key, NULL);
+			changed = 1;
+		}
+	}
+	return changed;
+}
+
 static void style_element(struct styledb *db, soie_node *el,
 	const struct style *parent, float rem)
 {
@@ -2282,6 +2470,8 @@ static void style_element(struct styledb *db, soie_node *el,
 					inl.custom[j].important, 1, 0, 0, 0));
 		}
 		st = compute_style(db, cs, base, root && !pseudo, rem);
+		if (db->nkfs && animated(db, cs, st))
+			st = compute_style(db, cs, base, root && !pseudo, rem);
 		free(cs->custom);
 		if (pseudo) {
 			/* no box without content */

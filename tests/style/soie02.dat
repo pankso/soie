@@ -1,0 +1,95 @@
+#data
+<!DOCTYPE html><style>@keyframes a{0%{color:red}100%{color:green}}@-webkit-keyframes b{from{width:10px}to{width:50px}}#x{animation:a 1s reverse forwards}#y{animation:1s b,a 2s both alternate 2}#z{animation:a 1s infinite forwards}#w{animation-name:a;animation-fill-mode:forwards;color:blue!important}#v{-webkit-animation:b .2s ease-in 1s both}#u{opacity:0;animation:none}</style><p id=x><p id=y><p id=z><p id=w><p id=v><p id=u>
+#errors
+#properties
+color,width
+#document
+| <!DOCTYPE html>
+| <html>
+|   @color: rgb(0, 0, 0)
+|   @width: auto
+|   <head>
+|     @color: rgb(0, 0, 0)
+|     @width: auto
+|     <style>
+|       @color: rgb(0, 0, 0)
+|       @width: auto
+|       "@keyframes a{0%{color:red}100%{color:green}}@-webkit-keyframes b{from{width:10px}to{width:50px}}#x{animation:a 1s reverse forwards}#y{animation:1s b,a 2s both alternate 2}#z{animation:a 1s infinite forwards}#w{animation-name:a;animation-fill-mode:forwards;color:blue!important}#v{-webkit-animation:b .2s ease-in 1s both}#u{opacity:0;animation:none}"
+|   <body>
+|     @color: rgb(0, 0, 0)
+|     @width: auto
+|     <p>
+|       id="x"
+|       @color: rgb(255, 0, 0)
+|       @width: auto
+|     <p>
+|       id="y"
+|       @color: rgb(255, 0, 0)
+|       @width: auto
+|     <p>
+|       id="z"
+|       @color: rgb(0, 0, 0)
+|       @width: auto
+|     <p>
+|       id="w"
+|       @color: rgb(0, 0, 255)
+|       @width: auto
+|     <p>
+|       id="v"
+|       @color: rgb(0, 0, 0)
+|       @width: 50px
+|     <p>
+|       id="u"
+|       @color: rgb(0, 0, 0)
+|       @width: auto
+
+#data
+<!DOCTYPE html><style>:is(.a, p){color:red}:where(i, #k) b{color:green}div{display:revert}h1{all:revert}</style><p class=a>x</p><i><b>y</b></i><div>z</div><h1>t</h1>
+#errors
+#properties
+color,display,font-weight
+#document
+| <!DOCTYPE html>
+| <html>
+|   @color: rgb(0, 0, 0)
+|   @display: block
+|   @font-weight: 400
+|   <head>
+|     @color: rgb(0, 0, 0)
+|     @display: none
+|     @font-weight: 400
+|     <style>
+|       @color: rgb(0, 0, 0)
+|       @display: none
+|       @font-weight: 400
+|       ":is(.a, p){color:red}:where(i, #k) b{color:green}div{display:revert}h1{all:revert}"
+|   <body>
+|     @color: rgb(0, 0, 0)
+|     @display: block
+|     @font-weight: 400
+|     <p>
+|       class="a"
+|       @color: rgb(255, 0, 0)
+|       @display: block
+|       @font-weight: 400
+|       "x"
+|     <i>
+|       @color: rgb(0, 0, 0)
+|       @display: inline
+|       @font-weight: 400
+|       <b>
+|         @color: rgb(0, 128, 0)
+|         @display: inline
+|         @font-weight: 700
+|         "y"
+|     <div>
+|       @color: rgb(0, 0, 0)
+|       @display: block
+|       @font-weight: 400
+|       "z"
+|     <h1>
+|       @color: rgb(0, 0, 0)
+|       @display: block
+|       @font-weight: 700
+|       "t"
+

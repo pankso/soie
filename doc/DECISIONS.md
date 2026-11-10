@@ -184,8 +184,23 @@ reversed, edit the entry and say why; do not leave stale rules here.
   transforms, shadows, background positions) are kept as normalized
   text and parsed by the phase that uses them.
 - `revert` and `revert-layer` behave like `unset`. `@container`,
-  `@scope`, `@keyframes`, `@page` and `@counter-style` are ignored.
+  `@scope`, `@page` and `@counter-style` are ignored.
   `@font-face` blocks are stored for phase 4.
+- Animations do not run, but an element is shown as its animations
+  leave it: `@keyframes` rules keep the declarations of their first
+  and last keyframes, and an animation that ends and fills forwards
+  (or both) puts its last keyframe in the cascade (the first when it
+  ran backwards), over the author's declarations and under the
+  important ones (animated() in cascade.c; animation-name,
+  -iteration-count, -direction and -fill-mode are properties, the
+  shorthand drops the rest). `opacity: 0; animation: fade-in .3s
+  forwards`, the usual way to bring a page's content in, left it
+  invisible. Infinite animations and those that do not fill leave the
+  style as it is. No animationstart or animationend event yet.
+- `revert` goes back to the user agent's (or the user's) declaration:
+  the cascade keeps the winner among those beside the overall one. It
+  was read as unset: `div { display: revert }` was inline, `all:
+  revert` took the defaults of headings and lists away.
 - Selectors: level 3, plus `:is()`, `:where()`, `:not()` with lists,
   `:has()` and `:nth-child(An+B of S)`. Shadow DOM selectors
   (`:host`, `::slotted()`, `::part()`) parse but never match: Tailwind

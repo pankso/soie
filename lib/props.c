@@ -403,7 +403,7 @@ enum {
 	SH_GRID_ROW, SH_GRID_COLUMN, SH_GRID_AREA, SH_MARGIN_INLINE,
 	SH_MARGIN_BLOCK, SH_PADDING_INLINE, SH_PADDING_BLOCK,
 	SH_INSET_INLINE, SH_INSET_BLOCK, SH_BORDER_INLINE, SH_BORDER_BLOCK,
-	SH_MASK, SH_GRID_TEMPLATE, SH_GRID, SH_ALL, NSHORTHANDS
+	SH_MASK, SH_GRID_TEMPLATE, SH_GRID, SH_ANIMATION, SH_ALL, NSHORTHANDS
 };
 
 static const char *const shorthand_names[NSHORTHANDS] = {
@@ -416,7 +416,7 @@ static const char *const shorthand_names[NSHORTHANDS] = {
 	"grid-column", "grid-area", "margin-inline", "margin-block",
 	"padding-inline", "padding-block", "inset-inline", "inset-block",
 	"border-inline", "border-block", "mask", "grid-template", "grid",
-	"all"
+	"animation", "all"
 };
 
 /* Logical and legacy names, for a horizontal left-to-right page. */
@@ -458,6 +458,10 @@ static const char *const aliases[][2] = {
 	{ "-webkit-mask-position", "mask-position" },
 	{ "-webkit-mask-size", "mask-size" },
 	{ "-webkit-clip-path", "clip-path" },
+	{ "-webkit-animation-name", "animation-name" },
+	{ "-webkit-animation-fill-mode", "animation-fill-mode" },
+	{ "-webkit-animation-iteration-count", "animation-iteration-count" },
+	{ "-webkit-animation-direction", "animation-direction" },
 	{ "-webkit-text-decoration-line", "text-decoration-line" },
 	{ NULL, NULL }
 };
@@ -468,6 +472,7 @@ static const char *const short_aliases[][2] = {
 	{ "border-block-start", "border-top" },
 	{ "border-block-end", "border-bottom" },
 	{ "grid-gap", "gap" },
+	{ "-webkit-animation", "animation" },
 	{ "-webkit-mask", "mask" },
 	{ NULL, NULL }
 };
@@ -555,6 +560,10 @@ static int shorthand_longhands(int sh, int *out)
 	case SH_MASK:
 		L(P_MASK_IMAGE), L(P_MASK_REPEAT), L(P_MASK_POSITION);
 		L(P_MASK_SIZE);
+		break;
+	case SH_ANIMATION:
+		L(P_ANIMATION_NAME), L(P_ANIMATION_ITERATION_COUNT);
+		L(P_ANIMATION_DIRECTION), L(P_ANIMATION_FILL_MODE);
 		break;
 	case SH_FONT:
 		L(P_FONT_STYLE), L(P_FONT_VARIANT_CAPS), L(P_FONT_WEIGHT);
@@ -975,6 +984,74 @@ bad:
 	buf_free(&lo);
 	buf_free(&lc);
 	return 0;
+}
+
+/*
+ * animation: per animation (commas), a name, an iteration count, a
+ * direction and a fill mode; durations, delays, timing functions and
+ * play states are read and dropped (cascade.c shows where an animation
+ * ends, not its run).
+ */
+static int sh_animation(struct cur *c, struct svec *out)
+{
+	static const int lh[4] = { P_ANIMATION_NAME,
+		P_ANIMATION_ITERATION_COUNT, P_ANIMATION_DIRECTION,
+		P_ANIMATION_FILL_MODE };
+	static const char *const dflt[4] = { "none", "1", "normal", "none" };
+	struct buf b[4] = { { 0 }, { 0 }, { 0 }, { 0 } };
+	const struct cv *v;
+	int i, n = 0, ok = 1;
+
+	for (;;) {
+		const struct cv *got[4] = { NULL, NULL, NULL, NULL };
+
+		while ((v = cur_peek(c)) && v->type != CT_COMMA) {
+			int k = -1;
+
+			if (v->type == CT_NUMBER || cv_ident(v, "infinite")) {
+				k = 1;
+			} else if (v->type == CT_IDENT && kw_index("normal|"
+			    "reverse|alternate|alternate-reverse", v->str) >=
+			    0) {
+				k = 2;
+			} else if (v->type == CT_IDENT && !got[3] && kw_index(
+			    "none|forwards|backwards|both", v->str) >= 0) {
+				k = 3;
+			} else if (v->type == CT_DIMENSION ||
+			    v->type == CT_FUNCTION || (v->type == CT_IDENT &&
+			    kw_index("running|paused|ease|linear|ease-in|"
+			    "ease-out|ease-in-out|step-start|step-end",
+			    v->str) >= 0)) {
+				/* a time, a timing function, a play state */
+			} else if (v->type == CT_IDENT || v->type == CT_STRING) {
+				k = 0;
+			} else {
+				ok = 0;
+			}
+			if (k >= 0 && got[k])
+				ok = 0;
+			if (k >= 0)
+				got[k] = v;
+			cur_next(c);
+		}
+		for (i = 0; i < 4; i++) {
+			if (n)
+				buf_add(&b[i], ", ", 2);
+			if (got[i])
+				css_serialize(&b[i], got[i], 1);
+			else
+				buf_add(&b[i], dflt[i], strlen(dflt[i]));
+		}
+		n++;
+		if (!cur_next(c))
+			break;
+	}
+	for (i = 0; i < 4; i++) {
+		if (ok)
+			svec_add(out, lh[i])->str = xstrndup(b[i].s, b[i].len);
+		buf_free(&b[i]);
+	}
+	return ok;
 }
 
 static int sh_font(struct cur *c, struct svec *out)
@@ -1437,6 +1514,9 @@ int parse_shorthand_value(int sh, const struct cvlist *value,
 	case SH_BACKGROUND:
 	case SH_MASK:
 		ok = sh_background(&c, out, sh == SH_MASK);
+		break;
+	case SH_ANIMATION:
+		ok = sh_animation(&c, out);
 		break;
 	case SH_FONT:
 		ok = sh_font(&c, out);

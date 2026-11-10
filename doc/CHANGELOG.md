@@ -21,6 +21,10 @@ each change are in [DECISIONS.md](DECISIONS.md).
 - `background-origin` and `background-clip`, `background-repeat:
   space` and `round`, positions of three and four values, sizes and
   positions with units and `calc()`.
+- `@keyframes` and `animation`: nothing moves, but an element that an
+  animation leaves in its last keyframe (`forwards`) is shown there;
+  content faded in from `opacity: 0` stayed invisible.
+- `revert`.
 - A positioned inline box is the containing block of its absolute
   descendants.
 - Lines break after hyphens and slashes, and between Chinese,

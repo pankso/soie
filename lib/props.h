@@ -229,3 +229,9 @@ PROP(OBJECT_FIT, "object-fit", 0, K_KW, 0,
 PROP(OBJECT_POSITION, "object-position", 0, K_RAW, 0, "", "50% 50%")
 PROP(BOX_SHADOW, "box-shadow", 0, K_RAW, 0, "", "none")
 PROP(TABLE_LAYOUT, "table-layout", 0, K_KW, 0, "auto|fixed", "auto")
+/* animations: only where they end (cascade.c), each a list by commas */
+PROP(ANIMATION_NAME, "animation-name", 0, K_RAW, 0, "", "none")
+PROP(ANIMATION_ITERATION_COUNT, "animation-iteration-count", 0, K_RAW, 0,
+	"", "1")
+PROP(ANIMATION_DIRECTION, "animation-direction", 0, K_RAW, 0, "", "normal")
+PROP(ANIMATION_FILL_MODE, "animation-fill-mode", 0, K_RAW, 0, "", "none")
