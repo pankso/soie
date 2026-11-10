@@ -68,6 +68,8 @@ each change are in [DECISIONS.md](DECISIONS.md).
 ### Fixed
 - Deeply nested flex containers took exponential time to lay out (4.5
   s for 22 levels, now 4 ms).
+- JavaScript: `form.submit()` of a POST form (logins and payments
+  that post by script).
 - JavaScript: `:scope` in queries, `location = url`, forms' controls
   and the page's elements by name (`form.q`, `out.textContent`),
   `javascript:` links, `Object.prototype.toString` on platform

@@ -1128,8 +1128,8 @@ reversed, edit the entry and say why; do not leave stale rules here.
 - What the user does is not guarded: an address typed, a bookmark, a
   link followed, a GET form (the user sees where they land). A POST
   form of a public page to the local network is (the routers' attack:
-  a form that changes their settings); scripts cannot send a POST form
-  (form.submit() refuses it). Nothing to set: no page found yet that
+  a form that changes their settings); a script's form.submit() of a
+  POST form goes the same guarded way (see JavaScript). Nothing to set: no page found yet that
   needs an exception; a settings switch if one shows up.
 - Tested in network namespaces (unshare -n, addresses 203.0.113.5 and
   192.168.250.1 on lo, a hosts file naming 127.0.0.1): from a public
@@ -2068,6 +2068,19 @@ on the same frozen DOM.
 - An `<svg>` element has createSVGRect() and the other factory
   methods (plain objects), viewBox, getCTM(): Modernizr tests SVG by
   the first, and the same site hid its icons for lack of it.
+
+- form.submit() and requestSubmit() of a POST form are carried out
+  by the host, as a click on the form's button is: dom.js marks the
+  form (data-soie-submit, the submitter data-soie-submitter) and
+  calls navigate with the mode 3, the shell finds the marked form
+  once the script returns, removes the marks and sends it with the
+  guard of the page's own requests, without a submit event for
+  submit(). No new field in soie_script_host: the extension ABI is
+  unchanged, a host that does not know the mode loads the action as a
+  link. Logins that post by script (SAML, OAuth form_post, payment
+  redirects) did nothing but log "not supported". A form's controls
+  by name are refreshed before each script, so that an inline script
+  right after the form finds them.
 
 ## Audio and video (phase 11)
 

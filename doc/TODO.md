@@ -37,8 +37,6 @@ by RMSE (the 38 sites survey of 2026-11-03).
 
 ## JavaScript
 
-- form.submit() of a POST form (through the host, guarded): logins
-  that post by script (SAML, OAuth form_post, payment redirects).
 - `Intl` in other languages than English (CLDR data), real time zone
   names.
 - The JS heap limit from the memory free at start, without the

@@ -208,7 +208,10 @@ typedef struct {
 	/* location changes: the host loads url once the script returns;
 	 * replace 1 replaces the history entry, 2 is a new window
 	 * (window.open(), a link of target _blank), which a host opens
-	 * only for the user's click or key */
+	 * only for the user's click or key; 3 is form.submit() of a POST
+	 * form: the host sends the form that has the attribute
+	 * data-soie-submit (its submitter: data-soie-submitter) and
+	 * removes the marks, url is the form's action */
 	void (*navigate)(void *data, const char *url, int replace);
 	void (*message)(void *data, int kind, const char *text);
 	/* viewport size and scroll position, CSS px; and scrolling */

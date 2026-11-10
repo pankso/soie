@@ -109,6 +109,8 @@ struct shell {
 	int private;		/* SOIE_REQ_PRIVATE: a private window */
 	int reload;		/* the next load is the user's reload */
 	int pending_guard;	/* pending_nav is the page's own: guarded */
+	int pending_submit;	/* a script's form.submit() to carry out */
+	int quiet_submit;	/* ...without a submit event */
 	int nav_guard;		/* the next load is a form the page sends:
 				 * its guard (SOIE_REQ_NO_LAN...) */
 	/* The front's pixels are B G R A (shell_bgra()); what shell_paint()
@@ -477,6 +479,27 @@ static soie_node *ancestor(soie_node *n, const char *tag)
 static void clamp_scroll(struct shell *s);
 static void set_title(struct shell *s);
 static void navigate_to(struct shell *s, const char *href, int replace);
+static void submit(struct shell *s, soie_node *form, soie_node *submitter);
+
+/* The first element of doc that has attribute name */
+static soie_node *marked(soie_node *doc, const char *name)
+{
+	soie_node *n = doc ? soie_node_first_child(doc) : NULL;
+
+	while (n) {
+		if (soie_node_get_type(n) == SOIE_ELEMENT &&
+		    soie_element_get_attr(n, name))
+			return n;
+		if (soie_node_first_child(n)) {
+			n = soie_node_first_child(n);
+			continue;
+		}
+		while (n && n != doc && !soie_node_next_sibling(n))
+			n = soie_node_parent(n);
+		n = n && n != doc ? soie_node_next_sibling(n) : NULL;
+	}
+	return NULL;
+}
 
 /* page.url in the history: a new entry (push 1), the current one's
  * (push 2), none (0) */
@@ -533,6 +556,12 @@ static void js_navigate(void *data, const char *url, int replace)
 {
 	struct shell *s = data;
 
+	if (replace == 3) {
+		/* form.submit(): the form the script marked, sent by the
+		 * shell as a click on its button would (a POST is guarded) */
+		s->pending_submit = 1;
+		return;
+	}
 	if (replace == 2) {
 		/* a new window: for the user's click or key only, as
 		 * browsers block pop-ups */
@@ -734,6 +763,22 @@ static int after_scripts(struct shell *s)
 		s->pending_open = NULL;
 		open_window(s, u);
 		free(u);
+	}
+	if (s->pending_submit) {
+		soie_node *form, *sm;
+
+		s->pending_submit = 0;
+		form = marked(s->page.doc, "data-soie-submit");
+		sm = marked(s->page.doc, "data-soie-submitter");
+		if (sm)
+			soie_element_remove_attr(sm, "data-soie-submitter");
+		if (form) {
+			soie_element_remove_attr(form, "data-soie-submit");
+			s->quiet_submit = 1;	/* no submit event: submit() */
+			submit(s, form, sm);
+			s->quiet_submit = 0;
+			return 1;
+		}
 	}
 	if (s->pending_nav) {
 		char *u = s->pending_nav;
@@ -1954,7 +1999,8 @@ static void submit(struct shell *s, soie_node *form, soie_node *submitter)
 	char *q, *abs, *url;
 	size_t len = 0;
 
-	if (fire(s, form, "submit", 0, 0, NULL, 0) || s->pending_nav)
+	if (!s->quiet_submit && (fire(s, form, "submit", 0, 0, NULL, 0) ||
+	    s->pending_nav))
 		return;
 	action = soie_element_get_attr(form, "action");
 	method = soie_element_get_attr(form, "method");

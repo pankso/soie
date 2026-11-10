@@ -2306,7 +2306,12 @@ function submitForm(form, submitter) {
 		q.append(k, v);
 	let action = form.action || document.URL;
 	if (form.method === 'post') {
-		report('form.submit() with POST is not supported: ' + action);
+		/* the host sends it, as for a click on its button: the form
+		 * and its submitter marked for it to find */
+		api.setAttr(form, 'data-soie-submit', '');
+		if (submitter)
+			api.setAttr(submitter, 'data-soie-submitter', '');
+		api.navigate(action, 3);
 		return;
 	}
 	action = action.replace(/[?#].*$/, '') + '?' + q;
@@ -6388,6 +6393,7 @@ api.names = function () {
 	if (gen === namedGen)
 		return;
 	namedGen = gen;
+	document.forms;		/* the forms' controls by name: form.q */
 	for (const n of api.ids()) {
 		if (n in g)
 			continue;
