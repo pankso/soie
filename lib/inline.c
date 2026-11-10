@@ -532,8 +532,15 @@ static void finish_line(struct ls *s, int forced, int last)
 		 * or lowered by vertical-align */
 		f->baseline = f->kind == F_ATOMIC ? base : base + f->baseline;
 		f->y += base;
-		if (f->kind == F_ATOMIC)
+		if (f->kind == F_ATOMIC) {
+			float dx, dy;
+
 			translate(f->box, f->x, f->y);
+			/* position: relative and transforms that move */
+			rel_offset(f->box, s->w0, &dx, &dy);
+			if (dx || dy)
+				translate(f->box, dx, dy);
+		}
 	}
 	/* outside markers stick to the first line */
 	if (b->nlines == 1)

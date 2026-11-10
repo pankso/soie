@@ -24,6 +24,10 @@ each change are in [DECISIONS.md](DECISIONS.md).
 - `@keyframes` and `animation`: nothing moves, but an element that an
   animation leaves in its last keyframe (`forwards`) is shown there;
   content faded in from `opacity: 0` stayed invisible.
+- Transforms that rotate, scale or skew (`rotate()`, `scale()`,
+  `skew()`, `matrix()`, the `rotate`, `scale` and `translate`
+  properties, `transform-origin`): carets, chevrons and flipped icons
+  were drawn as they lie.
 - `revert`.
 - CSS counters: `counter-reset`, `counter-increment`, `counter-set`,
   `counter()` and `counters()`.
@@ -61,6 +65,7 @@ each change are in [DECISIONS.md](DECISIONS.md).
 - `flex-direction: row-reverse` and `column-reverse` start from the
   other edge.
 - Tabs in preformatted text.
+- Inline-blocks and inline images moved by `position: relative`.
 - Tables: a cell's `height` is a minimum (text ran over the next
   row), the table's `height`, `<col>` and `<colgroup>` widths.
 - Grid: heights in percent or from outside, `min-height`, items

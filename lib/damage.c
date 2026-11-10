@@ -14,6 +14,7 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 #include <stdint.h>
+#include <math.h>
 #include <stdlib.h>
 #include <string.h>
 #include "internal.h"
@@ -197,6 +198,23 @@ static void walk(struct table *t, const struct box *b, struct dent *d,
 				st->v[P_OUTLINE_OFFSET].u.len.px : 0);
 			if (sr > o)
 				o = sr;
+		}
+		{
+			/* rotated, scaled: painted around where it lies, as
+			 * far as its diagonal times its scale at most */
+			float m[6];
+
+			if (st && box_transform(b, m) == 2) {
+				float sx = sqrtf(m[0] * m[0] + m[1] * m[1]);
+				float sy = sqrtf(m[2] * m[2] + m[3] * m[3]);
+				float bw = b->w + b->p[1] + b->p[3] + b->b[1] +
+					b->b[3];
+				float bh = b->h + b->p[0] + b->p[2] + b->b[0] +
+					b->b[2];
+
+				o += sqrtf(bw * bw + bh * bh) * (sx > sy ? sx : sy) *
+					2 + fabsf(m[4]) + fabsf(m[5]);
+			}
 		}
 		x0 = b->x - b->p[3] - b->b[3] - o;
 		y0 = b->y - b->p[0] - b->b[0] - o;

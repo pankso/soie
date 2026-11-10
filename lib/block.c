@@ -631,23 +631,122 @@ static int tr_numbers(const char *s, float *v, int n)
 	return k;
 }
 
-/*
- * The translation transform gives b: translate(), translateX(),
- * translateY(), translate3d(), and the translation of matrix() and
- * matrix3d(); percentages of the border box. Scales and rotations are
- * left out: the box keeps its size, moves only.
- */
-static void transform_offset(const struct box *b, float *dx, float *dy)
+/* a := a x b, 2D affine matrices (a b c d e f as CSS writes them) */
+static void mat_mul(float *a, const float *b)
 {
-	const char *s = b->style ? b->style->v[P_TRANSFORM].u.str : NULL;
-	float bw = b->w + hedges(b), bh = b->h + vedges(b), m[16];
+	float r[6];
 
-	*dx = *dy = 0;
+	r[0] = a[0] * b[0] + a[2] * b[1];
+	r[1] = a[1] * b[0] + a[3] * b[1];
+	r[2] = a[0] * b[2] + a[2] * b[3];
+	r[3] = a[1] * b[2] + a[3] * b[3];
+	r[4] = a[0] * b[4] + a[2] * b[5] + a[4];
+	r[5] = a[1] * b[4] + a[3] * b[5] + a[5];
+	memcpy(a, r, sizeof(r));
+}
+
+/* An angle: deg, rad, turn, grad; a bare number is degrees */
+static float tr_angle(const char **sp)
+{
+	char *e;
+	float v = strtof(*sp, &e);
+
+	if (e == *sp)
+		return 0;
+	if (!strncmp(e, "rad", 3))
+		v = v * 180 / 3.14159265f;
+	else if (!strncmp(e, "turn", 4))
+		v *= 360;
+	else if (!strncmp(e, "grad", 4))
+		v *= 0.9f;
+	while (*e >= 'a' && *e <= 'z')
+		e++;
+	*sp = e;
+	return v * 3.14159265f / 180;
+}
+
+static void tr_skip(const char **sp)
+{
+	while (**sp == ' ' || **sp == ',')
+		(*sp)++;
+}
+
+/*
+ * The transform of b (CSS Transforms 1 and 2): translate, rotate and
+ * scale, then the functions of transform, as a matrix in page pixels
+ * without its origin. Returns 0 for none, 1 for a translation alone
+ * (the layout moves the box: m[4], m[5]), 2 for anything else (the box
+ * stays where it is laid out and is painted through the matrix,
+ * paint.c). The 3D functions keep their 2D part.
+ */
+int box_transform(const struct box *b, float *m)
+{
+	const struct style *st = b->style;
+	const char *s;
+	float bw = b->w + hedges(b), bh = b->h + vedges(b), t[6], v[16];
+	int kind = 0;
+
+	m[0] = m[3] = 1;
+	m[1] = m[2] = m[4] = m[5] = 0;
+	if (!st || b->type == B_INLINE || b->type == B_TEXT)
+		return 0;
+	s = st->v[P_TRANSLATE].u.str;
+	if (s && strcmp(s, "none")) {
+		m[4] = tr_len(&s, b, bw);
+		tr_skip(&s);
+		if (*s)
+			m[5] = tr_len(&s, b, bh);
+		kind = 1;
+	}
+	s = st->v[P_ROTATE].u.str;
+	if (s && strcmp(s, "none")) {
+		float a;
+
+		/* `x 90deg`, `1 0 0 90deg`: not in the plane, left out */
+		while (*s == ' ')
+			s++;
+		if ((*s >= '0' && *s <= '9') || *s == '-' || *s == '.' ||
+		    *s == 'z') {
+			if (*s == 'z')
+				s++;
+			tr_skip(&s);
+			a = tr_angle(&s);
+			tr_skip(&s);
+			if (!*s) {
+				t[0] = t[3] = cosf(a);
+				t[1] = sinf(a);
+				t[2] = -t[1];
+				t[4] = t[5] = 0;
+				mat_mul(m, t);
+				kind = 2;
+			}
+		}
+	}
+	s = st->v[P_SCALE].u.str;
+	if (s && strcmp(s, "none")) {
+		char *e;
+
+		t[0] = strtof(s, &e);
+		if (e != s) {
+			if (*e == '%')
+				t[0] /= 100, e++;
+			s = e;
+			tr_skip(&s);
+			t[3] = *s ? strtof(s, &e) : t[0];
+			if (*s && *e == '%')
+				t[3] /= 100;
+			t[1] = t[2] = t[4] = t[5] = 0;
+			mat_mul(m, t);
+			kind = 2;
+		}
+	}
+	s = st->v[P_TRANSFORM].u.str;
 	if (!s || !strcmp(s, "none"))
-		return;
+		return kind;
 	while (*s) {
 		const char *name = s, *a;
 		size_t n;
+		int k = 2;
 
 		while (*s && *s != '(')
 			s++;
@@ -657,34 +756,95 @@ static void transform_offset(const struct box *b, float *dx, float *dy)
 			name++;
 		n = (size_t)(s - name);
 		a = ++s;
-		while (*a == ' ')
-			a++;
-		if ((n == 9 && !strncmp(name, "translate", 9)) ||
-		    (n == 11 && !strncmp(name, "translate3d", 11))) {
-			*dx += tr_len(&a, b, bw);
-			while (*a == ' ' || *a == ',')
-				a++;
+		tr_skip(&a);
+		t[0] = t[3] = 1;
+		t[1] = t[2] = t[4] = t[5] = 0;
+#define IS(x) (n == sizeof(x) - 1 && !strncmp(name, x, n))
+		if (IS("translate") || IS("translate3d")) {
+			t[4] = tr_len(&a, b, bw);
+			tr_skip(&a);
 			if (*a != ')')
-				*dy += tr_len(&a, b, bh);
-		} else if (n == 10 && !strncmp(name, "translateX", 10)) {
-			*dx += tr_len(&a, b, bw);
-		} else if (n == 10 && !strncmp(name, "translateY", 10)) {
-			*dy += tr_len(&a, b, bh);
-		} else if (n == 6 && !strncmp(name, "matrix", 6)) {
-			if (tr_numbers(a, m, 6) == 6) {
-				*dx += m[4] * doc_zoom();
-				*dy += m[5] * doc_zoom();
+				t[5] = tr_len(&a, b, bh);
+			k = 1;
+		} else if (IS("translateX")) {
+			t[4] = tr_len(&a, b, bw);
+			k = 1;
+		} else if (IS("translateY")) {
+			t[5] = tr_len(&a, b, bh);
+			k = 1;
+		} else if (IS("translateZ") || IS("perspective")) {
+			k = 1;
+		} else if (IS("scale") || IS("scale3d")) {
+			if (tr_numbers(a, v, 2) >= 1) {
+				t[0] = v[0];
+				t[3] = tr_numbers(a, v, 2) == 2 ? v[1] : v[0];
 			}
-		} else if (n == 8 && !strncmp(name, "matrix3d", 8)) {
-			if (tr_numbers(a, m, 16) == 16) {
-				*dx += m[12] * doc_zoom();
-				*dy += m[13] * doc_zoom();
+		} else if (IS("scaleX")) {
+			if (tr_numbers(a, v, 1) == 1)
+				t[0] = v[0];
+		} else if (IS("scaleY")) {
+			if (tr_numbers(a, v, 1) == 1)
+				t[3] = v[0];
+		} else if (IS("rotate") || IS("rotateZ")) {
+			float r = tr_angle(&a);
+
+			t[0] = t[3] = cosf(r);
+			t[1] = sinf(r);
+			t[2] = -t[1];
+		} else if (IS("skew") || IS("skewX")) {
+			t[2] = tanf(tr_angle(&a));
+			tr_skip(&a);
+			if (IS("skew") && *a != ')')
+				t[1] = tanf(tr_angle(&a));
+		} else if (IS("skewY")) {
+			t[1] = tanf(tr_angle(&a));
+		} else if (IS("matrix")) {
+			if (tr_numbers(a, v, 6) == 6) {
+				memcpy(t, v, 6 * sizeof(*t));
+				t[4] *= doc_zoom();
+				t[5] *= doc_zoom();
+				k = t[0] == 1 && !t[1] && !t[2] && t[3] == 1 ?
+					1 : 2;
 			}
+		} else if (IS("matrix3d")) {
+			if (tr_numbers(a, v, 16) == 16) {
+				t[0] = v[0];
+				t[1] = v[1];
+				t[2] = v[4];
+				t[3] = v[5];
+				t[4] = v[12] * doc_zoom();
+				t[5] = v[13] * doc_zoom();
+				k = t[0] == 1 && !t[1] && !t[2] && t[3] == 1 ?
+					1 : 2;
+			}
+		} else {
+			k = 1;	/* rotateX(), rotate3d()...: out of the plane */
 		}
+#undef IS
+		mat_mul(m, t);
+		if (k > kind)
+			kind = k;
 		while (*s && *s != ')')
 			s++;
 		if (*s)
 			s++;
+	}
+	/* scale(1), rotate(0): nothing to paint through */
+	if (kind == 2 && fabsf(m[0] - 1) < 1e-6f && fabsf(m[1]) < 1e-6f &&
+	    fabsf(m[2]) < 1e-6f && fabsf(m[3] - 1) < 1e-6f)
+		kind = 1;
+	return kind;
+}
+
+/* What a transform that only moves gives the layout */
+static void transform_offset(const struct box *b, float *dx, float *dy)
+{
+	float m[6];
+
+	*dx = *dy = 0;
+	if (box_transform(b, m) == 1) {
+		*dx = m[4];
+		*dy = m[5];
 	}
 }
 

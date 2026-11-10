@@ -144,7 +144,7 @@ width=400
 |     block <div> 0,0 200x100
 |       block abs <div> 80,40 40x20
 |       block <div> 10,5 30x10
-|       block <div> 7,13 30x10
+|       block <div> 0,10 30x10
 |       block <div> 32,24 30x10
 
 #data

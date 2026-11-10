@@ -1,0 +1,14 @@
+<!DOCTYPE html>
+<!-- Transforms painted through their matrix: rotate, scale, skew,
+     matrix, their origin, the rotate, scale and translate properties,
+     a positioned child inside, an inline-block moved by relative
+     position -->
+<style>body{margin:4px;font:10px DejaVu Sans}
+div.g{width:60px;height:30px;margin:20px;display:inline-block;background:#48c;color:#fff}</style>
+<div class=g style="transform:rotate(20deg)">rot</div><div class=g style="transform:scale(1.5)">scale</div><div class=g style="transform:translate(10px,10px) rotate(-45deg)">t+r</div>
+<div class=g style="transform:skewX(20deg)">skew</div><div class=g style="transform:scaleX(-1)">flip</div><div class=g style="rotate:90deg">prop</div>
+<div class=g style="transform:rotate(45deg);transform-origin:0 0">origin</div><div class=g style="transform:matrix(1,.2,.2,1,5,5)">matrix</div>
+<div class=g style="scale:.5">half</div><div class=g style="translate:20px 10px">move</div>
+<div class=g style="transform:rotate(10deg);position:relative"><i style="position:absolute;right:-5px;top:-5px;width:10px;height:10px;background:red"></i>abs</div>
+<span style="display:inline-block;border:solid #000;border-width:0 3px 3px 0;padding:5px;transform:rotate(45deg)"></span>
+<i style="display:inline-block;position:relative;top:10px;width:10px;height:10px;background:green"></i>

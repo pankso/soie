@@ -179,6 +179,9 @@ void box_edges(struct box *b, float cbw);
 void content_sizes(struct box *b, float *min, float *max);
 void layout_cell(struct box *c, float x, float y, float w);
 void rel_offset(const struct box *b, float cbw, float *dx, float *dy);
+/* b's transform as a 2D matrix; 0 none, 1 a move (in the layout), 2
+ * more (painted through it) */
+int box_transform(const struct box *b, float *m);
 
 /* inline.c */
 /* cbh: b's content height when definite (percentage heights of its

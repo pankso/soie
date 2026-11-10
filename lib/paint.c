@@ -1486,6 +1486,222 @@ static void paint_out_of_flow(struct canvas *c, struct box *b)
 			paint_out_of_flow(c, k);
 }
 
+static void paint_context(struct canvas *c, struct box *b);
+
+/* Where b and everything below it are, untransformed */
+static void subtree_bounds(const struct box *b, float *r, int depth)
+{
+	const struct box *k;
+	float x = b->x - b->p[3] - b->b[3], y = b->y - b->p[0] - b->b[0];
+	float x1 = b->x + b->w + b->p[1] + b->b[1];
+	float y1 = b->y + b->h + b->p[2] + b->b[2];
+	int i;
+
+	if (b->type != B_INLINE && b->type != B_TEXT && b->type != B_BREAK) {
+		float e = b->style ? shadow_reach(b->style) + 2 : 2;
+
+		if (x - e < r[0])
+			r[0] = x - e;
+		if (y - e < r[1])
+			r[1] = y - e;
+		if (x1 + e > r[2])
+			r[2] = x1 + e;
+		if (y1 + e > r[3])
+			r[3] = y1 + e;
+	}
+	for (i = 0; i < b->nfrags; i++) {
+		const struct frag *f = &b->frags[i];
+
+		if (f->x < r[0])
+			r[0] = f->x;
+		if (f->y < r[1])
+			r[1] = f->y;
+		if (f->x + f->w > r[2])
+			r[2] = f->x + f->w;
+		if (f->y + f->h > r[3])
+			r[3] = f->y + f->h;
+	}
+	if (depth > 256 || (b->style && !kw(b->style, P_OVERFLOW_X,
+	    "visible") && b->type != B_INLINE))
+		return;		/* clipped to it */
+	for (k = b->first; k; k = k->next)
+		subtree_bounds(k, r, depth + 1);
+}
+
+/* transform-origin in the border box w x h: keywords, lengths,
+ * percentages */
+static void transform_origin(const struct box *b, float w, float h, float *ox,
+	float *oy)
+{
+	const char *s = b->style->v[P_TRANSFORM_ORIGIN].u.str;
+	float em = b->style->v[P_FONT_SIZE].u.len.px;
+	struct cvlist l;
+	struct cur k;
+	const struct cv *v;
+	int n = 0;
+
+	*ox = w / 2;
+	*oy = h / 2;
+	if (!s)
+		return;
+	css_component_values(s, strlen(s), &l);
+	cur_init(&k, &l);
+	while ((v = cur_next(&k)) && n < 2) {
+		if (cv_ident(v, "left"))
+			*ox = 0;
+		else if (cv_ident(v, "right"))
+			*ox = w;
+		else if (cv_ident(v, "top"))
+			*oy = 0;
+		else if (cv_ident(v, "bottom"))
+			*oy = h;
+		else if (cv_ident(v, "center"))
+			;
+		else if (!n)
+			*ox = css_len_px(v, w, em);
+		else
+			*oy = css_len_px(v, h, em);
+		n++;
+	}
+	cvlist_free(&l);
+}
+
+/* The box being painted into its own canvas, to be transformed */
+static const struct box *tf_now;
+
+/*
+ * A box with a rotation, a scale or a skew (box_transform() gave m):
+ * painted with everything it holds into a canvas of its own, as a
+ * stacking context, then drawn through the matrix around its origin,
+ * each pixel taking its color from where it comes from (bilinear).
+ * Returns 0 when it cannot (too large): painted as it lies.
+ */
+static int paint_transformed(struct canvas *c, struct box *b, const float *m)
+{
+	float r[4] = { 1e30f, 1e30f, -1e30f, -1e30f };
+	float x = b->x - b->p[3] - b->b[3], y = b->y - b->p[0] - b->b[0];
+	float w = b->w + b->p[1] + b->p[3] + b->b[1] + b->b[3];
+	float h = b->h + b->p[0] + b->p[2] + b->b[0] + b->b[2];
+	float ox, oy, det, inv[6], tx, ty, bx0, by0, bx1, by1;
+	const struct box *outer = tf_now;
+	struct canvas t;
+	int i, j, k, x0, y0, x1, y1, ch = c->bgr ? 2 : 0;
+
+	(void)ch;
+	subtree_bounds(b, r, 0);
+	if (r[2] <= r[0] || r[3] <= r[1])
+		return 1;
+	det = m[0] * m[3] - m[1] * m[2];
+	if (fabsf(det) < 1e-6f)
+		return 1;	/* scale(0): nothing shows */
+	memset(&t, 0, sizeof(t));
+	t.ox = floorf(r[0]);
+	t.oy = floorf(r[1]);
+	t.w = (int)(ceilf(r[2]) - t.ox);
+	t.h = (int)(ceilf(r[3]) - t.oy);
+	if (t.w <= 0 || t.h <= 0 || t.w > 8192 || t.h > 8192 ||
+	    (size_t)t.w * (size_t)t.h > 16u << 20)
+		return 0;
+	t.stride = t.w * 4;
+	t.px = calloc((size_t)t.w * (size_t)t.h + 1, 4);
+	if (!t.px)
+		return 0;
+	t.cx1 = t.w;
+	t.cy1 = t.h;
+	t.alpha = 1;
+	t.bgr = c->bgr;
+	tf_now = b;
+	paint_context(&t, b);
+	tf_now = outer;
+	/* page = O + M (p - O): where the origin stays put */
+	transform_origin(b, w, h, &ox, &oy);
+	ox += x;
+	oy += y;
+	tx = ox + m[4] - (m[0] * ox + m[2] * oy);
+	ty = oy + m[5] - (m[1] * ox + m[3] * oy);
+	inv[0] = m[3] / det;
+	inv[1] = -m[1] / det;
+	inv[2] = -m[2] / det;
+	inv[3] = m[0] / det;
+	inv[4] = -(inv[0] * tx + inv[2] * ty);
+	inv[5] = -(inv[1] * tx + inv[3] * ty);
+	/* what the canvas covers once transformed */
+	bx0 = by0 = 1e30f;
+	bx1 = by1 = -1e30f;
+	for (k = 0; k < 4; k++) {
+		float px = t.ox + (k & 1 ? (float)t.w : 0);
+		float py = t.oy + (k & 2 ? (float)t.h : 0);
+		float qx = m[0] * px + m[2] * py + tx;
+		float qy = m[1] * px + m[3] * py + ty;
+
+		if (qx < bx0)
+			bx0 = qx;
+		if (qx > bx1)
+			bx1 = qx;
+		if (qy < by0)
+			by0 = qy;
+		if (qy > by1)
+			by1 = qy;
+	}
+	x0 = (int)floorf(bx0 - c->ox);
+	y0 = (int)floorf(by0 - c->oy);
+	x1 = (int)ceilf(bx1 - c->ox);
+	y1 = (int)ceilf(by1 - c->oy);
+	if (x0 < c->cx0)
+		x0 = c->cx0;
+	if (y0 < c->cy0)
+		y0 = c->cy0;
+	if (x1 > c->cx1)
+		x1 = c->cx1;
+	if (y1 > c->cy1)
+		y1 = c->cy1;
+	for (j = y0; j < y1; j++)
+		for (i = x0; i < x1; i++) {
+			float px = (float)i + c->ox + 0.5f;
+			float py = (float)j + c->oy + 0.5f;
+			float sx = inv[0] * px + inv[2] * py + inv[4] - t.ox - 0.5f;
+			float sy = inv[1] * px + inv[3] * py + inv[5] - t.oy - 0.5f;
+			int ix = (int)floorf(sx), iy = (int)floorf(sy);
+			float fx = sx - (float)ix, fy = sy - (float)iy, f;
+			float o[4] = { 0, 0, 0, 0 };
+			unsigned char *d;
+			int a, q;
+
+			if (ix < -1 || iy < -1 || ix >= t.w || iy >= t.h)
+				continue;
+			for (q = 0; q < 4; q++) {
+				int ux = ix + (q & 1), uy = iy + (q >> 1);
+				float wgt = (q & 1 ? fx : 1 - fx) *
+					(q >> 1 ? fy : 1 - fy);
+				const unsigned char *sp;
+
+				if (ux < 0 || uy < 0 || ux >= t.w || uy >= t.h)
+					continue;
+				sp = t.px + (size_t)uy * (size_t)t.stride +
+					(size_t)ux * 4;
+				for (k = 0; k < 4; k++)
+					o[k] += sp[k] * wgt;
+			}
+			if (o[3] < 0.5f)
+				continue;
+			f = c->alpha * (c->mask ? (float)mask_at(c, i, j) / 255 :
+				1);
+			a = (int)(o[3] * f + 0.5f);
+			if (a <= 0)
+				continue;
+			d = c->px + (size_t)j * (size_t)c->stride + (size_t)i * 4;
+			/* the canvas of its own holds colors times alpha */
+			for (k = 0; k < 3; k++) {
+				float v = o[k] * f + d[k] * (255 - a) / 255.f;
+
+				d[k] = (unsigned char)(v > 255 ? 255 : v + 0.5f);
+			}
+			d[3] = (unsigned char)(a + d[3] * (255 - a) / 255);
+		}
+	free(t.px);
+	return 1;
+}
+
 /*
  * Paint b and its descendants. Positioned descendants are deferred to
  * the z-list unless stacking (painting b itself as a unit).
@@ -1504,6 +1720,12 @@ static void paint_box(struct canvas *c, struct box *b, int stacking)
 	}
 	if (b->type == B_TEXT || b->type == B_BREAK)
 		return;
+	if (b != tf_now && b->style && b->parent) {
+		float m[6];
+
+		if (box_transform(b, m) == 2 && paint_transformed(c, b, m))
+			return;
+	}
 	mk = mask_push(c, b, &msave);
 	clip_rect(c, b);
 	if (b->style && kw(b->style, P_VISIBILITY, "hidden") &&

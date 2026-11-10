@@ -682,6 +682,24 @@ reversed, edit the entry and say why; do not leave stale rules here.
 - box-shadow blurs are capped at 300 px, as browsers: the blur buffer
   grows with it and 99999px aborted on its allocation.
 
+- Transforms: box_transform() (block.c) gives a box's 2D matrix from
+  translate, rotate, scale and the functions of transform (the 3D
+  ones keep their part in the plane). A transform that only moves is
+  the layout's, as before: the box and what it holds are translated.
+  Anything else (rotate, scale, skew, matrix) is painted: the box is
+  drawn where it lies, with everything it holds and as a stacking
+  context, into a canvas of its own, which is then drawn through the
+  matrix around transform-origin, each pixel taking its color from
+  where it comes from, bilinear (paint_transformed()). Rotated carets
+  and chevrons (a bordered square turned 45 degrees), flipped icons,
+  scaled badges were drawn untransformed. Text in it is scaled as
+  pixels, not laid out again at its size; the hit test and
+  getBoundingClientRect() still know the box where it lies; what
+  overflows a box that clips is not in the canvas. Damage takes the
+  box's diagonal times its scale around it. Inline-blocks are now
+  moved by position: relative and by moving transforms (they were
+  not).
+
 ## Images (phase 6)
 
 - Decoders: PNG (libpng), JPEG (libjpeg), GIF first frame (own LZW
