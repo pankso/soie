@@ -1,6 +1,6 @@
 # Soie - lightweight HTML rendering engine
 
-VERSION = 0.1.3
+VERSION = 0.1.4
 SOVERSION = 0
 PREFIX ?= /usr
 DESTDIR ?=

@@ -2605,9 +2605,21 @@ run again):
   46 %. Same soname and extension ABI; ext.h gains two request flags
   (SOIE_REQ_NO_LAN, SOIE_REQ_NO_LOOPBACK) and SOIE_REQ_PAGE, no
   public function added.
+- 0.1.4 (2026-11-10): a review of the whole engine and a pass on
+  standards: aspect-ratio, SVG painted from the cascade, backgrounds
+  and gradients rewritten, line breaking, floats, counters, keyframes'
+  end state and animation events, transforms, form controls, CSSOM,
+  named access on window and forms; the same-origin policy and CORS
+  of scripts' requests enforced in C; bounds found by fuzzing; Next.js
+  sites (removeAttributeNode, a minimal shadow root). Against Firefox
+  on 24 live sites: slitaz.org 0.061 to 0.032 RMSE, Hacker News 0.156
+  to 0.062. WPT layout subset: flexbox 66 %, grid 49 %. Same soname
+  and extension ABI; one public function added, soie_animations()
+  (soie/style.h).
 - The site's figures are rounded so that they stay true across
   releases: "under 50,000 lines of code" (tools/loc.sh: 45,503 in
-  0.1.2, 47,548 in 0.1.3; "about 45,000" was out of date one release
+  0.1.2, 47,548 in 0.1.3, 51,661 in 0.1.4: "under 50,000" became
+  "under 55,000"; "about 45,000" was out of date one release
   later). At each release, check them all the same: tools/loc.sh,
   the WPT percentages (tests/wpt/run.sh; the site said 44 and 23 %
   until 0.1.3, when they were 62 and 46), the download size (soie
