@@ -381,8 +381,7 @@ reversed, edit the entry and say why; do not leave stale rules here.
   and the layout tests compare that dump.
 - Known simplifications: a float before a block whose top margin
   collapses through its parent stays above the collapsed margin
-  instead of moving down with it; inline boxes with position:
-  relative are not offset; sticky is static; vertical margins of
+  instead of moving down with it; sticky is static; vertical margins of
   floats do not collapse (as specified), but clearance is computed
   the simple way (move below the floats).
 - Box tree depth is capped at 512 levels (layout is recursive).
@@ -502,6 +501,11 @@ reversed, edit the entry and say why; do not leave stale rules here.
   themselves (ordinal(): start, value, reversed), not through the
   implicit list-item counter: an author's counter-reset on an ol does
   not stop them as it does in browsers.
+- Inline boxes with position: relative are offset: once a line is
+  placed, each of its pieces moves by the offsets of the relative
+  inline boxes around it (finish_line()); the line itself does not
+  change. python.org's Donate link (inline, top: 38px) sat 38 px too
+  high, over the logo row.
 - Bounds found by a review: grid lines are clamped to 10000 as in
   Firefox (the occupancy grid is rows x columns; line 50000 on both
   axes overflowed its index); display: contents counts as a level of
@@ -2032,6 +2036,22 @@ on the same frozen DOM.
   through it and take their options. Other languages' month names,
   separators and collations would need CLDR data: megabytes, not for
   now.
+
+- The CSS object model, as much as scripts read of it (dom.js): a
+  style element's `sheet` with `cssRules` (each rule its text, type,
+  selector, declarations as a `style`, the rules of a group),
+  insertRule() and deleteRule(), document.styleSheets,
+  `new CSSStyleSheet()` with replaceSync() and
+  document.adoptedStyleSheets (each adopted sheet is a style element
+  at the end of the head). The engine has no such objects: the rules
+  are cut out of the element's text when asked and a change writes
+  the text back, appended when the rule goes at the end. `sheet` was
+  an object with no rules: Modernizr reads a rule back to know
+  whether @font-face exists, and python.org then hid its icons. The
+  sheets of `<link>` elements are still not read back.
+- An `<svg>` element has createSVGRect() and the other factory
+  methods (plain objects), viewBox, getCTM(): Modernizr tests SVG by
+  the first, and the same site hid its icons for lack of it.
 
 ## Audio and video (phase 11)
 

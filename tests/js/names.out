@@ -4,3 +4,4 @@ log: unknown ReferenceError
 log: undefined object false true -1
 log: 5
 log: [object Array] [object Object] [object Array] 13 [object Map] [object Null]
+log: svg true true number

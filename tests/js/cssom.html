@@ -1,0 +1,14 @@
+<!doctype html><style id=s>p { color: red; margin: 0 } /* c */ @media (min-width: 1px) { b { color: blue } i{x:y} } @font-face { font-family: "f"; src: url("a;b}.woff") }</style><p id=p>x</p>
+<script>
+var sh = document.getElementById('s').sheet, r = sh.cssRules;
+console.log(document.styleSheets.length, r.length, r[0].type, r[0].selectorText, r[0].style.color, r[0].style.getPropertyValue('margin'), r[1].type, r[1].media.mediaText, r[1].cssRules.length, r[1].cssRules[0].cssText, r[2].type, /src/.test(r[2].cssText));
+/* Modernizr's @font-face test */
+var st = document.createElement('style'); st.textContent = '@font-face {font-family:"font";src:url("https://")}'; document.head.appendChild(st);
+var rule = st.sheet.cssRules[0]; console.log('fontface', !!rule && /src/i.test(rule.cssText) && rule.cssText.indexOf(rule.cssText.split(' ')[0]) === 0);
+console.log(sh.insertRule('#p { color: green }', r.length), sh.cssRules.length, getComputedStyle(document.getElementById('p')).color);
+sh.deleteRule(sh.cssRules.length - 1); console.log(sh.cssRules.length, getComputedStyle(document.getElementById('p')).color);
+r[0].style.color = 'blue'; console.log(getComputedStyle(document.getElementById('p')).color, sh.cssRules[0].cssText);
+var c = new CSSStyleSheet(); c.replaceSync('#p { color: rgb(1, 2, 3) }'); document.adoptedStyleSheets = [c];
+console.log(c.cssRules.length, getComputedStyle(document.getElementById('p')).color, c instanceof CSSStyleSheet, r[0] instanceof CSSStyleRule, CSSRule.MEDIA_RULE);
+c.insertRule('#p { color: rgb(4, 5, 6) }', 1); console.log(getComputedStyle(document.getElementById('p')).color);
+</script>

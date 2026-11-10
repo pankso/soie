@@ -38,6 +38,10 @@ each change are in [DECISIONS.md](DECISIONS.md).
   `<progress>`, `<meter>`; unstyled controls get a thin rounded ring.
 - JavaScript: a minimal `Intl` (English conventions) and the
   `toLocale...` methods with their options.
+- JavaScript: style sheets as objects (`sheet.cssRules`,
+  `insertRule()`, `document.styleSheets`, `new CSSStyleSheet()`,
+  `adoptedStyleSheets`), the factory methods of `<svg>`: sites that
+  test features with Modernizr no longer hide their icons.
 - `revert`.
 - CSS counters: `counter-reset`, `counter-increment`, `counter-set`,
   `counter()` and `counters()`.
@@ -78,7 +82,8 @@ each change are in [DECISIONS.md](DECISIONS.md).
 - A float was hidden by the background of the block after its
   parent.
 - `<details>` without a `<summary>` shows "Details".
-- Inline-blocks and inline images moved by `position: relative`.
+- Inline-blocks, inline images and inline boxes moved by `position:
+  relative`.
 - Tables: a cell's `height` is a minimum (text ran over the next
   row), the table's `height`, `<col>` and `<colgroup>` widths.
 - Grid: heights in percent or from outside, `min-height`, items

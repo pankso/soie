@@ -1717,7 +1717,32 @@ class SVGElement extends Element {
 		return { x: 0, y: 0, width: r[2], height: r[3] };
 	}
 }
-class SVGSVGElement extends SVGElement {}
+/* What scripts test SVG support by (Modernizr: createSVGRect; a site
+ * told it has none hides its icons), and the plain objects they give */
+class SVGSVGElement extends SVGElement {
+	createSVGRect() { return new DOMRect(0, 0, 0, 0); }
+	createSVGPoint() {
+		return { x: 0, y: 0, matrixTransform() { return this; } };
+	}
+	createSVGMatrix() {
+		return { a: 1, b: 0, c: 0, d: 1, e: 0, f: 0,
+			multiply() { return this; }, inverse() { return this; },
+			translate() { return this; }, scale() { return this; },
+			rotate() { return this; } };
+	}
+	createSVGNumber() { return { value: 0 }; }
+	createSVGLength() { return { value: 0, valueInSpecifiedUnits: 0 }; }
+	createSVGTransform() { return { matrix: this.createSVGMatrix() }; }
+	getCTM() { return this.createSVGMatrix(); }
+	getScreenCTM() { return this.createSVGMatrix(); }
+	get viewBox() {
+		const v = (api.getAttr(this, 'viewBox') || '').trim()
+			.split(/[\s,]+/).map(Number);
+		const b = { x: v[0] || 0, y: v[1] || 0, width: v[2] || 0,
+			height: v[3] || 0 };
+		return { baseVal: b, animVal: b };
+	}
+}
 class MathMLElement extends Element {}
 
 /* HTML element classes, by tag */
@@ -1816,6 +1841,276 @@ reflect(HTMLScriptElement, ['type', 'charset', 'crossOrigin', 'integrity',
 reflect(HTMLScriptElement, ['async', 'defer', 'noModule'], 'bool');
 HTMLScriptElement.supports = (t) => t === 'classic' || t === 'module';
 
+/*
+ * The CSS object model, what scripts read of it: a style element's
+ * sheet with its rules as objects (their text, selector, declarations,
+ * the rules of a group), insertRule() and deleteRule(), and sheets made
+ * by `new CSSStyleSheet()`. The engine keeps no such objects: the rules
+ * are cut out of the element's text when asked, and a change writes
+ * the text back. Modernizr decides whether @font-face exists by
+ * reading a rule back (python.org hid its icons without it).
+ */
+function cssSplit(text) {
+	const out = [];
+	let depth = 0, start = 0, q = null;
+	for (let i = 0; i < text.length; i++) {
+		const c = text[i];
+		if (q) {
+			if (c === '\\')
+				i++;
+			else if (c === q)
+				q = null;
+		} else if (c === '"' || c === "'") {
+			q = c;
+		} else if (c === '/' && text[i + 1] === '*') {
+			const e = text.indexOf('*/', i + 2);
+			i = e < 0 ? text.length : e + 1;
+		} else if (c === '{') {
+			depth++;
+		} else if (c === '}') {
+			if (depth > 0 && !--depth) {
+				out.push(text.slice(start, i + 1));
+				start = i + 1;
+			}
+		} else if (c === ';' && !depth) {
+			out.push(text.slice(start, i + 1));
+			start = i + 1;
+		}
+	}
+	return out.map((r) => r.replace(/\/\*[^]*?\*\//g, '').trim())
+		.filter((r) => r && r !== ';');
+}
+
+class CSSRule {
+	constructor(text, sheet, parent) {
+		const at = /^@(-[a-z]+-)?([a-z-]+)/i.exec(text);
+		const open = text.indexOf('{');
+		this._text = text;
+		this.parentStyleSheet = sheet;
+		this.parentRule = parent || null;
+		this._head = (open < 0 ? text : text.slice(0, open)).trim();
+		this._body = open < 0 ? '' : text.slice(open + 1,
+			text.lastIndexOf('}'));
+		this.type = !at ? 1 : ({ import: 3, media: 4, 'font-face': 5,
+			page: 6, keyframes: 7, namespace: 10, supports: 12,
+			layer: 0, container: 0 })[at[2].toLowerCase()] || 0;
+	}
+	get cssText() { return this._text; }
+	set cssText(v) {}
+	get selectorText() { return this.type === 1 ? this._head : undefined; }
+	get conditionText() { return this._head.replace(/^@[a-z-]+\s*/i, ''); }
+	get name() { return this.conditionText; }
+	get media() {
+		const t = this.conditionText;
+		return { mediaText: t, length: t ? 1 : 0, 0: t };
+	}
+	get cssRules() {
+		if (this.type === 1 || this.type === 5 || this.type === 3)
+			return list([]);
+		if (!this._rules)
+			this._rules = list(cssSplit(this._body).map((r) =>
+				new CSSRule(r, this.parentStyleSheet, this)));
+		return this._rules;
+	}
+	get style() {
+		if (this._style)
+			return this._style;
+		const map = new Map();
+		for (const d of this._body.split(';')) {
+			const i = d.indexOf(':');
+			if (i > 0)
+				map.set(d.slice(0, i).trim().toLowerCase(),
+					d.slice(i + 1).trim());
+		}
+		const rule = this;
+		const sync = () => {
+			rule._body = [...map].map(([k, v]) => k + ': ' + v).join('; ');
+			rule._text = rule._head + ' { ' + rule._body + ' }';
+			if (rule.parentStyleSheet)
+				rule.parentStyleSheet._write();
+		};
+		const dash = (k) => k.replace(/[A-Z]/g, (c) => '-' + c.toLowerCase());
+		const api_ = {
+			getPropertyValue: (k) => (map.get(String(k).toLowerCase()) || '')
+				.replace(/\s*!important$/, ''),
+			getPropertyPriority: (k) => /!important$/.test(map.get(
+				String(k).toLowerCase()) || '') ? 'important' : '',
+			setProperty: (k, v, pr) => {
+				if (v === '' || v == null)
+					map.delete(String(k).toLowerCase());
+				else
+					map.set(String(k).toLowerCase(), String(v) +
+						(pr ? ' !important' : ''));
+				sync();
+			},
+			removeProperty: (k) => {
+				const o = api_.getPropertyValue(k);
+				map.delete(String(k).toLowerCase());
+				sync();
+				return o;
+			},
+			item: (i) => [...map.keys()][i] || '',
+		};
+		this._style = new Proxy(api_, {
+			get(t, k) {
+				if (k in t || typeof k !== 'string')
+					return t[k];
+				if (k === 'cssText')
+					return rule._body.trim();
+				if (k === 'length')
+					return map.size;
+				if (/^\d+$/.test(k))
+					return t.item(Number(k));
+				return t.getPropertyValue(k === 'cssFloat' ? 'float' :
+					dash(k));
+			},
+			set(t, k, v) {
+				if (k === 'cssText') {
+					map.clear();
+					for (const d of String(v).split(';')) {
+						const i = d.indexOf(':');
+						if (i > 0)
+							map.set(d.slice(0, i).trim().toLowerCase(),
+								d.slice(i + 1).trim());
+					}
+					sync();
+				} else if (typeof k === 'string') {
+					t.setProperty(k === 'cssFloat' ? 'float' : dash(k), v);
+				}
+				return true;
+			},
+		});
+		return this._style;
+	}
+	insertRule(r, i) {
+		const rules = this.cssRules;
+		i = i === undefined ? 0 : i;
+		rules.splice(i, 0, new CSSRule(String(r).trim(),
+			this.parentStyleSheet, this));
+		this._body = rules.map((x) => x._text).join('\n');
+		this._text = this._head + ' {\n' + this._body + '\n}';
+		if (this.parentStyleSheet)
+			this.parentStyleSheet._write();
+		return i;
+	}
+	deleteRule(i) {
+		this.cssRules.splice(i, 1);
+		this._body = this.cssRules.map((x) => x._text).join('\n');
+		this._text = this._head + ' {\n' + this._body + '\n}';
+		if (this.parentStyleSheet)
+			this.parentStyleSheet._write();
+	}
+}
+for (const [k, v] of [['STYLE_RULE', 1], ['CHARSET_RULE', 2],
+	['IMPORT_RULE', 3], ['MEDIA_RULE', 4], ['FONT_FACE_RULE', 5],
+	['PAGE_RULE', 6], ['KEYFRAMES_RULE', 7], ['KEYFRAME_RULE', 8],
+	['NAMESPACE_RULE', 10], ['SUPPORTS_RULE', 12]]) {
+	CSSRule[k] = v;
+	CSSRule.prototype[k] = v;
+}
+
+class CSSStyleSheet {
+	/* owner: a <style> element, or none for a constructed sheet */
+	constructor(o) {
+		this.ownerNode = o instanceof Node ? o : null;
+		this._own = this.ownerNode ? null : '';
+		this._seen = null;
+		this.disabled = false;
+		this.href = null;
+		this.title = null;
+		this.type = 'text/css';
+		this.parentStyleSheet = null;
+		this.ownerRule = null;
+		this.media = { mediaText: (o && !(o instanceof Node) && o.media) ||
+			'', length: 0 };
+	}
+	_read() {
+		return this.ownerNode ? this.ownerNode.textContent : this._own;
+	}
+	get cssRules() {
+		const t = this._read();
+		if (t !== this._seen) {
+			this._seen = t;
+			this._rules = list(cssSplit(t).map((r) => new CSSRule(r, this)));
+		}
+		return this._rules;
+	}
+	get rules() { return this.cssRules; }
+	/* the rules back into the text the engine reads */
+	_write() {
+		const t = this._rules.map((r) => r._text).join('\n');
+		this._seen = t;
+		if (this.ownerNode)
+			this.ownerNode.textContent = t;
+		else
+			this._own = t;
+		for (const el of this._adopted || [])
+			el.textContent = t;
+	}
+	insertRule(r, i) {
+		const rules = this.cssRules;
+		i = i === undefined ? 0 : i;
+		if (i > rules.length)
+			throw new DOMException('index out of range',
+				'IndexSizeError');
+		r = String(r).trim();
+		if (this.ownerNode && i === rules.length && !this._adopted) {
+			/* at the end: the text grows, the rest is not written
+			 * again */
+			this.ownerNode.textContent += '\n' + r;
+			this._seen = this.ownerNode.textContent;
+			rules.push(new CSSRule(r, this));
+			return i;
+		}
+		rules.splice(i, 0, new CSSRule(r, this));
+		this._write();
+		return i;
+	}
+	deleteRule(i) {
+		this.cssRules.splice(i, 1);
+		this._write();
+	}
+	addRule(sel, decl, i) {
+		this.insertRule(sel + ' { ' + decl + ' }', i === undefined ?
+			this.cssRules.length : i);
+		return -1;
+	}
+	removeRule(i) { this.deleteRule(i || 0); }
+	replaceSync(text) {
+		this._rules = list(cssSplit(String(text)).map((r) =>
+			new CSSRule(r, this)));
+		this._write();
+	}
+	replace(text) {
+		this.replaceSync(text);
+		return Promise.resolve(this);
+	}
+}
+
+/* document.adoptedStyleSheets: each sheet as a style element of its
+ * own at the end of the head, kept in step with the sheet */
+let adoptedSheets = [];
+function adoptSheets(v) {
+	for (const s of adoptedSheets)
+		for (const el of s._adopted || [])
+			el.remove();
+	adoptedSheets = [...v];
+	for (const s of adoptedSheets) {
+		const el = document.createElement('style');
+		el.textContent = s._read();
+		s._adopted = [el];
+		(document.head || document.documentElement).appendChild(el);
+	}
+}
+
+const sheetOf = new WeakMap();
+function styleSheet(el) {
+	let s = sheetOf.get(el);
+	if (!s)
+		sheetOf.set(el, s = new CSSStyleSheet(el));
+	return s;
+}
+
 html('HTMLLinkElement', ['link'], (B) => class extends B {
 	get relList() { return new DOMTokenList(this, 'rel'); }
 	get sheet() { return null; }
@@ -1825,12 +2120,7 @@ reflect(HTMLLinkElement, ['rel', 'media', 'type', 'as', 'crossOrigin',
 	'hreflang', 'integrity', 'sizes', 'referrerPolicy']);
 reflect(HTMLLinkElement, ['disabled'], 'bool');
 html('HTMLStyleElement', ['style'], (B) => class extends B {
-	get sheet() {
-		return { cssRules: [], insertRule: (r, i) => {
-			this.textContent += '\n' + r;
-			return i || 0;
-		}, deleteRule() {} };
-	}
+	get sheet() { return this.isConnected ? styleSheet(this) : null; }
 });
 reflect(HTMLStyleElement, ['media', 'type']);
 html('HTMLMetaElement', ['meta']);
@@ -3141,7 +3431,12 @@ class Document extends Node {
 	get images() { return list(query(this, 'img', 0)); }
 	get links() { return list(query(this, 'a[href], area[href]', 0)); }
 	get scripts() { return list(query(this, 'script', 0)); }
-	get styleSheets() { return list([]); }
+	/* the style elements' sheets: those of <link> are not read back */
+	get styleSheets() {
+		return list(list(query(this, 'style', 0)).map(styleSheet));
+	}
+	get adoptedStyleSheets() { return adoptedSheets; }
+	set adoptedStyleSheets(v) { adoptSheets(v); }
 	get implementation() {
 		return {
 			hasFeature: () => true,
@@ -5914,6 +6209,10 @@ const globals = {
 	status: '', origin: '', isSecureContext: true, crossOriginIsolated: false,
 	location, history, navigator, screen, performance, console, CSS,
 	crypto, CryptoKey,
+	CSSStyleSheet, CSSRule, CSSStyleRule: CSSRule, CSSMediaRule: CSSRule,
+	CSSFontFaceRule: CSSRule, CSSKeyframesRule: CSSRule,
+	CSSSupportsRule: CSSRule, CSSImportRule: CSSRule,
+	CSSGroupingRule: CSSRule, StyleSheet: CSSStyleSheet,
 	customElements, NodeFilter,
 	localStorage: new Proxy(new Storage(), storageHandler),
 	sessionStorage: new Proxy(new Storage(), storageHandler),
