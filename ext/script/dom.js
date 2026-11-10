@@ -1120,6 +1120,27 @@ class DocumentFragment extends Node {
 }
 mixin(DocumentFragment, parentNode);
 
+/* A shadow root is a fragment its host keeps, and that is all: its
+ * tree is not rendered yet. Scripts that only need the call to work
+ * go on (Next.js hides its route announcer in one, and the whole page
+ * was replaced by its error screen when attachShadow() threw) */
+class ShadowRoot extends DocumentFragment {
+	get innerHTML() {
+		return Array.from(this.childNodes).map((n) => n.nodeType === 1 ?
+			n.outerHTML : n.textContent).join('');
+	}
+	set innerHTML(v) {
+		const t = document.createElement('template');
+
+		t.innerHTML = v;
+		this.replaceChildren(t.content);
+	}
+	get activeElement() { return null; }
+	get styleSheets() { return []; }
+	get adoptedStyleSheets() { return this._sheets || []; }
+	set adoptedStyleSheets(v) { this._sheets = Array.from(v); }
+}
+
 /* Attributes */
 
 class Attr {
@@ -1444,9 +1465,20 @@ class Element extends Node {
 			new Attr(this, n, v, ns));
 		a.getNamedItem = (n) => a.find((x) => x.name === n) || null;
 		a.item = (i) => a[i] || null;
-		for (const x of a)
+		a.removeNamedItem = (n) => {
+			const x = a.getNamedItem(n);
+
+			if (!x)
+				throw new DOMException('no such attribute',
+					'NotFoundError');
+			return this.removeAttributeNode(x);
+		};
+		a.setNamedItem = (x) => this.setAttributeNode(x);
+		for (const x of a) {
+			x._map = a;
 			if (!(x.name in a))
 				a[x.name] = x;
+		}
 		return a;
 	}
 	hasAttributes() { return api.attrs(this).length > 0; }
@@ -1483,7 +1515,33 @@ class Element extends Node {
 		const v = this.getAttribute(n);
 		return v === null ? null : new Attr(this, lowerHTML(this, n), v, 0);
 	}
-	setAttributeNode(a) { this.setAttribute(a.name, a.value); }
+	setAttributeNode(a) {
+		const old = this.getAttributeNode(a.name);
+
+		this.setAttribute(a.name, a.value);
+		a.ownerElement = this;
+		return old;
+	}
+	/* The map the node came from loses it too: the map is a copy
+	 * here, and React empties an element with
+	 * "while (attrs.length) el.removeAttributeNode(attrs[0])", which
+	 * never ends on a copy that stays full */
+	removeAttributeNode(a) {
+		const m = a && a._map;
+
+		if (!a || this.getAttribute(a.name) === null)
+			throw new DOMException('no such attribute',
+				'NotFoundError');
+		api.removeAttr(this, a.name);
+		if (m && m.indexOf(a) >= 0) {
+			m.splice(m.indexOf(a), 1);
+			if (m[a.name] === a)
+				delete m[a.name];
+		}
+		a.ownerElement = null;
+		a._map = null;
+		return a;
+	}
 	get innerHTML() {
 		return api.serialize(this, false);
 	}
@@ -1653,8 +1711,22 @@ class Element extends Node {
 	scroll() {}
 	scrollTo() {}
 	scrollBy() {}
-	attachShadow() {
-		throw new DOMException('no shadow DOM', 'NotSupportedError');
+	attachShadow(init) {
+		let r;
+
+		if (this._shadow)
+			throw new DOMException('already a shadow host',
+				'NotSupportedError');
+		r = api.createFragment();
+		Object.setPrototypeOf(r, ShadowRoot.prototype);
+		r.host = this;
+		r.mode = init && init.mode === 'closed' ? 'closed' : 'open';
+		this._shadow = r;
+		return r;
+	}
+	get shadowRoot() {
+		return this._shadow && this._shadow.mode === 'open' ?
+			this._shadow : null;
 	}
 	animate() {
 		return { finished: Promise.resolve(), cancel() {}, play() {},
@@ -6252,7 +6324,8 @@ const globals = {
 	PopStateEvent, HashChangeEvent,
 	PromiseRejectionEvent, MessageEvent, Node, CharacterData, Text, CDATASection, Comment,
 	ProcessingInstruction,
-	DocumentType, DocumentFragment, Document, HTMLDocument: Document,
+	DocumentType, DocumentFragment, ShadowRoot, Document,
+	HTMLDocument: Document,
 	Element, SVGElement, SVGSVGElement, MathMLElement, Attr,
 	DOMTokenList, CSSStyleDeclaration, DOMRect, DOMRectReadOnly,
 	DOMException, MessageChannel, MessagePort, DOMParser, XMLSerializer,

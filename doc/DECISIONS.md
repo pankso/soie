@@ -145,6 +145,18 @@ reversed, edit the entry and say why; do not leave stale rules here.
   and `document.write()` insertion points are deferred until the JS
   extension needs them; adding them will not change this function.
 - Sanitizer hooks of the spec are ignored (always null config).
+- attachShadow() returns a shadow root that is only a fragment kept
+  by its host (ShadowRoot, host, mode, shadowRoot, innerHTML): its
+  tree is not rendered, no slots, no style scoping. It threw before,
+  and that took whole pages down: every Next.js application hides its
+  route announcer in a shadow root, and React replaced the page by its
+  error screen (free.fr). A component's content stays unseen, as it
+  was. The real thing is a project of its own (doc/TODO.md).
+- Element.removeAttributeNode(), and attributes.removeNamedItem():
+  the map is a copy here, so the node taken out leaves the map it
+  came from too. React empties html, head and body with "while
+  (attrs.length) el.removeAttributeNode(attrs[0])", which never ends
+  on a copy that stays full.
 - Declarative shadow DOM (`<template shadowrootmode>`) is not
   implemented: such a template stays a plain template.
 

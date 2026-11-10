@@ -113,6 +113,9 @@ each change are in [DECISIONS.md](DECISIONS.md).
   rule of more than 32767 selectors; endless loops and memory blow-ups
   on huge background positions, shadow blurs, `var()` chains, `<use>`
   trees, roman list markers and long descendant selectors.
+- Next.js sites (free.fr) showed their error screen:
+  `removeAttributeNode()` was missing and `attachShadow()` threw. A
+  shadow root now exists for scripts; its content is not rendered yet.
 - Sizes no page means (boxes of 1e10 px, `flex: -1`, grid lines in
   the millions, giant SVG text) froze the painter or the layout, and
   one read a byte before an array: found by fuzzing, all bounded.

@@ -1,0 +1,20 @@
+<!doctype html><div id=d class=a title=t data-x=1>x</div><p id=h></p>
+<script>
+var d = document.getElementById('d'), l = d.attributes, n = 0, o = [];
+/* React's way to empty an element: ends only if the map follows */
+for (; l.length && n < 50; n++) d.removeAttributeNode(l[0]);
+o.push(n, d.attributes.length, d.hasAttribute('class'), l.title === undefined);
+d.setAttribute('lang', 'fr');
+var a = d.getAttributeNode('lang');
+o.push(d.removeAttributeNode(a) === a, a.ownerElement, d.hasAttribute('lang'));
+try { d.removeAttributeNode(a); o.push('NO THROW'); } catch (e) { o.push(e.name); }
+d.setAttribute('k', 'v'); d.attributes.removeNamedItem('k'); o.push(d.hasAttribute('k'));
+console.log(o.join(' | '));
+var h = document.getElementById('h'), r = h.attachShadow({ mode: 'open' });
+r.appendChild(document.createElement('b'));
+o = [r instanceof ShadowRoot, r instanceof DocumentFragment, h.shadowRoot === r, r.host === h, r.mode, r.childNodes.length, r.firstChild.getRootNode() === r, h.childNodes.length];
+try { h.attachShadow({ mode: 'open' }); o.push('NO THROW'); } catch (e) { o.push(e.name); }
+o.push(document.createElement('i').attachShadow({ mode: 'closed' }).host.shadowRoot);
+r.innerHTML = '<i>a</i>b'; o.push(r.innerHTML);
+console.log(o.join(' | '));
+</script>
