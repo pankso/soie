@@ -92,8 +92,9 @@ struct soie_node {
 	unsigned char dirty;	/* its subtree needs restyling */
 	unsigned char vp;	/* its style has viewport units (vw...) */
 	unsigned char sheet;	/* <link>: its style sheet came (1), failed (2) */
-	unsigned char anim;	/* an animation of it began at the last
-				 * styling: soie_animations() tells scripts */
+	unsigned char anim;	/* bit 0: an animation of it began, for
+				 * soie_animations() to tell scripts; the
+				 * others: a hash of its animation-name */
 	unsigned short tag;
 	/* when it or its subtree last changed what its boxes would be
 	 * (layout_touch()); a layout built later keeps them */

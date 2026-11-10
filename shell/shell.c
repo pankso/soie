@@ -55,6 +55,8 @@ enum { R_PENDING, R_DONE, R_FAILED, R_GIVEN };	/* GIVEN: to the engine */
 struct res {
 	char *url;
 	char *data;
+	char *headers;		/* its answer's, for the scripts' requests
+				 * (CORS is decided from them); may be NULL */
 	size_t len;
 	int state, kind;
 };
@@ -406,6 +408,7 @@ static void drop_resources(struct shell *s)
 	for (i = 0; i < s->page.nres; i++) {
 		free(s->page.res[i].url);
 		free(s->page.res[i].data);
+		free(s->page.res[i].headers);
 	}
 	free(s->page.res);
 	s->page.res = NULL;
@@ -681,7 +684,10 @@ static int page_request(void *data, const soie_request *req,
 	memset(res, 0, sizeof(*res));
 	res->status = 200;
 	res->url = strdup(req->url);
-	res->headers = strdup("");
+	/* with its headers: a module of another origin is the page's to
+	 * run only if that origin allows it (script.c decides from them;
+	 * without, GitHub's modules from its assets domain were refused) */
+	res->headers = strdup(r->headers ? r->headers : "");
 	if (!res->url || !res->headers)
 		abort();
 	res->len = r->len;
@@ -1758,6 +1764,9 @@ static void collect_jobs(struct shell *s, int nested)
 				r->data = j->r.body;
 				r->len = j->r.len;
 				j->r.body = NULL;
+				free(r->headers);
+				r->headers = j->r.headers;
+				j->r.headers = NULL;
 				r->state = R_DONE;
 			} else {
 				r->state = R_FAILED;

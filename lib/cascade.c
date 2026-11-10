@@ -2838,14 +2838,24 @@ static void style_one(struct styledb *db, soie_node *n)
 		layout_touch(n);
 	{
 		/* an animation-name it did not have: one begins (and ends
-		 * at once here), scripts hear of it */
-		const char *was = st ? st->v[P_ANIMATION_NAME].u.str : NULL;
+		 * at once here), scripts hear of it. The name it had is
+		 * kept as seven bits of a hash in the node: its old style
+		 * may be freed memory by now (rules built again), it is
+		 * never read. */
 		const char *now = n->u.el.style->v[P_ANIMATION_NAME].u.str;
+		unsigned h = 0;
 
-		if (st != n->u.el.style && now && strcmp(now, "none") &&
-		    (!was || strcmp(was, now)) && !n->anim) {
-			n->anim = 1;
-			n->doc->u.doc->anims++;
+		if (now && strcmp(now, "none"))
+			h = (hash_bytes(now, strlen(now), 2166136261u) % 127 +
+				1) << 1;
+		if (h != (n->anim & ~1u)) {
+			if (h && !(n->anim & 1)) {
+				n->doc->u.doc->anims++;
+				h |= 1;
+			} else {
+				h |= n->anim & 1;
+			}
+			n->anim = (unsigned char)h;
 		}
 	}
 	if (n->parent && n->parent->type == SOIE_DOCUMENT)
@@ -3046,8 +3056,8 @@ int soie_animations(soie_node *doc, soie_node **out, int max)
 	if (doc->type != SOIE_DOCUMENT || doc->u.doc->anims <= 0)
 		return 0;
 	for (n = doc->first; n && k < max; ) {
-		if (n->type == SOIE_ELEMENT && n->anim) {
-			n->anim = 0;
+		if (n->type == SOIE_ELEMENT && (n->anim & 1)) {
+			n->anim &= ~1;
 			doc->u.doc->anims--;
 			out[k++] = n;
 		}
