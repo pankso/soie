@@ -982,14 +982,18 @@ static int is_token(const char *s, size_t n)
  * they cannot change how the request is framed or routed: names are
  * tokens, values have no control bytes, and the engine's own headers
  * (Host, lengths, encodings, cookies, connection) are not theirs.
+ * Nor what says where the request comes from (Referer, Sec-*): an
+ * Origin only when it is origin, the first party's (the script engine
+ * sets it, a page cannot).
  */
-static void add_headers(struct response *req, const char *h)
+static void add_headers(struct response *req, const char *h,
+	const char *origin)
 {
 	static const char *const forbidden[] = { "host", "content-length",
 		"transfer-encoding", "te", "trailer", "upgrade", "connection",
 		"keep-alive", "cookie", "cookie2", "accept-encoding", "expect",
-		"proxy-authorization", "proxy-connection", NULL };
-	const char *e, *colon, *v;
+		"proxy-authorization", "proxy-connection", "referer", NULL };
+	const char *e, *colon, *v, *ve;
 	size_t n;
 	int i, ok;
 
@@ -1005,8 +1009,19 @@ static void add_headers(struct response *req, const char *h)
 			if (strlen(forbidden[i]) == n &&
 			    !strncasecmp(h, forbidden[i], n))
 				ok = 0;
-		if (n > 6 && !strncasecmp(h, "proxy-", 6))
+		if ((n > 6 && !strncasecmp(h, "proxy-", 6)) ||
+		    (n > 4 && !strncasecmp(h, "sec-", 4)))
 			ok = 0;
+		if (n == 6 && !strncasecmp(h, "origin", 6)) {
+			for (v = colon + 1; *v == ' ' || *v == '\t'; v++)
+				;
+			for (ve = e; ve > v && (ve[-1] == '\r' ||
+			     ve[-1] == ' ' || ve[-1] == '\t'); ve--)
+				;
+			if (strlen(origin) != (size_t)(ve - v) ||
+			    strncmp(v, origin, (size_t)(ve - v)))
+				ok = 0;
+		}
 		for (v = colon + 1; ok && v < e; v++)
 			if (((unsigned char)*v < 0x20 && *v != '\t' &&
 			     !(*v == '\r' && v + 1 == e)) || *v == 0x7f)
@@ -1141,6 +1156,32 @@ static int origin_of(const char *url, char *out, size_t size)
 		*p = (char)tolower((unsigned char)*p);
 	free(u.path);
 	return 0;
+}
+
+/* A first party's origin as Origin says it (no port when it is the
+ * scheme's, "null" when it has none), for add_headers() */
+static void page_origin(const char *url, char *out, size_t size)
+{
+	struct url u;
+	char *p;
+
+	if (!strncasecmp(url, "blob:", 5))
+		url += 5;
+	if (!strncasecmp(url, "file:", 5)) {
+		snprintf(out, size, "file://");
+		return;
+	}
+	if (parse_url(url, &u)) {
+		snprintf(out, size, "null");
+		return;
+	}
+	if (!strcmp(u.port, !strcmp(u.scheme, "https") ? "443" : "80"))
+		snprintf(out, size, "%s://%s", u.scheme, u.host);
+	else
+		snprintf(out, size, "%s://%s:%s", u.scheme, u.host, u.port);
+	for (p = out; *p; p++)
+		*p = (char)tolower((unsigned char)*p);
+	free(u.path);
 }
 
 static char *base64(const char *s, size_t n)
@@ -1364,7 +1405,12 @@ static int request(const char *url, const soie_request *rq,
 		free(cookie);
 		r->auth = 1;
 	}
-	add_headers(&req, headers);
+	{
+		char origin[300];
+
+		page_origin(fp, origin, sizeof(origin));
+		add_headers(&req, headers, origin);
+	}
 	if (body_in) {
 		char line[128];
 
@@ -1637,9 +1683,21 @@ int net_fetch(const soie_request *rq, struct response *r)
 				return -1;
 			}
 			/* another origin gets none of the caller's headers
-			 * (Authorization...) */
-			if (!same_origin(cur, next))
+			 * (Authorization...); a page's PUT or DELETE goes
+			 * there only after a preflight, which a redirection
+			 * did not have */
+			if (!same_origin(cur, next)) {
 				headers = NULL;
+				if (rq->first_party && (r->status == 307 ||
+				    r->status == 308) && strcmp(method, "GET") &&
+				    strcmp(method, "HEAD") &&
+				    strcmp(method, "POST")) {
+					free(next);
+					free(cur);
+					set_error(r, "bad redirection");
+					return -1;
+				}
+			}
 			free(cur);
 			cur = next;
 		}

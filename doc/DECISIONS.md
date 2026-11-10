@@ -2360,12 +2360,27 @@ check it fails then):
   way. With the user's click it goes anywhere, as before. Known
   cost: a public page that redirects by script to a loopback address
   on its own (some command line logins) is refused.
-- Not fixed yet, from the same review: the same-origin and CORS
-  checks of fetch and XMLHttpRequest live in dom.js, which a page can
-  rewrite (URL.prototype.origin, Headers.prototype.get), and
-  importScripts() has none; they belong in script.c and net.c, with
-  the Origin, Referer and Sec- headers refused from scripts. See
-  TODO.
+- The same-origin and CORS checks of fetch and XMLHttpRequest lived
+  in dom.js, which a page can rewrite (URL.prototype.origin,
+  Headers.prototype.get: another origin's answer was read), and
+  importScripts() had none (a rewritten eval got another origin's
+  text). script.c decides now (cors_fetch()), from the origin C knows
+  (the page's address; a worker's is its page's, "null" for data:),
+  and dom.js only passes the arguments and the credentials and mode
+  asked: the forbidden headers dropped and Origin set there, the
+  preflight made there too (with Access-Control-Allow-Headers checked,
+  a preflight not redirected), the answer from another origin given
+  only when it allows it, with the headers it exposes; Set-Cookie
+  never (HttpOnly cookies were readable), no-cors opaque, its custom
+  headers dropped. importScripts() runs the script from C, another
+  origin's errors muted; modules and import() are CORS requests; a
+  worker comes from its page's origin, blob: or data:. net.c on its
+  own drops Referer and Sec-*, an Origin that is not the first
+  party's, and a page's PUT or DELETE redirected (307, 308) to another
+  origin, which had no preflight. Checked with hostile pages on two
+  local origins, each leaking before. Known: a request redirected to
+  another origin goes there without Origin (browsers say null) and
+  its answer is checked against the page's origin.
 
 ## Speed
 

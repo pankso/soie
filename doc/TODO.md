@@ -28,13 +28,6 @@ by RMSE (the 38 sites survey of 2026-11-03).
 - Mojeek: "Mojeek User Survey" drawn inside the search box, icons
   right of "News" drawn as thin lines. To study on a saved copy.
 
-## Security
-
-- Same-origin and CORS checks of fetch, XMLHttpRequest and
-  importScripts() enforced in script.c and net.c, not in dom.js that
-  a page can rewrite; Origin, Referer and Sec- headers refused from
-  scripts.
-
 ## JavaScript
 
 - `Intl` in other languages than English (CLDR data), real time zone

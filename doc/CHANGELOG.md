@@ -60,6 +60,12 @@ each change are in [DECISIONS.md](DECISIONS.md).
   not from the border box.
 
 ### Security
+- The same-origin policy and CORS of `fetch()`, `XMLHttpRequest`,
+  modules and `importScripts()` are enforced by the engine, from the
+  origin it knows: a page that rewrote the objects of its own scripts
+  (`URL.prototype.origin`, `Headers.prototype.get`, `eval` in a
+  worker) could read other origins' answers, send forged `Origin`
+  headers and read HttpOnly cookies from `Set-Cookie`.
 - A response that is not HTML (JSON, a script) is never parsed as
   HTML.
 - A navigation started by the page alone is held by the private

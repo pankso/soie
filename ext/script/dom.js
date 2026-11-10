@@ -4622,12 +4622,14 @@ function dataURL(url) {
  * Requests from scripts, as browsers make them: an Origin header off
  * the page's origin, a preflight for what a form could not send, and
  * the answer readable only when the other origin allows it (CORS).
- * credentials: 'omit', 'same-origin' (the default) or 'include'.
+ * script.c decides all that from the origin it knows: a page may
+ * rewrite what this file reaches (URL, Headers), here are only the
+ * arguments. credentials: 'omit', 'same-origin' (the default) or
+ * 'include'; mode 'no-cors' gives an opaque answer.
  * Returns the response, null for a network error.
  */
 const TOKEN = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/;
 const FORBIDDEN_HEADER = /^(accept-charset|accept-encoding|access-control-request-headers|access-control-request-method|connection|content-length|cookie|cookie2|date|dnt|expect|host|keep-alive|origin|referer|set-cookie|te|trailer|transfer-encoding|upgrade|via|proxy-.*|sec-.*)$/i;
-const SIMPLE_HEADER = /^(accept|accept-language|content-language|content-type)$/i;
 
 function method(m) {
 	m = String(m);
@@ -4639,81 +4641,16 @@ function method(m) {
 	return /^(DELETE|GET|HEAD|OPTIONS|POST|PUT|PATCH)$/.test(u) ? u : m;
 }
 
-function sameOrigin(url) {
-	try {
-		return new URL(url).origin === location.origin;
-	} catch (e) {
-		return false;
-	}
-}
-
-function corsAllows(r, credentials) {
-	const h = parseHeaders(r.headers);
-	const o = h.get('access-control-allow-origin');
-	if (credentials)
-		return o === location.origin &&
-			h.get('access-control-allow-credentials') === 'true';
-	return o === '*' || o === location.origin;
-}
-
-function simpleRequest(m, headers) {
-	if (!/^(GET|HEAD|POST)$/.test(m))
-		return false;
-	for (const [k, v] of headers) {
-		if (!SIMPLE_HEADER.test(k))
-			return false;
-		if (/^content-type$/i.test(k) && !/^(application\/x-www-form-urlencoded|multipart\/form-data|text\/plain)\s*(;|$)/i.test(v))
-			return false;
-	}
-	return true;
-}
-
-/* A request's steps (a CORS preflight, the request): each yield is the
- * arguments of a request, answered by the driver, synchronous
- * (doRequest) or in the background (doRequestAsync) */
-function* requestSteps(m, url, headers, body, credentials = 'same-origin',
+/* script.c's arguments: R_OMIT 1, R_INCLUDE 2, R_NO_CORS 4 */
+function requestArgs(m, url, headers, body, credentials = 'same-origin',
 	mode = 'cors') {
-	const same = sameOrigin(url);
-	const send = credentials === 'include' ||
-		(credentials === 'same-origin' && same);
-	const NO_COOKIES = 1;
-	let raw = headers._raw();
-	if (!same || !/^(GET|HEAD)$/.test(m))
-		raw += 'origin: ' + location.origin + '\r\n';
-	if (!same && mode !== 'no-cors' && !simpleRequest(m, headers)) {
-		const names = [...headers.keys()].filter((k) =>
-			!SIMPLE_HEADER.test(k)).join(',');
-		const p = yield ['OPTIONS', url, 'origin: ' +
-			location.origin + '\r\naccess-control-request-method: ' + m +
-			'\r\n' + (names ? 'access-control-request-headers: ' +
-			names + '\r\n' : ''), null, NO_COOKIES];
-		if (!p || p.status < 200 || p.status > 299 ||
-		    !corsAllows(p, send))
-			return null;
-		const ph = parseHeaders(p.headers);
-		const allowed = (ph.get('access-control-allow-methods') || '')
-			.toUpperCase().split(/\s*,\s*/);
-		if (!/^(GET|HEAD|POST)$/.test(m) && !allowed.includes(m) &&
-		    !allowed.includes('*'))
-			return null;
-	}
-	const r = yield [m, url, raw, body, send ? 0 : NO_COOKIES];
-	if (!r)
-		return null;
-	if (!same && mode === 'no-cors')
-		return { status: 0, url: '', headers: '', body: '', opaque: true };
-	/* a redirection to another origin needs its consent too */
-	if ((!same || !sameOrigin(r.url)) && !corsAllows(r, send))
-		return null;
-	return r;
+	return [m, url, headers._raw(), body,
+		(credentials === 'omit' ? 1 : credentials === 'include' ? 2 : 0) |
+		(mode === 'no-cors' ? 4 : 0)];
 }
 
 function doRequest(...a) {
-	const it = requestSteps(...a);
-	let s = it.next();
-	while (!s.done)
-		s = it.next(api.request(...s.value));
-	return s.value;
+	return api.request(...requestArgs(...a));
 }
 
 /* Requests out in the background, by id: what to call with the answer */
@@ -4725,16 +4662,10 @@ api.received = function (id, r) {
 		f(r);
 };
 
-async function doRequestAsync(...a) {
-	const it = requestSteps(...a);
-	let s = it.next();
-	while (!s.done) {
-		const args = s.value;
-		s = it.next(await new Promise((resolve) => {
-			out.set(api.requestAsync(...args), resolve);
-		}));
-	}
-	return s.value;
+function doRequestAsync(...a) {
+	return new Promise((resolve) => {
+		out.set(api.requestAsync(...requestArgs(...a)), resolve);
+	});
 }
 
 function fetch(input, init = {}) {
@@ -5808,6 +5739,9 @@ class Worker extends EventTarget {
 		super();
 		const u = api.resolve(href, String(url)) || String(url);
 		const id = api.workerNew(u, !!(opts && opts.type === 'module'));
+		if (!id)
+			throw new DOMException('a worker from another origin: ' +
+				u, 'SecurityError');
 		this._id = id;
 		workerObjs.set(id, this);
 		const fail = (e) => api.workerEvent(id, 'error',
@@ -6435,13 +6369,12 @@ if (api.worker) {
 		postMessage: (data) => api.workerPost(0, data),
 		close: () => api.workerStop(0),
 		importScripts: (...urls) => {
+			/* script.c runs them: their text stays there */
 			for (const s of urls) {
 				const a = api.resolve(href, String(s)) || String(s);
-				const r = api.request('GET', a, null, null, 0);
-				if (!r || r.status >= 400)
+				if (!api.importScript(a))
 					throw new DOMException('importScripts: cannot ' +
 						'load ' + a, 'NetworkError');
-				(0, eval)(api.utf8Decode(r.body));
 			}
 		},
 	};

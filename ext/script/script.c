@@ -18,6 +18,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
+#include <ctype.h>
 #include <time.h>
 #include <unistd.h>
 #include <sys/resource.h>
@@ -64,6 +66,7 @@ struct sctx {
 	soie_node *doc;
 	const soie_script_host *host;
 	char *url;
+	char origin[300];	/* the origin C gives its requests */
 	JSValue api;
 	JSValue proto_for, dispatch, tick, frame, next_timer, names;
 	/* nodes with a wrapper (struct wref their user pointer) */
@@ -108,6 +111,7 @@ struct wk {
 	struct sctx *page;	/* its page's context */
 	soie_script_host host;	/* the page's request and data, no more */
 	char *url, *src;	/* src: NULL until the page fetched it */
+	char origin[300];	/* its page's, "null" for a data: URL */
 	size_t srclen;
 	int module;
 	struct wmsg *in, *out;	/* to the worker, to the page */
@@ -1266,7 +1270,8 @@ static JSValue n_rewritable(JSContext *js, JSValueConst this, int argc,
 	return JS_NewBool(js, r);
 }
 
-/* request(method, url, headers, body) -> {status, url, headers, body} */
+/* request(method, url, headers, body, mode) -> {status, url, headers,
+ * body}, an opaque one or null: see cors_fetch() */
 /* A response for the scripts: status, url, headers, body */
 static void free_bytes(JSRuntime *rt, void *opaque, void *ptr)
 {
@@ -1367,6 +1372,405 @@ static char *body_arg(JSContext *js, JSValueConst v, size_t *len)
 }
 
 /*
+ * Requests from scripts, as browsers make them: an Origin header off
+ * the page's origin, a CORS preflight for what a form could not send,
+ * and an answer from another origin readable only when it allows it.
+ * Decided here, from the origin C knows (the page's address, a
+ * worker's own), never from a value of the page's realm: a page may
+ * rewrite every object dom.js reaches (URL.prototype.origin,
+ * Headers.prototype.get...).
+ */
+#define R_OMIT 1		/* credentials 'omit' */
+#define R_INCLUDE 2		/* 'include'; neither: 'same-origin' */
+#define R_NO_CORS 4		/* mode 'no-cors': an opaque answer */
+#define R_OPAQUE 1		/* cors_fetch(): an answer scripts may not read */
+
+/* A growing string */
+struct sbuf {
+	char *s;
+	size_t len, cap;
+};
+
+static void sb_add(struct sbuf *b, const char *s, size_t n)
+{
+	if (b->len + n + 1 > b->cap) {
+		b->cap = (b->len + n + 1) * 2;
+		if (!(b->s = realloc(b->s, b->cap)))
+			abort();
+	}
+	memcpy(b->s + b->len, s, n);
+	b->len += n;
+	b->s[b->len] = 0;
+}
+
+static void sb_adds(struct sbuf *b, const char *s)
+{
+	sb_add(b, s, strlen(s));
+}
+
+/* A URL's origin as browsers serialize it, "null" when opaque. A blob:
+ * URL has the origin it holds, file: one origin for all. */
+static void url_origin(const char *url, char *out, size_t size)
+{
+	static const char *const special[] = { "http", "80", "https", "443",
+		"ws", "80", "wss", "443", "ftp", "21", "file", "", NULL };
+	const char *h, *e, *p, *port;
+	size_t n, i, k;
+	int s;
+
+	snprintf(out, size, "null");
+	if (!strncasecmp(url, "blob:", 5))
+		url += 5;
+	n = strcspn(url, ":/?#");
+	if (url[n] != ':' || strncmp(url + n, "://", 3))
+		return;
+	for (s = 0; special[s] && (strlen(special[s]) != n ||
+	     strncasecmp(url, special[s], n)); s += 2)
+		;
+	if (!special[s])
+		return;
+	h = url + n + 3;
+	e = h + strcspn(h, "/?#\\");
+	for (p = h; p < e; p++)
+		if (*p == '@')
+			h = p + 1;	/* no user and password */
+	/* the port: after the last ':' not inside [an IPv6 address] */
+	for (p = e; p > h && p[-1] != ':' && p[-1] != ']'; p--)
+		;
+	port = p > h && p[-1] == ':' ? p : NULL;
+	k = (size_t)((port ? port - 1 : e) - h);
+	if (n + 3 + (size_t)(e - h) + 1 > size)
+		return;		/* too long to be told apart: opaque */
+	for (i = 0; i < n; i++)
+		out[i] = (char)tolower((unsigned char)url[i]);
+	memcpy(out + n, "://", 3);
+	for (i = 0; i < k; i++)
+		out[n + 3 + i] = (char)tolower((unsigned char)h[i]);
+	out[n + 3 + k] = 0;
+	/* the scheme's own port is not said */
+	if (port && e > port && ((size_t)(e - port) != strlen(special[s + 1])
+	    || strncmp(port, special[s + 1], (size_t)(e - port))))
+		snprintf(out + n + 3 + k, size - n - 3 - k, ":%.*s",
+			(int)(e - port), port);
+}
+
+/* Is url of origin o? An opaque one has no other URL. */
+static int origin_same(const char *o, const char *url)
+{
+	char u[300];
+
+	url_origin(url, u, sizeof(u));
+	return strcmp(o, "null") && !strcmp(o, u);
+}
+
+static int is_token(const char *s, size_t n)
+{
+	size_t i;
+
+	for (i = 0; i < n; i++)
+		if (!isalnum((unsigned char)s[i]) &&
+		    !strchr("!#$%&'*+.^_`|~-", s[i]))
+			return 0;
+	return n > 0;
+}
+
+static int name_is(const char *s, size_t n, const char *name)
+{
+	return strlen(name) == n && !strncasecmp(s, name, n);
+}
+
+/* Headers a script may not set: the engine's, or what would lie about
+ * where the request comes from */
+static int forbidden_header(const char *s, size_t n)
+{
+	static const char *const names[] = { "accept-charset",
+		"accept-encoding", "access-control-request-headers",
+		"access-control-request-method", "connection",
+		"content-length", "cookie", "cookie2", "date", "dnt", "expect",
+		"host", "keep-alive", "origin", "referer", "set-cookie", "te",
+		"trailer", "transfer-encoding", "upgrade", "via", NULL };
+	int i;
+
+	for (i = 0; names[i]; i++)
+		if (name_is(s, n, names[i]))
+			return 1;
+	return (n >= 6 && !strncasecmp(s, "proxy-", 6)) ||
+		(n >= 4 && !strncasecmp(s, "sec-", 4));
+}
+
+/* What a form could send too: no preflight for it */
+static int safelisted(const char *s, size_t n, const char *v, size_t vn)
+{
+	size_t t;
+
+	if (vn > 128)
+		return 0;
+	if (name_is(s, n, "accept") || name_is(s, n, "accept-language") ||
+	    name_is(s, n, "content-language"))
+		return 1;
+	if (!name_is(s, n, "content-type"))
+		return 0;
+	for (t = 0; t < vn && v[t] != ';' && v[t] != ' ' && v[t] != '\t'; t++)
+		;
+	return name_is(v, t, "application/x-www-form-urlencoded") ||
+		name_is(v, t, "multipart/form-data") ||
+		name_is(v, t, "text/plain");
+}
+
+/*
+ * The script's "Name: value" lines that may go: forbidden names,
+ * names that are not tokens and values with control bytes dropped,
+ * and with only the safelisted kept only. The names that are not
+ * safelisted go to unsafe, lower case, for the preflight.
+ */
+static void script_headers(const char *h, int only_safe, struct sbuf *out,
+	struct sbuf *unsafe)
+{
+	const char *e, *colon, *v, *ve, *p;
+	size_t n;
+	int safe;
+
+	for (; h && *h; h = *e ? e + 1 : e) {
+		e = strchr(h, '\n');
+		if (!e)
+			e = h + strlen(h);
+		colon = memchr(h, ':', (size_t)(e - h));
+		if (!colon || !is_token(h, (size_t)(colon - h)))
+			continue;
+		n = (size_t)(colon - h);
+		for (v = colon + 1; v < e && (*v == ' ' || *v == '\t'); v++)
+			;
+		for (ve = e; ve > v && (ve[-1] == '\r' || ve[-1] == ' ' ||
+		     ve[-1] == '\t'); ve--)
+			;
+		for (p = v; p < ve; p++)
+			if (((unsigned char)*p < 0x20 && *p != '\t') ||
+			    *p == 0x7f)
+				break;
+		if (p < ve || forbidden_header(h, n))
+			continue;
+		safe = safelisted(h, n, v, (size_t)(ve - v));
+		if (!safe && only_safe)
+			continue;
+		if (!safe) {
+			if (unsafe->len)
+				sb_add(unsafe, ",", 1);
+			for (p = h; p < colon; p++) {
+				char c = (char)tolower((unsigned char)*p);
+
+				sb_add(unsafe, &c, 1);
+			}
+		}
+		sb_add(out, h, n);
+		sb_add(out, ": ", 2);
+		sb_add(out, v, (size_t)(ve - v));
+		sb_add(out, "\r\n", 2);
+	}
+}
+
+/* Is item in a comma separated list ("*" too when star)? */
+static int list_has(const char *list, const char *item, size_t n, int star)
+{
+	const char *p, *s, *e, *next;
+
+	for (p = list; p && *p; p = *next ? next + 1 : next) {
+		next = p + strcspn(p, ",");
+		for (s = p; s < next && (*s == ' ' || *s == '\t'); s++)
+			;
+		for (e = next; e > s && (e[-1] == ' ' || e[-1] == '\t'); e--)
+			;
+		if (name_is(s, (size_t)(e - s), "*") ? star :
+		    (size_t)(e - s) == n && !strncasecmp(s, item, n))
+			return 1;
+	}
+	return 0;
+}
+
+/* Does the other origin let the script read its answer? */
+static int cors_ok(const soie_response *res, const char *origin, int cred)
+{
+	char *o = soie_response_header(res, "access-control-allow-origin");
+	char *c = soie_response_header(res,
+		"access-control-allow-credentials");
+	int ok = o && (cred ? !strcmp(o, origin) && c && !strcmp(c, "true") :
+		!strcmp(o, "*") || !strcmp(o, origin));
+
+	free(o);
+	free(c);
+	return ok;
+}
+
+/* Does a successful preflight allow method m and the unsafe headers? */
+static int preflight_ok(const soie_response *p, const char *m,
+	const char *unsafe, int cred)
+{
+	char *am = soie_response_header(p, "access-control-allow-methods");
+	char *ah = soie_response_header(p, "access-control-allow-headers");
+	const char *s, *e;
+	int ok = !strcmp(m, "GET") || !strcmp(m, "HEAD") ||
+		!strcmp(m, "POST") || list_has(am, m, strlen(m), !cred);
+
+	for (s = unsafe; ok && s && *s; s = *e ? e + 1 : e) {
+		e = s + strcspn(s, ",");
+		/* "*" never stands for Authorization */
+		ok = list_has(ah, s, (size_t)(e - s), !cred &&
+			!name_is(s, (size_t)(e - s), "authorization"));
+	}
+	free(am);
+	free(ah);
+	return ok;
+}
+
+/* The response headers a script sees: never Set-Cookie (HttpOnly
+ * cookies are there); from another origin, the safelisted ones and
+ * what it exposes */
+static void response_headers(soie_response *res, int cross, int cred)
+{
+	static const char *const safe[] = { "cache-control",
+		"content-language", "content-length", "content-type",
+		"expires", "last-modified", "pragma", NULL };
+	struct sbuf b = { NULL, 0, 0 };
+	char *expose = cross ? soie_response_header(res,
+		"access-control-expose-headers") : NULL;
+	const char *h, *e, *colon;
+	size_t n;
+	int i, keep;
+
+	sb_add(&b, "", 0);
+	for (h = res->headers; h && *h; h = *e ? e + 1 : e) {
+		e = strchr(h, '\n');
+		e = e ? e : h + strlen(h);
+		if (!(colon = memchr(h, ':', (size_t)(e - h))))
+			continue;
+		n = (size_t)(colon - h);
+		keep = !name_is(h, n, "set-cookie") &&
+			!name_is(h, n, "set-cookie2");
+		if (keep && cross) {
+			for (keep = 0, i = 0; safe[i]; i++)
+				keep |= name_is(h, n, safe[i]);
+			keep |= list_has(expose, h, n, !cred);
+		}
+		if (keep)
+			sb_add(&b, h, (size_t)(*e ? e + 1 - h : e - h));
+	}
+	free(expose);
+	free(res->headers);
+	res->headers = b.s;
+}
+
+/*
+ * A script's request, the rules applied: 0 an answer the script may
+ * read, R_OPAQUE one it may not (no-cors: C may still run it, as
+ * importScripts() does), -1 a network error (res empty). rq->flags
+ * are the page's; mode is R_*. Any thread: it uses its arguments only.
+ */
+static int cors_fetch(soie_request_fn fn, void *data, const soie_request *rq,
+	const char *origin, int mode, soie_response *res)
+{
+	struct sbuf h = { NULL, 0, 0 }, unsafe = { NULL, 0, 0 };
+	struct sbuf pre = { NULL, 0, 0 };
+	soie_request q = *rq, o;
+	soie_response p;
+	const char *m = rq->method ? rq->method : rq->body ? "POST" : "GET";
+	int same, cred, simple, ok, r = -1;
+
+	memset(res, 0, sizeof(*res));
+	if (!fn)
+		return -1;
+	/* a data: URL holds its bytes: nothing to ask anyone */
+	if (!strncasecmp(rq->url, "data:", 5)) {
+		q.headers = NULL;
+		q.flags |= SOIE_REQ_NO_COOKIES;
+		if ((r = fn(data, &q, res)))
+			return -1;
+		response_headers(res, 0, 0);
+		return 0;
+	}
+	if (!is_token(m, strlen(m)) || !strcasecmp(m, "CONNECT") ||
+	    !strcasecmp(m, "TRACE") || !strcasecmp(m, "TRACK"))
+		return -1;
+	same = origin_same(origin, rq->url);
+	simple = !strcmp(m, "GET") || !strcmp(m, "HEAD") || !strcmp(m, "POST");
+	if (!same && (mode & R_NO_CORS) && !simple)
+		return -1;
+	sb_add(&h, "", 0);
+	script_headers(rq->headers, !same && (mode & R_NO_CORS), &h, &unsafe);
+	cred = (mode & R_INCLUDE) || (!(mode & R_OMIT) && same);
+	if (!same || (strcmp(m, "GET") && strcmp(m, "HEAD"))) {
+		sb_adds(&h, "origin: ");
+		sb_adds(&h, origin);
+		sb_adds(&h, "\r\n");
+	}
+	q.method = m;
+	q.headers = h.s;
+	q.flags = (rq->flags & ~SOIE_REQ_NO_COOKIES) |
+		(cred ? 0 : SOIE_REQ_NO_COOKIES);
+	if (!same && !(mode & R_NO_CORS) && (!simple || unsafe.len)) {
+		sb_adds(&pre, "origin: ");
+		sb_adds(&pre, origin);
+		sb_adds(&pre, "\r\naccess-control-request-method: ");
+		sb_adds(&pre, m);
+		sb_adds(&pre, "\r\n");
+		if (unsafe.len) {
+			sb_adds(&pre, "access-control-request-headers: ");
+			sb_adds(&pre, unsafe.s);
+			sb_adds(&pre, "\r\n");
+		}
+		memset(&o, 0, sizeof(o));
+		o.url = rq->url;
+		o.method = "OPTIONS";
+		o.headers = pre.s;
+		o.first_party = rq->first_party;
+		o.flags = q.flags | SOIE_REQ_NO_COOKIES;
+		if (fn(data, &o, &p))
+			goto out;
+		/* a preflight is not redirected */
+		ok = p.status >= 200 && p.status <= 299 && (!p.url ||
+			!strcmp(p.url, rq->url)) && cors_ok(&p, origin, cred) &&
+			preflight_ok(&p, m, unsafe.s, cred);
+		soie_response_free(&p);
+		if (!ok)
+			goto out;
+	}
+	if (fn(data, &q, res)) {
+		memset(res, 0, sizeof(*res));
+		goto out;
+	}
+	/* a redirection to another origin needs its consent too */
+	if (same && origin_same(origin, res->url ? res->url : rq->url)) {
+		response_headers(res, 0, cred);
+		r = 0;
+	} else if (mode & R_NO_CORS) {
+		r = R_OPAQUE;
+	} else if (cors_ok(res, origin, cred)) {
+		response_headers(res, 1, cred);
+		r = 0;
+	} else {
+		soie_response_free(res);
+		memset(res, 0, sizeof(*res));
+	}
+out:
+	free(h.s);
+	free(unsafe.s);
+	free(pre.s);
+	return r;
+}
+
+/* What a script gets of an answer it may not read */
+static JSValue opaque_object(JSContext *js)
+{
+	JSValue o = JS_NewObject(js);
+
+	JS_SetPropertyStr(js, o, "status", JS_NewInt32(js, 0));
+	JS_SetPropertyStr(js, o, "url", JS_NewString(js, ""));
+	JS_SetPropertyStr(js, o, "headers", JS_NewString(js, ""));
+	JS_SetPropertyStr(js, o, "body", JS_NewArrayBufferCopy(js,
+		(const uint8_t *)"", 0));
+	JS_SetPropertyStr(js, o, "opaque", JS_TRUE);
+	return o;
+}
+
+/*
  * Requests in the background: a few threads, shared by every page, run
  * the host's (blocking) request function; tick() hands the answers to
  * the scripts. A context that stops abandons its requests: their
@@ -1378,8 +1782,9 @@ struct job {
 	soie_request_fn fn;
 	void *data;
 	char *method, *url, *headers, *body, *first_party;
+	char *origin;		/* the context's, for cors_fetch() */
 	size_t blen;
-	int flags, r;
+	int flags, mode, r;	/* r: cors_fetch()'s */
 	soie_response res;
 	struct job *next;	/* in the queue or a context's answers */
 	struct job *anext, *aprev;	/* every job */
@@ -1400,13 +1805,14 @@ static void job_free(struct job *j)
 		all_jobs = j->anext;
 	if (j->anext)
 		j->anext->aprev = j->aprev;
-	if (!j->r)
+	if (j->r >= 0)
 		soie_response_free(&j->res);
 	free(j->method);
 	free(j->url);
 	free(j->headers);
 	free(j->body);
 	free(j->first_party);
+	free(j->origin);
 	free(j);
 }
 
@@ -1441,7 +1847,8 @@ static void *worker(void *arg)
 		rq.body_len = j->blen;
 		rq.first_party = j->first_party;
 		rq.flags = j->flags;
-		j->r = j->fn ? j->fn(j->data, &rq, &j->res) : -1;
+		j->r = cors_fetch(j->fn, j->data, &rq, j->origin, j->mode,
+			&j->res);
 		pthread_mutex_lock(&jobs_lock);
 		if (!j->c) {
 			job_free(j);
@@ -1483,8 +1890,8 @@ static void job_queue(struct job *j)
 	pthread_cond_signal(&jobs_wake);
 }
 
-/* requestAsync(method, url, headers, body, flags): an id, answered by
- * api.received(id, response or null) from tick() */
+/* requestAsync(method, url, headers, body, mode): an id, answered by
+ * api.received(id, response, null or opaque) from tick() */
 static JSValue n_request_async(JSContext *js, JSValueConst this, int argc,
 	JSValueConst *argv)
 {
@@ -1492,7 +1899,7 @@ static JSValue n_request_async(JSContext *js, JSValueConst this, int argc,
 	struct job *j = calloc(1, sizeof(*j));
 	const char *s;
 	size_t n;
-	int32_t flags = 0;
+	int32_t mode = 0;
 
 	(void)this;
 	if (!j)
@@ -1503,6 +1910,7 @@ static JSValue n_request_async(JSContext *js, JSValueConst this, int argc,
 	j->data = c->host->data;
 	j->r = -1;
 	j->first_party = dup_or_null(c->url, strlen(c->url));
+	j->origin = dup_or_null(c->origin, strlen(c->origin));
 	if (argc < 2 || !(s = JS_ToCStringLen(js, &n, argv[0])))
 		goto fail;
 	j->method = dup_or_null(s, n);
@@ -1519,8 +1927,10 @@ static JSValue n_request_async(JSContext *js, JSValueConst this, int argc,
 	if (argc > 3)
 		j->body = body_arg(js, argv[3], &j->blen);
 	if (argc > 4)
-		JS_ToInt32(js, &flags, argv[4]);
-	j->flags = flags | (c->host->flags & SOIE_REQ_PAGE);
+		JS_ToInt32(js, &mode, argv[4]);
+	/* the script says how (R_*), C what the page's requests carry */
+	j->mode = mode;
+	j->flags = c->host->flags & SOIE_REQ_PAGE;
 	pthread_mutex_lock(&jobs_lock);
 	job_queue(j);
 	c->inflight++;
@@ -1551,7 +1961,8 @@ static void deliver(struct sctx *c)
 		next = j->next;
 		c->inflight--;
 		args[0] = JS_NewInt32(c->js, j->id);
-		args[1] = j->r ? JS_NULL : response_object(c->js, &j->res,
+		args[1] = j->r < 0 ? JS_NULL : j->r == R_OPAQUE ?
+			opaque_object(c->js) : response_object(c->js, &j->res,
 			j->url);
 		v = JS_Call(c->js, c->received, JS_UNDEFINED, 2, args);
 		JS_FreeValue(c->js, args[1]);
@@ -1565,18 +1976,19 @@ static void deliver(struct sctx *c)
 static void wk_wait(struct wk *w, int ms);
 
 /*
- * A request waited for: the host's, called here; a worker's through
- * the job threads, so that it stops at once when its page goes.
+ * A script's request waited for (cors_fetch(), mode R_*): the host's,
+ * called here; a worker's through the job threads, so that it stops at
+ * once when its page goes.
  */
 static int request_blocking(struct sctx *c, const soie_request *rq,
-	soie_response *res)
+	int mode, soie_response *res)
 {
 	struct job *j, **p;
 	int r;
 
 	if (!c->self)
-		return c->host->request ? c->host->request(c->host->data, rq,
-			res) : -1;
+		return cors_fetch(c->host->request, c->host->data, rq,
+			c->origin, mode, res);
 	if (!c->host->request || !(j = calloc(1, sizeof(*j))))
 		return -1;
 	j->c = c;
@@ -1595,6 +2007,8 @@ static int request_blocking(struct sctx *c, const soie_request *rq,
 		j->blen = rq->body_len;
 	}
 	j->flags = rq->flags;
+	j->mode = mode;
+	j->origin = dup_or_null(c->origin, strlen(c->origin));
 	pthread_mutex_lock(&jobs_lock);
 	job_queue(j);
 	for (;;) {
@@ -1612,7 +2026,7 @@ static int request_blocking(struct sctx *c, const soie_request *rq,
 		wk_wait(c->self, -1);
 	}
 	r = j->r;
-	if (!r) {
+	if (r >= 0) {
 		*res = j->res;
 		j->r = -1;	/* the response is the caller's now */
 	}
@@ -1631,6 +2045,7 @@ static JSValue n_request(JSContext *js, JSValueConst this, int argc,
 	char *body = NULL;
 	size_t blen = 0;
 	JSValue o = JS_NULL;
+	int32_t mode = 0;
 	int r;
 	STR(0, method);
 	STR(1, url);
@@ -1648,28 +2063,78 @@ static JSValue n_request(JSContext *js, JSValueConst this, int argc,
 	rq.body_len = blen;
 	rq.first_party = c->url;
 	if (argc > 4)
-		JS_ToInt32(js, &rq.flags, argv[4]);
-	rq.flags |= c->host->flags & SOIE_REQ_PAGE;
+		JS_ToInt32(js, &mode, argv[4]);
+	rq.flags = c->host->flags & SOIE_REQ_PAGE;
 	{
 		/* waiting for the network is not running: the script's
 		 * time limit stops while the request is out */
 		double saved = c->deadline, left = saved - now_ms();
 
 		c->deadline = 0;
-		r = request_blocking(c, &rq, &res);
+		r = request_blocking(c, &rq, mode, &res);
 		if (saved)
 			c->deadline = now_ms() + left;
 	}
-	if (!r) {
+	if (r == R_OPAQUE)
+		o = opaque_object(js);
+	else if (!r)
 		o = response_object(js, &res, url);
+	if (r >= 0)
 		soie_response_free(&res);
-	}
 	JS_FreeCString(js, method);
 	JS_FreeCString(js, url);
 	if (headers)
 		JS_FreeCString(js, headers);
 	free(body);
 	return o;
+}
+
+/*
+ * importScript(url), a worker's importScripts(): the script runs from
+ * here, its text never reaches the scripts (a rewritten eval would
+ * have it). Fetched as browsers do, no-cors with credentials: another
+ * origin's runs, its errors muted (they quote its text). false when
+ * it could not load, or failed muted.
+ */
+static JSValue n_import_script(JSContext *js, JSValueConst this, int argc,
+	JSValueConst *argv)
+{
+	struct sctx *c = ctx_of(js);
+	soie_request rq;
+	soie_response res;
+	JSValue v;
+	char *src;
+	int r;
+	STR(0, url);
+
+	(void)this;
+	memset(&rq, 0, sizeof(rq));
+	rq.url = url;
+	rq.first_party = c->url;
+	rq.flags = c->host->flags & SOIE_REQ_PAGE;
+	r = request_blocking(c, &rq, R_INCLUDE | R_NO_CORS, &res);
+	if (r < 0 || res.status >= 400) {
+		if (r >= 0)
+			soie_response_free(&res);
+		JS_FreeCString(js, url);
+		return JS_FALSE;
+	}
+	if (!(src = malloc(res.len + 1)))
+		abort();
+	memcpy(src, res.body, res.len);
+	src[res.len] = 0;
+	v = JS_Eval(js, src, res.len, url, JS_EVAL_TYPE_GLOBAL);
+	free(src);
+	soie_response_free(&res);
+	JS_FreeCString(js, url);
+	if (JS_IsException(v) && r == R_OPAQUE) {
+		JS_FreeValue(js, JS_GetException(js));
+		return JS_FALSE;
+	}
+	if (JS_IsException(v))
+		return v;
+	JS_FreeValue(js, v);
+	return JS_TRUE;
 }
 
 /* document.cookie: never HttpOnly ones, a private page's jar */
@@ -2263,19 +2728,30 @@ static void wk_free(struct wk *w)
 	free(w);
 }
 
-/* workerNew(url, module): the page's new worker, its id; its source
- * comes with workerRun() */
+/* workerNew(url, module): the page's new worker, its id (0: refused,
+ * another origin's); its source comes with workerRun() */
 static JSValue n_worker_new(JSContext *js, JSValueConst this, int argc,
 	JSValueConst *argv)
 {
 	struct sctx *c = ctx_of(js);
 	struct wk *w;
+	int data;
 	STR(0, url);
 
 	(void)this;
+	/* a worker runs with its page's origin: from its page's origin
+	 * only, or from bytes the page holds (blob:, data:, opaque) */
+	data = !strncasecmp(url, "data:", 5);
+	if (!data && strncasecmp(url, "blob:", 5) &&
+	    !origin_same(c->origin, url)) {
+		JS_FreeCString(js, url);
+		return JS_NewInt32(js, 0);
+	}
 	if (!(w = calloc(1, sizeof(*w))) || !(w->url = strdup(url)))
 		abort();
 	JS_FreeCString(js, url);
+	snprintf(w->origin, sizeof(w->origin), "%s", data ? "null" :
+		c->origin);
 	w->module = argc > 1 && JS_ToBool(js, argv[1]);
 	w->id = ++c->next_worker;
 	w->page = c;
@@ -2596,6 +3072,7 @@ static const JSCFunctionListEntry natives[] = {
 	JS_CFUNC_DEF("rewritable", 2, n_rewritable),
 	JS_CFUNC_DEF("request", 5, n_request),
 	JS_CFUNC_DEF("requestAsync", 5, n_request_async),
+	JS_CFUNC_DEF("importScript", 1, n_import_script),
 	JS_CFUNC_DEF("cookie", 1, n_cookie),
 	JS_CFUNC_DEF("navigate", 2, n_navigate),
 	JS_CFUNC_DEF("showURL", 2, n_show_url),
@@ -2679,7 +3156,9 @@ static JSModuleDef *mod_load(JSContext *js, const char *name, void *opaque)
 	rq.url = name;
 	rq.first_party = c->url;
 	rq.flags = c->host->flags & SOIE_REQ_PAGE;
-	if (request_blocking(c, &rq, &res)) {
+	/* modules are fetched as CORS requests: another origin's only
+	 * when it allows it (its exports are the page's to read) */
+	if (request_blocking(c, &rq, 0, &res)) {
 		JS_ThrowReferenceError(js, "cannot load module %s", name);
 		return NULL;
 	}
@@ -2758,6 +3237,10 @@ static struct sctx *ctx_new(soie_node *doc, const char *url,
 	c->host = host;
 	c->self = self;
 	c->url = strdup(url);
+	if (self)
+		snprintf(c->origin, sizeof(c->origin), "%s", self->origin);
+	else
+		url_origin(url, c->origin, sizeof(c->origin));
 	c->rt = JS_NewRuntime();
 	if (!c->url || !c->rt) {
 		free(c->url);
