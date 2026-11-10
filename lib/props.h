@@ -60,6 +60,10 @@ PROP(POINTER_EVENTS, "pointer-events", 1, K_KW, 0,
 	"fill|stroke|all|bounding-box", "auto")
 PROP(TEXT_UNDERLINE_OFFSET, "text-underline-offset", 1, K_LEN, 0, "auto",
 	"auto")
+/* the text's own color when set (gradient text: transparent over a
+ * background clipped to the text) */
+PROP(WEBKIT_TEXT_FILL_COLOR, "-webkit-text-fill-color", 1, K_RAW, 0, "",
+	"currentcolor")
 /* SVG painting (svg.c): presentation attributes are hints of these */
 PROP(FILL, "fill", 1, K_RAW, 0, "", "black")
 PROP(STROKE, "stroke", 1, K_RAW, 0, "", "none")

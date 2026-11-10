@@ -825,6 +825,18 @@ static void gen_children(struct box *parent, soie_node *el)
 
 	if ((p = gen_pseudo(el, el->u.el.before, 'b')))
 		box_append(parent, p);
+	if (is_html(el, TAG_DETAILS)) {
+		/* no <summary>: one of its own, "Details" (HTML 15.5.5) */
+		for (c = el->first; c && !is_html(c, TAG_SUMMARY); c = c->next)
+			;
+		if (!c) {
+			const char *t = soie_element_get_attr(el, "open") ?
+				"\xe2\x96\xbe Details\n" : "\xe2\x96\xb8 Details\n";
+
+			box_append(parent, text_box(el->u.el.style, t,
+				strlen(t)));
+		}
+	}
 	for (c = el->first; c; c = c->next) {
 		if (only && c != only)
 			continue;

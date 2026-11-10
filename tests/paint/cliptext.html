@@ -1,0 +1,13 @@
+<!DOCTYPE html>
+<!-- background-clip: text and -webkit-text-fill-color (gradient text),
+     text-overflow: ellipsis, floats painted over the background of the
+     block after theirs, a details without summary -->
+h1{font-size:40px;margin:4px 0}
+.g{background:linear-gradient(90deg,#f06,#48f);-webkit-background-clip:text;background-clip:text;color:transparent}
+.w{background:linear-gradient(#fa0,#a0f);-webkit-background-clip:text;-webkit-text-fill-color:transparent;color:#000}
+.s{background-image:linear-gradient(90deg,red,blue);background-clip:text;color:rgba(0,0,0,.2);display:inline-block;padding:10px;border:2px solid #888}
+</style>
+<h1 class=g>Gradient heading</h1><h1 class=w>Fill <em>color</em> text</h1><span class=s>inline-block <b>bold</b></span>
+<p style="-webkit-text-fill-color:green;color:red">fill color green</p>
+<div style="width:150px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">ellipsis text that is too long to fit</div>
+<div><div style="float:left;width:30px;height:50px;background:red"></div>a</div><div style="background:#00f;height:30px;color:#fff">b</div><details style="clear:both"><p>hidden</p></details>

@@ -28,6 +28,11 @@ each change are in [DECISIONS.md](DECISIONS.md).
   `skew()`, `matrix()`, the `rotate`, `scale` and `translate`
   properties, `transform-origin`): carets, chevrons and flipped icons
   were drawn as they lie.
+- `background-clip: text` and `-webkit-text-fill-color`: gradient
+  text.
+- `text-overflow: ellipsis`.
+- More `-webkit-` names of properties Soie has (flex, transform,
+  box-shadow, background-clip...).
 - `revert`.
 - CSS counters: `counter-reset`, `counter-increment`, `counter-set`,
   `counter()` and `counters()`.
@@ -65,6 +70,9 @@ each change are in [DECISIONS.md](DECISIONS.md).
 - `flex-direction: row-reverse` and `column-reverse` start from the
   other edge.
 - Tabs in preformatted text.
+- A float was hidden by the background of the block after its
+  parent.
+- `<details>` without a `<summary>` shows "Details".
 - Inline-blocks and inline images moved by `position: relative`.
 - Tables: a cell's `height` is a minimum (text ran over the next
   row), the table's `height`, `<col>` and `<colgroup>` widths.

@@ -700,6 +700,24 @@ reversed, edit the entry and say why; do not leave stale rules here.
   moved by position: relative and by moving transforms (they were
   not).
 
+- background-clip: text: the text of the box and of what it holds
+  is painted alone and opaque into a buffer (text_mask_pass: no
+  backgrounds, borders nor images), whose coverage masks the box's
+  background (text_mask_push()). With -webkit-text-fill-color (an
+  inherited property kept as text, so that its currentcolor stays
+  each element's) or a transparent color, that is gradient text: it
+  was a gradient bar with the text over it, or without it.
+- text-overflow: ellipsis at paint time: a line that runs past the
+  edge of a box that clips it is drawn up to what fits and ends with
+  the ellipsis; the layout does not change.
+- Floats are painted over the backgrounds of all the blocks of their
+  formatting context (Appendix E): they wait in a list for the box
+  that paints as a unit around them (float_owner(): the root, a
+  stacking unit, a float, an inline-block, what clips or fades). A
+  float in a block was painted with that block, then covered by the
+  background of the next one (an image floated in a paragraph and the
+  code block after it).
+
 ## Images (phase 6)
 
 - Decoders: PNG (libpng), JPEG (libjpeg), GIF first frame (own LZW

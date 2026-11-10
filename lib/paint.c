@@ -394,6 +394,9 @@ static void style_rgba(const struct style *st, int prop, unsigned char *out)
 	color_to_rgba(col, out);
 }
 
+/* Set while a box's text is painted alone into a mask */
+static int text_mask_pass;
+
 /* Glyphs */
 
 struct gcache {
@@ -467,7 +470,29 @@ static void draw_text(struct canvas *c, const struct style *st,
 	int n, k, want = (int)st->v[P_FONT_WEIGHT].u.num;
 	int italic = !kw(st, P_FONT_STYLE, "normal");
 
-	style_rgba(st, P_COLOR, rgba);
+	{
+		/* -webkit-text-fill-color when set (kept as text: its
+		 * currentcolor is each element's), else the color */
+		const char *fc = st->v[P_WEBKIT_TEXT_FILL_COLOR].u.str;
+
+		style_rgba(st, P_COLOR, rgba);
+		if (fc && *fc != 'c' && *fc != 'C') {
+			struct cvlist l;
+			struct cur k;
+			struct color col;
+
+			css_component_values(fc, strlen(fc), &l);
+			cur_init(&k, &l);
+			if (parse_color(&k, &col) && !col.current)
+				color_to_rgba(&col, rgba);
+			cvlist_free(&l);
+		}
+	}
+	if (text_mask_pass) {
+		/* the shape of the text alone, for background-clip: text */
+		rgba[0] = rgba[1] = rgba[2] = 0;
+		rgba[3] = 255;
+	}
 	if (!rgba[3] || kw(st, P_VISIBILITY, "hidden"))
 		return;
 	n = text_shape(st, s, len, &gs);
@@ -854,6 +879,67 @@ static int round_clip(struct canvas *c, const struct box *b, int inner,
 		h - e[0] - e[2], ir, save);
 }
 
+static void paint_box(struct canvas *c, struct box *b, int stacking);
+static void mask_pop(struct canvas *c, const struct canvas *save);
+
+/*
+ * background-clip: text: the text of b and of what it holds, painted
+ * alone and opaque into a buffer of its border box, becomes the mask
+ * its background is painted through (with the mask around it, if any).
+ * Gradient headings were a gradient bar over or under their text.
+ */
+static int text_mask_push(struct canvas *c, const struct box *b,
+	struct canvas *save)
+{
+	struct canvas t;
+	float x = b->x - b->p[3] - b->b[3], y = b->y - b->p[0] - b->b[0];
+	float w = b->w + b->p[1] + b->p[3] + b->b[1] + b->b[3];
+	float h = b->h + b->p[0] + b->p[2] + b->b[0] + b->b[2];
+	int x0 = (int)floorf(x - c->ox), y0 = (int)floorf(y - c->oy);
+	int x1 = (int)ceilf(x + w - c->ox), y1 = (int)ceilf(y + h - c->oy);
+	unsigned char *m;
+	int i, j;
+
+	if (text_mask_pass)
+		return 0;
+	x0 = x0 < c->cx0 ? c->cx0 : x0;
+	y0 = y0 < c->cy0 ? c->cy0 : y0;
+	x1 = x1 > c->cx1 ? c->cx1 : x1;
+	y1 = y1 > c->cy1 ? c->cy1 : y1;
+	if (x1 <= x0 || y1 <= y0)
+		return 0;
+	*save = *c;
+	memset(&t, 0, sizeof(t));
+	t.w = x1 - x0;
+	t.h = y1 - y0;
+	t.stride = t.w * 4;
+	t.px = calloc((size_t)t.w * (size_t)t.h + 1, 4);
+	m = malloc((size_t)t.w * (size_t)t.h + 1);
+	if (!t.px || !m)
+		abort();
+	t.ox = c->ox + (float)x0;
+	t.oy = c->oy + (float)y0;
+	t.cx1 = t.w;
+	t.cy1 = t.h;
+	t.alpha = 1;
+	text_mask_pass = 1;
+	paint_box(&t, (struct box *)b, 1);
+	text_mask_pass = 0;
+	for (j = 0; j < t.h; j++)
+		for (i = 0; i < t.w; i++)
+			m[(size_t)j * (size_t)t.w + (size_t)i] = (unsigned char)
+				(t.px[(size_t)j * (size_t)t.stride +
+				(size_t)i * 4 + 3] * mask_at(c, x0 + i,
+				y0 + j) / 255);
+	free(t.px);
+	c->mask = m;
+	c->mx0 = x0;
+	c->my0 = y0;
+	c->mx1 = x1;
+	c->my1 = y1;
+	return 1;
+}
+
 /* The box whose background is the canvas' (canvas_background()): not
  * painted again in its own box */
 static const struct box *bg_canvas;
@@ -863,13 +949,17 @@ static void paint_background(struct canvas *c, const struct box *b,
 {
 	const char *im = b->style->v[P_BACKGROUND_IMAGE].u.str;
 	const char *clip = b->style->v[P_BACKGROUND_CLIP].u.str, *last;
-	struct canvas save;
-	int rk = 0;
+	struct canvas save, tsave;
+	int rk = 0, tk = 0;
 	unsigned char rgba[4];
 	float r[8];
 
 	if (b == bg_canvas)
 		return;
+	/* background-clip: text: all of it through the shape of the
+	 * box's text */
+	if (clip && strstr(clip, "text") && im && strcmp(im, "none"))
+		tk = text_mask_push(c, b, &tsave);
 	snap(c, &x, &y, &w, &h);
 	style_rgba(b->style, P_BACKGROUND_COLOR, rgba);
 	radii(b, w, h, r);
@@ -900,6 +990,8 @@ static void paint_background(struct canvas *c, const struct box *b,
 	paint_bg_image(c, b, x, y, w, h);
 	if (rk)
 		mask_pop(c, &save);
+	if (tk)
+		mask_pop(c, &tsave);
 }
 
 static void paint_borders(struct canvas *c, const struct box *b, float x,
@@ -1200,6 +1292,9 @@ static void paint_decor(struct canvas *c, const struct box *b, float x,
 	int i, n = shadows(b->style, sh);
 	float sx = x, sy = y, sw = w, shh = h, r[8], ir[8];
 
+	if (text_mask_pass)
+		return;
+
 	if (n) {
 		snap(c, &sx, &sy, &sw, &shh);
 		radii(b, sw, shh, r);
@@ -1226,6 +1321,9 @@ static void paint_outline(struct canvas *c, const struct box *b, float x,
 	float ow = st->v[P_OUTLINE_WIDTH].u.len.px;
 	float off = st->v[P_OUTLINE_OFFSET].u.len.px;
 	unsigned char rgba[4];
+
+	if (text_mask_pass)
+		return;
 
 	if (ow <= 0 || kw(st, P_OUTLINE_STYLE, "none"))
 		return;
@@ -1299,6 +1397,22 @@ static void paint_lines(struct canvas *c, struct box *b)
 
 	for (i = 0; i < b->nlines; i++) {
 		struct line *l = &b->lines[i];
+		/* text-overflow: ellipsis: a line that runs out of a box
+		 * that clips it ends with "..." (limit: where it goes) */
+		float limit = 1e30f;
+
+		if (b->style && kw(b->style, P_TEXT_OVERFLOW, "ellipsis") &&
+		    !kw(b->style, P_OVERFLOW_X, "visible") && l->n) {
+			float end = -1e30f;
+
+			for (j = l->first; j < l->first + l->n; j++)
+				if (b->frags[j].kind != F_INLINE &&
+				    b->frags[j].x + b->frags[j].w > end)
+					end = b->frags[j].x + b->frags[j].w;
+			if (end > b->x + b->w + 0.5f)
+				limit = b->x + b->w - text_width(b->style,
+					"\xe2\x80\xa6", 3);
+		}
 
 		/* inline boxes first, then the text over them */
 		for (j = l->first; j < l->first + l->n; j++) {
@@ -1324,6 +1438,33 @@ static void paint_lines(struct canvas *c, struct box *b)
 				if (f->baseline + em < c->oy + (float)c->cy0 ||
 				    f->baseline - 2 * em > c->oy + (float)c->cy1)
 					continue;
+				if (f->x + f->w > limit) {
+					/* what fits of it, then the ellipsis in
+					 * the box's own style */
+					const char *t = f->box->text + f->start;
+					size_t n = 0, nx;
+					float w = 0, cw;
+
+					while (f->x < limit && n < f->len) {
+						for (nx = n + 1; nx < f->len &&
+						     ((unsigned char)t[nx] & 0xc0) ==
+						     0x80; nx++)
+							;
+						cw = text_width(f->box->style, t + n,
+							nx - n);
+						if (f->x + w + cw > limit)
+							break;
+						w += cw;
+						n = nx;
+					}
+					if (n)
+						draw_text(c, f->box->style, t, n,
+							f->x, f->baseline, 0);
+					draw_text(c, b->style, "\xe2\x80\xa6", 3,
+						f->x < limit ? f->x + w : limit,
+						f->baseline, 0);
+					break;
+				}
 
 				draw_text(c, f->box->style, f->box->text +
 					f->start, f->len, f->x, f->baseline, jw);
@@ -1336,6 +1477,8 @@ static void paint_lines(struct canvas *c, struct box *b)
 						y - m.ascent);
 				}
 			} else if (f->kind == F_ATOMIC) {
+				if (f->x >= limit)
+					break;
 				paint_box(c, f->box, 1);
 			}
 		}
@@ -1355,6 +1498,8 @@ static const struct box *bg_done;	/* its background is painted */
 
 static void zadd(struct box *b)
 {
+	if (text_mask_pass)
+		return;		/* painted in its turn, once */
 	if (nz == capz) {
 		capz = capz ? capz * 2 : 32;
 		zlist = xrealloc(zlist, (size_t)capz * sizeof(*zlist));
@@ -1473,6 +1618,45 @@ static int zcmp(const void *a, const void *b)
 	return x->order - y->order;
 }
 
+/*
+ * Floats are painted over the backgrounds of all the blocks of their
+ * formatting context (CSS 2 Appendix E, steps 4 and 5), not only of
+ * their siblings: a float kept by a block was covered by the
+ * background of the block after it. They wait in this list for the
+ * box that paints as a unit around them (float_owner()).
+ */
+static struct box **flist;
+static int nfl, capfl;
+
+static void float_add(struct box *b)
+{
+	if (nfl == capfl) {
+		capfl = capfl ? capfl * 2 : 16;
+		flist = realloc(flist, (size_t)capfl * sizeof(*flist));
+		if (!flist)
+			abort();
+	}
+	flist[nfl++] = b;
+}
+
+/* Painted with all it holds before anything after it: the root, a
+ * stacking unit, a float, an inline-block, and what clips or fades its
+ * content (the floats keep that clip and that opacity) */
+static int float_owner(const struct box *b, int stacking)
+{
+	const struct style *st = b->style;
+	const char *m, *k;
+
+	if (stacking || !b->parent || !st || (b->flags & (BF_FLOAT | BF_ABS)) ||
+	    b->type == B_ATOMIC || positioned(b))
+		return 1;
+	m = st->v[P_MASK_IMAGE].u.str;
+	k = st->v[P_CLIP_PATH].u.str;
+	return !kw(st, P_OVERFLOW_X, "visible") ||
+		!kw(st, P_OVERFLOW_Y, "visible") || st->v[P_OPACITY].u.num < 1 ||
+		(m && strcmp(m, "none")) || (k && strcmp(k, "none"));
+}
+
 /* Floats and positioned boxes met in the text, also inside inline
  * boxes (a <span> around a dialog) */
 static void paint_out_of_flow(struct canvas *c, struct box *b)
@@ -1480,7 +1664,9 @@ static void paint_out_of_flow(struct canvas *c, struct box *b)
 	struct box *k;
 
 	for (k = b->first; k; k = k->next)
-		if (k->flags & (BF_FLOAT | BF_ABS))
+		if (k->flags & BF_FLOAT)
+			float_add(k);
+		else if (k->flags & BF_ABS)
 			paint_box(c, k, 0);
 		else if (k->type == B_INLINE)
 			paint_out_of_flow(c, k);
@@ -1712,7 +1898,7 @@ static void paint_box(struct canvas *c, struct box *b, int stacking)
 	float x, y, w, h, save_alpha = c->alpha;
 	int cx0 = c->cx0, cy0 = c->cy0, cx1 = c->cx1, cy1 = c->cy1;
 	struct canvas msave, rsave;
-	int mk, rk;
+	int mk, rk, fbase = nfl;
 
 	if (!stacking && positioned(b) && b->parent) {
 		zadd(b);
@@ -1747,7 +1933,8 @@ static void paint_box(struct canvas *c, struct box *b, int stacking)
 		/* an image in the curve of its content box; controls
 		 * draw their own */
 		rk = !control(b) && round_clip(c, b, 1, &rsave);
-		paint_replaced(c, b);
+		if (!text_mask_pass)
+			paint_replaced(c, b);
 		if (rk)
 			mask_pop(c, &rsave);
 		paint_outline(c, b, x, y, w, h);
@@ -1766,13 +1953,19 @@ static void paint_box(struct canvas *c, struct box *b, int stacking)
 		paint_lines(c, b);
 		paint_out_of_flow(c, b);
 	} else {
-		/* blocks, then floats over them (Appendix E, steps 4-5) */
-		for (k = b->first; k; k = k->next)
-			if (!(k->flags & BF_FLOAT))
-				paint_box(c, k, 0);
 		for (k = b->first; k; k = k->next)
 			if (k->flags & BF_FLOAT)
+				float_add(k);
+			else
 				paint_box(c, k, 0);
+	}
+	if (float_owner(b, stacking)) {
+		/* the floats met below, over the blocks */
+		int i;
+
+		for (i = fbase; i < nfl; i++)
+			paint_box(c, flist[i], 0);
+		nfl = fbase;
 	}
 	if (rk)
 		mask_pop(c, &rsave);

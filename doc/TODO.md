@@ -16,8 +16,8 @@ by RMSE (the 38 sites survey of 2026-11-03).
 
 ## Rendering, small
 
-- `<details>` without a `<summary>` shows nothing; it should show a
-  "Details" summary of its own.
+- `<details>` without a `<summary>`: its "Details" line does not
+  open it on a click yet.
 - Only the nearest text decoration is drawn, not those of every
   decorating ancestor (an underlined link in a struck paragraph).
 - inset, outset, groove and ridge borders: their shades differ a
