@@ -32,8 +32,11 @@ by RMSE (the 38 sites survey of 2026-11-03).
   little from Firefox's.
 - Dashed borders on square corners: Firefox puts a whole dash on each
   corner and stretches the gaps; Soie keeps a fixed pitch.
-- `border-radius: a / b`: the vertical radii are dropped (needs four
-  more longhands in the cascade).
+- MDN's home page: its content column was reported too far left.
+  Not reproduced from the two sheets saved (global and homepage: the
+  named lines through var() are right); to check on a whole saved
+  copy. Two line name lists side by side (`[a] [b]`, after var())
+  are invalid for browsers, merged by Soie.
 - Mojeek: "Mojeek User Survey" drawn inside the search box, icons
   right of "News" drawn as thin lines. To study on a saved copy.
 

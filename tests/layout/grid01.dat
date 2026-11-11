@@ -1,0 +1,119 @@
+#data
+<!DOCTYPE html><body style="margin:0"><style>:root{--cols:[wide-start] 20px [full-start] 1fr [content-start] minmax(0,200px) [content-end] 1fr [full-end] 20px [wide-end]}.g{display:grid;grid-template-columns:var(--cols)}.g>*{grid-column:content;height:4px}.g>.w{grid-column:wide}.g>.f{grid-column:full-start/full-end}</style><div class=g><div></div><div class=w></div><div class=f></div></div>
+#errors
+#layout
+width=400
+#document
+| block <html> 0,0 400x12
+|   block <body> 0,0 400x12
+|     block <div> 0,0 400x12
+|       block <div> 100,0 200x4
+|       block <div> 0,4 400x4
+|       block <div> 20,8 360x4
+
+#data
+<!DOCTYPE html><body style="margin:0"><div style="display:grid;grid-template-columns:repeat(4,[c] 100px) [c]"><div style="grid-column:c 3;height:4px"></div><div style="grid-column:c 2 / span 2;height:4px"></div><div style="grid-column:c -2;height:4px"></div><div style="grid-column:1 / span c 2;height:4px"></div></div>
+#errors
+#layout
+width=600
+#document
+| block <html> 0,0 600x8
+|   block <body> 0,0 600x8
+|     block <div> 0,0 600x8
+|       block <div> 200,0 100x4
+|       block <div> 100,4 200x4
+|       block <div> 300,0 100x4
+|       block <div> 0,0 200x4
+
+#data
+<!DOCTYPE html><body style="margin:0"><div style="display:grid;grid-template-columns:100px 100px;grid-auto-columns:50px"><div style="grid-column:nope;height:4px"></div></div>
+#errors
+#layout
+width=600
+#document
+| block <html> 0,0 600x4
+|   block <body> 0,0 600x4
+|     block <div> 0,0 600x4
+|       block <div> 250,0 50x4
+
+#data
+<!DOCTYPE html><body style="margin:0"><div style="display:grid;grid-template-columns:repeat(2,[x-start] 50px [x-end]) 100px"><div style="grid-column:x 2;height:4px"></div></div>
+#errors
+#layout
+width=600
+#document
+| block <html> 0,0 600x4
+|   block <body> 0,0 600x4
+|     block <div> 0,0 600x4
+|       block <div> 466.6666,0 133.3333x4
+
+#data
+<!DOCTYPE html><body style="margin:0"><div style="display:grid;grid-template-columns:repeat(3,[p] 60px [q])"><div style="grid-column:q 2 / q 3;height:4px"></div></div>
+#errors
+#layout
+width=600
+#document
+| block <html> 0,0 600x4
+|   block <body> 0,0 600x4
+|     block <div> 0,0 600x4
+|       block <div> 120,0 60x4
+
+#data
+<!DOCTYPE html><body style="margin:0"><div style="display:grid;grid-template-columns:[s] 100px [s] 100px [s]"><div style="grid-column:s 2 / s -1;height:4px"></div><div style="grid-column:3 / 1;height:4px"></div></div>
+#errors
+#layout
+width=600
+#document
+| block <html> 0,0 600x8
+|   block <body> 0,0 600x8
+|     block <div> 0,0 600x8
+|       block <div> 100,0 100x4
+|       block <div> 0,4 200x4
+
+#data
+<!DOCTYPE html><body style="margin:0"><div style="display:grid;grid-template-columns:100px [m] 100px"><div style="grid-column:span m / 3;height:4px"></div></div>
+#errors
+#layout
+width=600
+#document
+| block <html> 0,0 600x4
+|   block <body> 0,0 600x4
+|     block <div> 0,0 600x4
+|       block <div> 100,0 100x4
+
+#data
+<!DOCTYPE html><body style="margin:0"><div style="display:grid;grid-template-columns:repeat(auto-fill,[f] 100px)"><div style="grid-column:f 4;height:4px"></div></div>
+#errors
+#layout
+width=600
+#document
+| block <html> 0,0 600x4
+|   block <body> 0,0 600x4
+|     block <div> 0,0 600x4
+|       block <div> 300,0 100x4
+
+#data
+<!DOCTYPE html><body style="margin:0"><style>.c{display:grid;width:300px;height:100px}.c::before{content:"";grid-area:main}.e{grid-template:[main-start] 100% [main-end] / [main-start] 100% [main-end]}.r{grid-template-columns:repeat(auto-fill,[main-start] 100% [main-end]);grid-template-rows:repeat(auto-fill,[main-start] 100% [main-end])}.a{grid-template-columns:100%;grid-template-rows:100%;grid-template-areas:"main"}</style><div class="c e"></div><div class="c r"></div><div class="c a"></div>
+#errors
+#layout
+width=400
+#document
+| block <html> 0,0 400x300
+|   block <body> 0,0 400x300
+|     block <div> 0,0 300x100
+|       block ::before 0,0 300x100
+|     block <div> 0,100 300x100
+|       block ::before 0,100 300x100
+|     block <div> 0,200 300x100
+|       block ::before 0,200 300x100
+
+#data
+<!DOCTYPE html><body style="margin:0"><style>.c{display:grid;width:300px;height:100px}.c::before{content:"";grid-area:main}</style><div class=c style="grid-template:[quux-start] 100% [quux-end] / [quux-start] 100% [quux-end]"></div>
+#errors
+#layout
+width=400
+#document
+| block <html> 0,0 400x100
+|   block <body> 0,0 400x100
+|     block <div> 0,0 300x100
+|       block ::before 300,100 0x0

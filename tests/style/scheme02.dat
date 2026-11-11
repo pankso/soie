@@ -1,0 +1,94 @@
+#data
+<!DOCTYPE html><meta name=color-scheme content=dark><a href=x>a</a><button>b</button><p style="color-scheme:light">c<a href=x>d</a>
+#errors
+#properties
+color,background-color
+#document
+| <!DOCTYPE html>
+| <html>
+|   @color: rgb(251, 251, 254)
+|   @background-color: rgba(0, 0, 0, 0)
+|   <head>
+|     @color: rgb(251, 251, 254)
+|     @background-color: rgba(0, 0, 0, 0)
+|     <meta>
+|       content="dark"
+|       name="color-scheme"
+|       @color: rgb(251, 251, 254)
+|       @background-color: rgba(0, 0, 0, 0)
+|   <body>
+|     @color: rgb(251, 251, 254)
+|     @background-color: rgba(0, 0, 0, 0)
+|     <a>
+|       href="x"
+|       @color: rgb(0, 202, 219)
+|       @background-color: rgba(0, 0, 0, 0)
+|       "a"
+|     <button>
+|       @color: rgb(251, 251, 254)
+|       @background-color: rgb(43, 42, 51)
+|       "b"
+|     <p>
+|       style="color-scheme:light"
+|       @color: rgb(251, 251, 254)
+|       @background-color: rgba(0, 0, 0, 0)
+|       "c"
+|       <a>
+|         href="x"
+|         @color: rgb(0, 0, 238)
+|         @background-color: rgba(0, 0, 0, 0)
+|         "d"
+
+#data
+<!DOCTYPE html><style>:root{color-scheme:light}</style><meta name=color-scheme content=dark><i>a</i>
+#errors
+#properties
+color
+#document
+| <!DOCTYPE html>
+| <html>
+|   @color: rgb(0, 0, 0)
+|   <head>
+|     @color: rgb(0, 0, 0)
+|     <style>
+|       @color: rgb(0, 0, 0)
+|       ":root{color-scheme:light}"
+|     <meta>
+|       content="dark"
+|       name="color-scheme"
+|       @color: rgb(0, 0, 0)
+|   <body>
+|     @color: rgb(0, 0, 0)
+|     <i>
+|       @color: rgb(0, 0, 0)
+|       "a"
+
+#data
+<!DOCTYPE html><p style="color-scheme:dark;background:Canvas">a<a href=x>b</a><input>
+#errors
+#properties
+color,background-color
+#document
+| <!DOCTYPE html>
+| <html>
+|   @color: rgb(0, 0, 0)
+|   @background-color: rgba(0, 0, 0, 0)
+|   <head>
+|     @color: rgb(0, 0, 0)
+|     @background-color: rgba(0, 0, 0, 0)
+|   <body>
+|     @color: rgb(0, 0, 0)
+|     @background-color: rgba(0, 0, 0, 0)
+|     <p>
+|       style="color-scheme:dark;background:Canvas"
+|       @color: rgb(0, 0, 0)
+|       @background-color: rgb(28, 27, 34)
+|       "a"
+|       <a>
+|         href="x"
+|         @color: rgb(0, 202, 219)
+|         @background-color: rgba(0, 0, 0, 0)
+|         "b"
+|       <input>
+|         @color: rgb(251, 251, 254)
+|         @background-color: rgb(43, 42, 51)

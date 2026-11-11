@@ -535,12 +535,13 @@ static void draw_text(struct canvas *c, const struct style *st,
 		if (g->face < 0) {
 			/* stub font: a box per visible character */
 			if (g->id != ' ')
-				fill_rect(c, gx + em * 0.1f, base - em * 0.6f,
-					em * 0.3f, em * 0.6f, rgba);
+				fill_rect(c, gx + g->em * 0.1f,
+					base - g->em * 0.6f, g->em * 0.3f,
+					g->em * 0.6f, rgba);
 			continue;
 		} else {
 			struct face *f = &faces[g->face];
-			const struct gcache *b = glyph(g->face, em, g->id,
+			const struct gcache *b = glyph(g->face, g->em, g->id,
 				want >= 600 && f->weight < 600,
 				italic && !f->italic);
 			int i, j, x0, y0;
@@ -576,11 +577,14 @@ static void radii(const struct box *b, float w, float h, float *r)
 		P_BORDER_BOTTOM_LEFT_RADIUS };
 	int i;
 
-	/* one value: a percentage is of the width across, of the height
-	 * down (50%: an ellipse) */
+	/* a percentage is of the width across, of the height down (50%:
+	 * an ellipse); one value is both radii */
 	for (i = 0; i < 4; i++) {
-		r[i] = len_val(&b->style->v[p[i]], w);
-		r[i + 4] = len_val(&b->style->v[p[i]], h);
+		const struct cval *v = &b->style->v[p[i]];
+
+		r[i] = len_val(v, w);
+		r[i + 4] = v->flag == 1 ? v->v : v->flag == 2 ?
+			v->v * h / 100 : len_val(v, h);
 	}
 	fit_radii(r, w, h);
 }
@@ -1460,13 +1464,13 @@ static void paint_box(struct canvas *c, struct box *b, int stacking);
 
 static void paint_lines(struct canvas *c, struct box *b)
 {
-	int i, j;
+	int i, j, clamp = line_clamp(b);
 
 	for (i = 0; i < b->nlines; i++) {
 		struct line *l = &b->lines[i];
 		/* text-overflow: ellipsis: a line that runs out of a box
 		 * that clips it ends with "..." (limit: where it goes) */
-		float limit = 1e30f;
+		float limit = 1e30f, after = -1e30f;
 
 		if (b->style && kw(b->style, P_TEXT_OVERFLOW, "ellipsis") &&
 		    !kw(b->style, P_OVERFLOW_X, "visible") && l->n) {
@@ -1479,6 +1483,22 @@ static void paint_lines(struct canvas *c, struct box *b)
 			if (end > b->x + b->w + 0.5f)
 				limit = b->x + b->w - text_width(b->style,
 					"\xe2\x80\xa6", 3);
+		}
+		/* the last line a line clamp keeps ends with one too,
+		 * whatever text-overflow says, as in browsers: after
+		 * its text when there is room, else in place of its end */
+		if (i == clamp - 1 && l->n) {
+			float ew = text_width(b->style, "\xe2\x80\xa6", 3);
+
+			after = l->x;
+			for (j = l->first; j < l->first + l->n; j++)
+				if (b->frags[j].kind != F_INLINE &&
+				    b->frags[j].x + b->frags[j].w > after)
+					after = b->frags[j].x + b->frags[j].w;
+			if (after + ew > b->x + b->w + 0.5f) {
+				limit = b->x + b->w - ew;
+				after = -1e30f;
+			}
 		}
 
 		/* inline boxes first, then the text over them */
@@ -1533,8 +1553,12 @@ static void paint_lines(struct canvas *c, struct box *b)
 					break;
 				}
 
-				draw_text(c, f->box->style, f->box->text +
-					f->start, f->len, f->x, f->baseline, jw);
+				/* a tab is room only, its fragment alone */
+				if (f->box->text[f->start] != '\t')
+					draw_text(c, f->box->style,
+						f->box->text + f->start,
+						f->len, f->x, f->baseline,
+						jw);
 				if (db) {
 					float y = deco_base(db, b, l, f);
 					struct fontm m;
@@ -1549,6 +1573,9 @@ static void paint_lines(struct canvas *c, struct box *b)
 				paint_box(c, f->box, 1);
 			}
 		}
+		if (after > -1e30f)
+			draw_text(c, b->style, "\xe2\x80\xa6", 3, after,
+				l->baseline, 0);
 	}
 }
 
@@ -2220,14 +2247,25 @@ static void paint_layer(struct canvas *c, struct box *b)
 	c->cy1 = cy1;
 }
 
-/* The canvas background: the root's, or the body's (CSS 2 14.2). */
+/* The canvas background: the root's, or the body's (CSS 2 14.2), over
+ * Canvas in the root's color scheme */
 static void canvas_background(struct canvas *c, struct box *root)
 {
-	unsigned char rgba[4] = { 255, 255, 255, 255 }, bg[4];
+	unsigned char rgba[4], bg[4];
 	const struct box *src = root, *k;
 	const char *im = root->style->v[P_BACKGROUND_IMAGE].u.str;
+	struct color cv;
 	int i, j;
 
+	named_color("canvas", &cv);
+	system_color(&cv, style_dark(paint_doc->u.doc->styles,
+		root->style));
+	color_to_rgba(&cv, rgba);
+	if (c->bgr) {
+		i = rgba[0];
+		rgba[0] = rgba[2];
+		rgba[2] = (unsigned char)i;
+	}
 	style_rgba(root->style, P_BACKGROUND_COLOR, bg);
 	bg_canvas = NULL;
 	if (!bg[3] && (!im || !strcmp(im, "none"))) {

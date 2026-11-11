@@ -8,6 +8,7 @@
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
+#include <math.h>
 #include <stdlib.h>
 #include <string.h>
 #include "layout.h"
@@ -85,7 +86,7 @@ static int is_space(int c)
 
 /* The other case of a two-byte letter (Latin-1, Latin Extended-A,
  * Greek, Cyrillic: both cases are two bytes in UTF-8), or c. */
-static unsigned other_case(unsigned c, int up)
+unsigned other_case(unsigned c, int up)
 {
 	if (up) {
 		if ((c >= 0xe0 && c <= 0xfe && c != 0xf7) ||
@@ -161,7 +162,7 @@ static void process_text(struct box *t, int *prev)
 {
 	int mode = ws_mode(t->style);
 	struct buf b = { 0 };
-	size_t i, col = 0;
+	size_t i;
 
 	buf_add(&b, "", 0);
 	for (i = 0; i < t->len; i++) {
@@ -174,16 +175,8 @@ static void process_text(struct box *t, int *prev)
 			i++;
 			continue;
 		}
-		if (mode == 'p' && c == '\t') {
-			/* a preserved tab: spaces up to the next stop, every
-			 * 8 columns from the start of this text */
-			do
-				buf_putc(&b, ' ');
-			while (++col % 8);
-			*prev = 0;
-			continue;
-		}
-		col = c == '\n' ? 0 : (c & 0xc0) != 0x80 ? col + 1 : col;
+		/* a preserved tab stays, its width is its place's on the
+		 * line (tab_width()) */
 		if (mode == 'c' || (mode == 'b' && c != '\n')) {
 			if (is_space(c)) {
 				if (!*prev)
@@ -613,6 +606,23 @@ static void need(struct ls *s, float w, int can_wrap)
 	}
 }
 
+/* A preserved tab at pos px from the start of the line: up to the next
+ * tab stop, every tab-size spaces (or that length), the next one when
+ * that is closer than 0.5ch (CSS Text 3, 4.2) */
+static float tab_width(const struct style *st, float pos)
+{
+	const struct cval *v = &st->v[P_TAB_SIZE];
+	float tab = v->flag == 1 ? (float)v->u.num * text_width(st, " ", 1) :
+		v->u.len.px, next;
+
+	if (tab <= 0)
+		return 0;
+	next = (floorf(pos / tab) + 1) * tab;
+	if (next - pos < text_width(st, "0", 1) / 2)
+		next += tab;
+	return next - pos;
+}
+
 static void add_text(struct ls *s, struct box *t, unsigned start,
 	unsigned len, float w)
 {
@@ -625,8 +635,10 @@ static void add_text(struct ls *s, struct box *t, unsigned start,
 			sp++;
 	if (s->b->nfrags > s->start) {
 		f = &s->b->frags[s->b->nfrags - 1];
+		/* a tab is a fragment of its own: not shaped, nor drawn */
 		if (f->kind == F_TEXT && f->box == t &&
-		    f->start + f->len == start) {
+		    f->start + f->len == start && t->text[start] != '\t' &&
+		    t->text[start - 1] != '\t') {
 			f->len += len;
 			f->w += w;
 			f->spaces += sp;
@@ -775,10 +787,10 @@ static size_t piece_end(const char *t, size_t i, size_t n)
 	unsigned p = 0, c, x;
 	size_t k, nx, done = 1, e;
 
-	if (i >= n || t[i] == ' ' || t[i] == '\n')
+	if (i >= n || t[i] == ' ' || t[i] == '\n' || t[i] == '\t')
 		return i;
 	c = cp_at(t, i, n, &k);
-	while (k < n && t[k] != ' ' && t[k] != '\n') {
+	while (k < n && t[k] != ' ' && t[k] != '\n' && t[k] != '\t') {
 		x = cp_at(t, k, n, &nx);
 		/* ASCII letters and digits in a row: the common case */
 		if (!(c < 0x80 && x < 0x80 && alnum(c) && alnum(x))) {
@@ -859,13 +871,23 @@ static int place_text(struct ls *s, struct box *t, int item, size_t from)
 			can = 0;
 			continue;
 		}
+		if (t->text[i] == '\t') {
+			/* breaks after it, as after a space, not before */
+			add_text(s, t, (unsigned)i, 1,
+				tab_width(st, s->pen - s->x0));
+			s->content = 1;
+			can = wrap;
+			i++;
+			continue;
+		}
 		/* a unit: what cannot be broken then spaces, up to a
-		 * newline */
+		 * newline or a tab */
 		if (wrap) {
 			word_end = piece_end(t->text, i, n);
 		} else {
 			for (word_end = i; word_end < n &&
-			     t->text[word_end] != '\n'; word_end++)
+			     t->text[word_end] != '\n' &&
+			     t->text[word_end] != '\t'; word_end++)
 				;
 		}
 		for (j = word_end; j < n && t->text[j] == ' '; j++)
@@ -1137,11 +1159,22 @@ void inline_sizes(struct box *b, float *mn, float *mx)
 					k++;
 					continue;
 				}
+				if (c->text[k] == '\t') {
+					float tw = tab_width(st, line);
+
+					line += tw;
+					if (!wrap)
+						run += tw;
+					can = wrap;
+					k++;
+					continue;
+				}
 				if (wrap) {
 					e = piece_end(c->text, k, c->len);
 				} else {
 					for (e = k; e < c->len &&
-					     c->text[e] != '\n'; e++)
+					     c->text[e] != '\n' &&
+					     c->text[e] != '\t'; e++)
 						;
 				}
 				for (j = e; j < c->len && c->text[j] == ' '; j++)

@@ -1,0 +1,77 @@
+#data
+<!DOCTYPE html><body style="margin:0"><p style="margin:0;font-variant:small-caps">aB c</p><p style="margin:0;font:small-caps 20px serif">ab</p><p style="margin:0;font-variant-caps:all-small-caps">aB</p><p style="margin:0;font-variant:small-caps;width:40px">abc abc</p>
+#errors
+#layout
+width=200
+#document
+| block <html> 0,0 200x105
+|   block <body> 0,0 200x105
+|     block <p> 0,0 200x20
+|       line 0,0 200x20
+|         text "aB c" 0,2 28.8x16
+|     block <p> 0,20 200x25
+|       line 0,20 200x25
+|         text "ab" 0,22.5 16x20
+|     block <p> 0,45 200x20
+|       line 0,45 200x20
+|         text "aB" 0,47 12.8x16
+|     block <p> 0,65 40x40
+|       line 0,65 40x20
+|         text "abc" 0,67 19.2x16
+|       line 0,85 40x20
+|         text "abc" 0,87 19.2x16
+
+#data
+<!DOCTYPE html><body style="margin:0"><pre style="margin:0">a	b
+	c</pre><pre style="margin:0;tab-size:2">a	b</pre><pre style="margin:0;tab-size:20px">a	b</pre><pre style="margin:0;tab-size:0">a	b</pre>
+#errors
+#layout
+width=200
+#document
+| block <html> 0,0 200x100
+|   block <body> 0,0 200x100
+|     block <pre> 0,0 200x40
+|       line 0,0 200x20
+|         text "a" 0,2 8x16
+|         text "	" 8,2 56x16
+|         text "b" 64,2 8x16
+|       line 0,20 200x20
+|         text "	" 0,22 64x16
+|         text "c" 64,22 8x16
+|     block <pre> 0,40 200x20
+|       line 0,40 200x20
+|         text "a" 0,42 8x16
+|         text "	" 8,42 8x16
+|         text "b" 16,42 8x16
+|     block <pre> 0,60 200x20
+|       line 0,60 200x20
+|         text "a" 0,62 8x16
+|         text "	" 8,62 12x16
+|         text "b" 20,62 8x16
+|     block <pre> 0,80 200x20
+|       line 0,80 200x20
+|         text "a" 0,82 8x16
+|         text "	" 8,82 0x16
+|         text "b" 8,82 8x16
+
+#data
+<!DOCTYPE html><body style="margin:0"><pre style="margin:0;white-space:pre-wrap;width:80px;tab-size:4">ab	cd	ef</pre><div style="float:left"><pre style="margin:0;tab-size:4">ab	c</pre></div>
+#errors
+#layout
+width=200
+#document
+| block <html> 0,0 200x40
+|   block <body> 0,0 200x20
+|     block <pre> 0,0 80x20
+|       line 0,0 80x20
+|         text "ab" 0,2 16x16
+|         text "	" 16,2 16x16
+|         text "cd" 32,2 16x16
+|         text "	" 48,2 16x16
+|         text "ef" 64,2 16x16
+|     block float <div> 0,20 40x20
+|       block <pre> 0,20 40x20
+|         line 0,20 40x20
+|           text "ab" 0,22 16x16
+|           text "	" 16,22 16x16
+|           text "c" 32,22 8x16

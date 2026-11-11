@@ -142,6 +142,15 @@ static const struct named system_colors[] = {
 	{ "visitedtext", 0x551a8b },
 };
 
+/* The same in the dark scheme, Firefox's (color-scheme: dark gives a
+ * page its dark canvas, text and controls), in the order above */
+static const unsigned system_dark[] = {
+	0x0075ff, 0xffffff, 0xff6666, 0x8f8f9d, 0x2b2a33, 0xfbfbfe,
+	0x1c1b22, 0xfbfbfe, 0x2b2a33, 0xfbfbfe, 0x8f8f9d, 0x3399ff,
+	0xffffff, 0x00cadb, 0xffff00, 0x000000, 0x3399ff, 0xffffff,
+	0xffadff,
+};
+
 static void set_rgb(struct color *c, unsigned rgb, float alpha)
 {
 	memset(c, 0, sizeof(*c));
@@ -179,6 +188,9 @@ static int find_named(const struct named *t, int n, const char *name)
 
 #define COUNT(a) ((int)(sizeof(a) / sizeof(*(a))))
 
+typedef char system_dark_size[COUNT(system_dark) ==
+	COUNT(system_colors) ? 1 : -1];
+
 int named_color(const char *name, struct color *out)
 {
 	int i = find_named(named_colors, COUNT(named_colors), name);
@@ -189,7 +201,10 @@ int named_color(const char *name, struct color *out)
 	}
 	i = find_named(system_colors, COUNT(system_colors), name);
 	if (i >= 0) {
-		set_rgb(out, system_colors[i].rgb, 1);
+		/* the index kept: a sheet's colors are parsed once, light,
+		 * and the cascade gives a dark element the dark one */
+		out->sys = (unsigned char)(i + 1);
+		system_color(out, color_dark);
 		return 1;
 	}
 	if (ascii_ieq(name, "transparent")) {
@@ -202,6 +217,15 @@ int named_color(const char *name, struct color *out)
 		return 1;
 	}
 	return 0;
+}
+
+/* System color col (sys set) in the light or the dark scheme */
+void system_color(struct color *col, int dark)
+{
+	int i = col->sys - 1;
+
+	set_rgb(col, dark ? system_dark[i] : system_colors[i].rgb, 1);
+	col->sys = (unsigned char)(i + 1);
 }
 
 static int hexval(int c)

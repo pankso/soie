@@ -1,0 +1,63 @@
+#data
+<!DOCTYPE html><style>i{border-radius:10px / 20%}b{border-radius:1px 2px 3px / 4px 5px}u{border-radius:1em 2em;font-size:10px}s{border-top-left-radius:5px 6px;border-top-right-radius:3px 3px;border-bottom-right-radius:7%}q{border-radius:1px / 2px / 3px}q{border-top-left-radius:1px 2px 3px}</style><i></i><b></b><u></u><s></s><q></q>
+#errors
+#properties
+border-top-left-radius,border-top-right-radius,border-bottom-right-radius,border-bottom-left-radius
+#document
+| <!DOCTYPE html>
+| <html>
+|   @border-top-left-radius: 0px
+|   @border-top-right-radius: 0px
+|   @border-bottom-right-radius: 0px
+|   @border-bottom-left-radius: 0px
+|   <head>
+|     @border-top-left-radius: 0px
+|     @border-top-right-radius: 0px
+|     @border-bottom-right-radius: 0px
+|     @border-bottom-left-radius: 0px
+|     <style>
+|       @border-top-left-radius: 0px
+|       @border-top-right-radius: 0px
+|       @border-bottom-right-radius: 0px
+|       @border-bottom-left-radius: 0px
+|       "i{border-radius:10px / 20%}b{border-radius:1px 2px 3px / 4px 5px}u{border-radius:1em 2em;font-size:10px}s{border-top-left-radius:5px 6px;border-top-right-radius:3px 3px;border-bottom-right-radius:7%}q{border-radius:1px / 2px / 3px}q{border-top-left-radius:1px 2px 3px}"
+|   <body>
+|     @border-top-left-radius: 0px
+|     @border-top-right-radius: 0px
+|     @border-bottom-right-radius: 0px
+|     @border-bottom-left-radius: 0px
+|     <i>
+|       @border-top-left-radius: 10px 20%
+|       @border-top-right-radius: 10px 20%
+|       @border-bottom-right-radius: 10px 20%
+|       @border-bottom-left-radius: 10px 20%
+|     <b>
+|       @border-top-left-radius: 1px 4px
+|       @border-top-right-radius: 2px 5px
+|       @border-bottom-right-radius: 3px 4px
+|       @border-bottom-left-radius: 2px 5px
+|     <u>
+|       @border-top-left-radius: 10px
+|       @border-top-right-radius: 20px
+|       @border-bottom-right-radius: 10px
+|       @border-bottom-left-radius: 20px
+|     <s>
+|       @border-top-left-radius: 5px 6px
+|       @border-top-right-radius: 3px
+|       @border-bottom-right-radius: 7%
+|       @border-bottom-left-radius: 0px
+|     <q>
+|       @border-top-left-radius: 0px
+|       @border-top-right-radius: 0px
+|       @border-bottom-right-radius: 0px
+|       @border-bottom-left-radius: 0px
+|       ::before
+|         @border-top-left-radius: 0px
+|         @border-top-right-radius: 0px
+|         @border-bottom-right-radius: 0px
+|         @border-bottom-left-radius: 0px
+|       ::after
+|         @border-top-left-radius: 0px
+|         @border-top-right-radius: 0px
+|         @border-bottom-right-radius: 0px
+|         @border-bottom-left-radius: 0px

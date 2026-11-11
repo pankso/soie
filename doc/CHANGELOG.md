@@ -8,9 +8,33 @@ each change are in [DECISIONS.md](DECISIONS.md).
 ## [Unreleased]
 
 ### Added
+- A page dark by `color-scheme` alone (`:root { color-scheme: dark }`,
+  `<meta name="color-scheme" content="dark">`, or `light dark` when
+  the user prefers dark) gets the dark canvas, light text, links and
+  dark form controls, as in Firefox: it stayed white with black text.
+  System colors (Canvas, CanvasText, ButtonFace...) follow the
+  element's color scheme.
+- `font-variant: small-caps` (and `font-variant-caps`, `all-small-caps`,
+  the `font` shorthand's small-caps): small caps were drawn as plain
+  lowercase. Synthesized as in Firefox, capitals at 0.8 of the size.
+- `tab-size` (a number of spaces or a length): tabs in `<pre>` were
+  always 8 columns, counted from the start of each text node, so a tab
+  after a `<b>` or in a proportional font missed its stop. Tab stops
+  are now measured from the content edge, as in browsers.
 - WOFF2 web fonts, when FreeType is built with brotli: most sites'
   fonts were skipped and their text came in DejaVu, with other
   widths. A FreeType without brotli falls back as before.
+
+### Fixed
+- `-webkit-line-clamp` drew no ellipsis at the end of its last line:
+  clamped texts stopped short without a sign of it. `line-clamp` is
+  accepted as its alias.
+- `border-radius: a / b` and the two values of `border-*-radius`:
+  the radii down were dropped, elliptical corners came out circular.
+- Grid placement by line names: `grid-column: col 3` (the third line
+  named col), `span name`, names repeated by `repeat(4, [col] 1fr)`
+  and names the grid does not have (past it, as in browsers) all put
+  items in the first columns.
 
 ## [0.1.5] - 2026-11-11
 

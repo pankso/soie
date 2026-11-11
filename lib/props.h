@@ -23,6 +23,8 @@ PROP(FONT_STRETCH, "font-stretch", 1, K_RAW, 0, "", "normal")
 PROP(LETTER_SPACING, "letter-spacing", 1, K_LEN, L_NOPCT, "normal",
 	"normal")
 PROP(WORD_SPACING, "word-spacing", 1, K_LEN, 0, "normal", "normal")
+/* a number of spaces, or a length */
+PROP(TAB_SIZE, "tab-size", 1, K_LH, L_NOPCT, "", "8")
 PROP(TEXT_ALIGN, "text-align", 1, K_KW, 0,
 	"start|end|left|right|center|justify|match-parent|-webkit-center|"
 	"-webkit-left|-webkit-right", "start")
@@ -141,13 +143,13 @@ PROP(BORDER_BOTTOM_COLOR, "border-bottom-color", 0, K_COLOR, 0, "",
 	"currentcolor")
 PROP(BORDER_LEFT_COLOR, "border-left-color", 0, K_COLOR, 0, "",
 	"currentcolor")
-PROP(BORDER_TOP_LEFT_RADIUS, "border-top-left-radius", 0, K_LEN,
+PROP(BORDER_TOP_LEFT_RADIUS, "border-top-left-radius", 0, K_RADIUS,
 	L_NONNEG, "", "0")
-PROP(BORDER_TOP_RIGHT_RADIUS, "border-top-right-radius", 0, K_LEN,
+PROP(BORDER_TOP_RIGHT_RADIUS, "border-top-right-radius", 0, K_RADIUS,
 	L_NONNEG, "", "0")
-PROP(BORDER_BOTTOM_RIGHT_RADIUS, "border-bottom-right-radius", 0, K_LEN,
+PROP(BORDER_BOTTOM_RIGHT_RADIUS, "border-bottom-right-radius", 0, K_RADIUS,
 	L_NONNEG, "", "0")
-PROP(BORDER_BOTTOM_LEFT_RADIUS, "border-bottom-left-radius", 0, K_LEN,
+PROP(BORDER_BOTTOM_LEFT_RADIUS, "border-bottom-left-radius", 0, K_RADIUS,
 	L_NONNEG, "", "0")
 PROP(OUTLINE_STYLE, "outline-style", 0, K_KW, 0,
 	"none|auto|dotted|dashed|solid|double|groove|ridge|inset|outset",

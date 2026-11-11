@@ -262,7 +262,7 @@ const struct color *db_color(struct styledb *db, const struct color *c)
 	unsigned h;
 	struct icolor **b, *e;
 
-	k.pad = 0;
+	k.sys = 0;
 	h = hash_bytes(&k, sizeof(k), 2166136261u);
 	b = &db->colors[h % 256];
 	for (e = *b; e; e = e->next)
@@ -1510,6 +1510,26 @@ static void svg_hints(const soie_node *el, struct svec *out)
 	}
 }
 
+/* <meta name=color-scheme> (HTML 4.2.5.4): the page's color-scheme
+ * when its root has none, so a hint of the root's; the first of the
+ * head's that has a content */
+static void meta_scheme(const soie_node *html, struct svec *out)
+{
+	const soie_node *h, *m;
+	const char *n, *v;
+
+	for (h = html->first; h && !is_html(h, TAG_HEAD); h = h->next)
+		;
+	for (m = h ? h->first : NULL; m; m = m->next)
+		if (is_html(m, TAG_META) &&
+		    (n = soie_element_get_attr(m, "name")) &&
+		    ascii_ieq(n, "color-scheme") &&
+		    (v = soie_element_get_attr(m, "content")) && *v) {
+			hint(out, "color-scheme", v);
+			return;
+		}
+}
+
 static void hints(const soie_node *el, struct svec *out)
 {
 	const char *a;
@@ -1523,6 +1543,8 @@ static void hints(const soie_node *el, struct svec *out)
 
 	if (tag < 0)
 		return;
+	if (tag == TAG_HTML)
+		meta_scheme(el, out);
 	if ((a = soie_element_get_attr(el, "bgcolor")) &&
 	    (tag == TAG_BODY || tag == TAG_TABLE || tag == TAG_TR ||
 	     tag == TAG_TD || tag == TAG_TH || tag == TAG_THEAD ||
@@ -2315,6 +2337,12 @@ static int scheme_dark(const struct styledb *db, const char *v)
 		}
 	}
 	return dark && (!light || db->env.dark);
+}
+
+/* Is s in the dark scheme: the root's paints the canvas */
+int style_dark(const struct styledb *db, const struct style *s)
+{
+	return scheme_dark(db, s->v[P_COLOR_SCHEME].u.str);
 }
 
 static const struct style *compute_style(struct styledb *db,

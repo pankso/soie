@@ -69,8 +69,10 @@ static void kw_name(const char *list, int i, struct buf *b)
 void sval_free(struct sval *v)
 {
 	slen_free(v->len);
+	slen_free(v->len2);
 	free(v->str);
 	v->len = NULL;
+	v->len2 = NULL;
 	v->str = NULL;
 }
 
@@ -292,6 +294,13 @@ static int parse_value_at(int prop, struct cur *c, struct sval *sv)
 	case K_LEN:
 		sv->len = parse_length(c, d->flags);
 		return sv->len != NULL;
+	case K_RADIUS:
+		/* across, then down if given */
+		sv->len = parse_length(c, d->flags);
+		if (sv->len && (v = cur_peek(c)) && !(v->type == CT_DELIM &&
+		    v->delim == '/'))
+			sv->len2 = parse_length(c, d->flags);
+		return sv->len != NULL;
 	case K_BWIDTH:
 		if (v->type == CT_IDENT) {
 			i = kw_index("thin|medium|thick", v->str);
@@ -340,7 +349,7 @@ static int parse_value_at(int prop, struct cur *c, struct sval *sv)
 			return 0;
 		return sv->num >= 1 && sv->num <= 1000;
 	case K_LH:
-		sv->len = parse_length(c, L_NONNEG | L_NUMBER);
+		sv->len = parse_length(c, L_NONNEG | L_NUMBER | d->flags);
 		return sv->len != NULL;
 	case K_FAMILY:
 		return parse_family(c, sv);
@@ -468,6 +477,8 @@ static const char *const aliases[][2] = {
 	{ "-webkit-transform", "transform" },
 	{ "-webkit-transform-origin", "transform-origin" },
 	{ "-webkit-box-shadow", "box-shadow" },
+	{ "font-variant", "font-variant-caps" },
+	{ "line-clamp", "-webkit-line-clamp" },
 	{ "-webkit-flex-direction", "flex-direction" },
 	{ "-webkit-flex-wrap", "flex-wrap" },
 	{ "-webkit-justify-content", "justify-content" },
@@ -718,30 +729,77 @@ static int any_order(struct cur *c, const int *lh, int n, struct range *r)
 	return got;
 }
 
-static int sh_box4(const short *lh, struct cur *c, struct svec *out,
-	int radius)
+static const int box4_map[4][4] = {
+	{ 0, 0, 0, 0 }, { 0, 1, 0, 1 }, { 0, 1, 2, 1 }, { 0, 1, 2, 3 }
+};
+
+static int sh_box4(const short *lh, struct cur *c, struct svec *out)
 {
-	static const int map[4][4] = {
-		{ 0, 0, 0, 0 }, { 0, 1, 0, 1 }, { 0, 1, 2, 1 }, { 0, 1, 2, 3 }
-	};
 	struct range r[4];
-	const struct cv *v;
 	int n = 0, i;
 
-	while (n < 4 && (v = cur_peek(c))) {
-		if (radius && v->type == CT_DELIM && v->delim == '/')
-			break;
+	while (n < 4 && cur_peek(c)) {
 		if (!try_at(lh[0], c, &r[n]))
 			return 0;
 		n++;
 	}
-	if (radius && (v = cur_peek(c)) && v->type == CT_DELIM &&
-	    v->delim == '/')
-		c->i = c->n;	/* vertical radii are not supported */
 	if (!n || !cur_end(c))
 		return 0;
 	for (i = 0; i < 4; i++)
-		emit_range(lh[i], c, r[map[n - 1][i]], out);
+		emit_range(lh[i], c, r[box4_map[n - 1][i]], out);
+	return 1;
+}
+
+/* One to four lengths of a border-radius, up to a '/' or the end */
+static int radius_list(struct cur *c, struct range *r)
+{
+	const struct cv *v;
+	struct slen *l;
+	int n = 0;
+
+	while (n < 4 && (v = cur_peek(c)) && !(v->type == CT_DELIM &&
+	       v->delim == '/')) {
+		r[n].from = c->i;
+		if (!(l = parse_length(c, L_NONNEG)))
+			return 0;
+		slen_free(l);
+		r[n++].to = c->i;
+	}
+	return n;
+}
+
+static struct slen *radius_at(const struct cur *src, struct range r)
+{
+	struct cur c = *src;
+
+	c.i = r.from;
+	c.n = r.to;
+	return parse_length(&c, L_NONNEG);
+}
+
+/* border-radius: "h{1,4} [ / v{1,4} ]", each corner its h and v */
+static int sh_radius(const short *lh, struct cur *c, struct svec *out)
+{
+	struct range h[4], v[4];
+	const struct cv *s;
+	int nh, nv = 0, i;
+
+	nh = radius_list(c, h);
+	if (nh && (s = cur_peek(c)) && s->type == CT_DELIM &&
+	    s->delim == '/') {
+		cur_next(c);
+		if (!(nv = radius_list(c, v)))
+			return 0;
+	}
+	if (!nh || !cur_end(c))
+		return 0;
+	for (i = 0; i < 4; i++) {
+		struct sval *d = svec_add(out, lh[i]);
+
+		d->len = radius_at(c, h[box4_map[nh - 1][i]]);
+		if (nv)
+			d->len2 = radius_at(c, v[box4_map[nv - 1][i]]);
+	}
 	return 1;
 }
 
@@ -1524,10 +1582,10 @@ int parse_shorthand_value(int sh, const struct cvlist *value,
 	switch (sh) {
 	case SH_MARGIN: case SH_PADDING: case SH_INSET:
 	case SH_BORDER_WIDTH: case SH_BORDER_STYLE: case SH_BORDER_COLOR:
-		ok = sh_box4(box_props[sh], &c, out, 0);
+		ok = sh_box4(box_props[sh], &c, out);
 		break;
 	case SH_BORDER_RADIUS:
-		ok = sh_box4(box_props[sh], &c, out, 1);
+		ok = sh_radius(box_props[sh], &c, out);
 		break;
 	case SH_BORDER: case SH_BORDER_TOP: case SH_BORDER_RIGHT:
 	case SH_BORDER_BOTTOM: case SH_BORDER_LEFT: case SH_OUTLINE:
@@ -1776,6 +1834,30 @@ void compute_value(int prop, const struct sval *sv, struct cctx *c,
 					out->u.len.calc);
 		}
 		break;
+	case K_RADIUS:
+		if (sv->len) {
+			slen_resolve(sv->len, &c->u, &out->u.len);
+			if (out->u.len.calc)
+				out->u.len.calc = db_calc(c->db,
+					out->u.len.calc);
+		}
+		if (sv->len2) {
+			struct len l;
+
+			/* a length or a percentage: a calc() of both
+			 * keeps its length */
+			slen_resolve(sv->len2, &c->u, &l);
+			if (l.calc)
+				calc_release(l.calc);
+			out->flag = l.pct && !l.px ? 2 : 1;
+			out->v = out->flag == 2 ? l.pct : l.px;
+			/* "5px 5px" is 5px, for the getters too */
+			if (!out->u.len.calc && (out->flag == 2 ?
+			    !out->u.len.px && out->u.len.pct == out->v :
+			    !out->u.len.pct && out->u.len.px == out->v))
+				out->flag = 0;
+		}
+		break;
 	case K_BWIDTH:
 		if (sv->kw) {
 			static const float w[] = { 1, 3, 5 };
@@ -1801,6 +1883,11 @@ void compute_value(int prop, const struct sval *sv, struct cctx *c,
 				named_color("canvastext", &black);
 				out->u.color = db_color(c->db, &black);
 			}
+		} else if (sv->color.sys && color_dark) {
+			struct color d = sv->color;
+
+			system_color(&d, 1);
+			out->u.color = db_color(c->db, &d);
 		} else {
 			out->u.color = db_color(c->db, &sv->color);
 		}
@@ -1908,6 +1995,15 @@ void serialize_value(int prop, const struct cval *v, struct buf *b)
 	case K_BWIDTH:
 	case K_FSIZE:
 		serialize_len(b, &v->u.len);
+		break;
+	case K_RADIUS:
+		serialize_len(b, &v->u.len);
+		if (v->flag) {
+			buf_putc(b, ' ');
+			serialize_float(b, v->v);
+			buf_add(b, v->flag == 2 ? "%" : "px", v->flag == 2 ?
+				1 : 2);
+		}
 		break;
 	case K_LH:
 		if (v->flag == 1) {

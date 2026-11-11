@@ -52,8 +52,8 @@ sup { vertical-align: super; }
 sub, sup { line-height: normal; font-size: smaller; }
 ruby { display: ruby; }
 rt { display: ruby-text; }
-:link { color: #0000EE; }
-:visited { color: #551A8B; }
+:link { color: LinkText; }
+:visited { color: VisitedText; }
 :link, :visited { text-decoration: underline; cursor: pointer; }
 mark { background: yellow; color: black; }
 abbr[title], acronym[title] { text-decoration: dotted underline; }

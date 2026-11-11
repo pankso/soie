@@ -61,6 +61,7 @@ struct glyph {
 	unsigned id;
 	float x, y;		/* pen position plus offsets */
 	float adv;
+	float em;		/* its size: the font's, less for a small cap */
 	unsigned cluster;	/* byte offset in the text */
 };
 

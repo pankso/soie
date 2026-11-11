@@ -194,9 +194,21 @@ reversed, edit the entry and say why; do not leave stale rules here.
   once when the sheet is: an invalid one is dropped there (the
   declaration before it stays, @supports says no). color_dark is
   thread-local (workers parse colors), set and cleared only for a
-  dark element: light pages pay no access per element. Not done: the
-  canvas and the default text color of a page that is dark by
-  color-scheme alone, form controls, the meta tag.
+  dark element: light pages pay no access per element.
+- System colors (Canvas, CanvasText, LinkText, Field, ButtonFace...)
+  follow color-scheme too, with Firefox's dark values: a sheet parses
+  them once, light, and keeps their index in struct color (sys); the
+  cascade gives a dark element the dark one. They resolve at computed
+  time, as in Firefox: a dark section of a light page keeps the black
+  text it inherits, its links, buttons and fields turn dark. The
+  initial color is CanvasText and the UA sheet's links LinkText, so a
+  page dark by color-scheme alone gets light text; the canvas is
+  Canvas in the root's scheme (style_dark()). `<meta
+  name=color-scheme>` is a presentational hint of the root, which a
+  :root rule overrides; a meta added later by a script does not
+  restyle the root. Colors inside shadows and gradients stay light
+  (parsed at paint time), and so do the checkboxes, radios and ranges
+  forms.c draws itself.
 - `:defined`: a node flag set by the script extension when a custom
   element is upgraded or constructed (soie_element_set_defined()); an
   HTML element with a hyphen in its name does not match before, any
@@ -676,6 +688,15 @@ reversed, edit the entry and say why; do not leave stale rules here.
 - A preserved tab is spaces up to the next stop of 8 columns (it was
   drawn as a missing glyph). Floats waiting for the next line are no
   longer 32 at most (the 33rd was never laid out).
+- Then a tab stays a tab: a fragment of its own, as wide as the way to
+  the next tab stop, measured from the container's content edge (CSS
+  Text 3, 4.2): tab-size spaces (each with letter- and word-spacing)
+  or a length, the following stop when the next one is closer than
+  0.5ch, no room at tab-size 0 (tab_width()). Spaces counted columns
+  from the start of each text node: a tab after a `<b>` or in a
+  proportional font missed the stop. Not drawn, never shaped; a line
+  breaks after it, not before. tab-size is a K_LH value (a number or
+  a length, no percentage).
 - min-content, max-content and fit-content are widths of floats and
   inline-blocks too (keyword_width()), not only of blocks.
 - Flex items of row-reverse and column-reverse are placed from the
@@ -791,6 +812,17 @@ reversed, edit the entry and say why; do not leave stale rules here.
   does not say whether it has brotli, so WOFF2 sources are tried; the
   first one it refuses (no_woff2, lib/cascade.c) stops the fetching
   of the others, and each font goes on to its next source.
+- Small caps (font-variant-caps small-caps and all-small-caps, petite
+  caps falling back to them, `font-variant` an alias of it, the `font`
+  shorthand's small-caps) are synthesized as Firefox does without the
+  font's smcp feature: text_shape() shapes a copy in capitals, the
+  letters that were lowercase (all of them for all-small-caps) in runs
+  of 0.8 times the size, each glyph keeping its size for painting.
+  Measuring and painting both go through text_shape(), so they agree;
+  the width cache is per style. The smcp feature itself is not asked
+  of HarfBuzz: one path for every font, with or without HarfBuzz. Case
+  pairs are those text-transform knows (ASCII and the two-byte
+  letters): ß stays small, not SS.
 - `soie_fonts_stub(1)` keeps the 0.5em stub font: the test runner and
   `soie-render -S` use it, so layout tests do not depend on fonts.
 - Faces are matched by width first, then style, then weight (CSS
@@ -871,8 +903,16 @@ reversed, edit the entry and say why; do not leave stale rules here.
   together (css-backgrounds-3 5.5), no longer each clamped to half
   the smaller side. The curves inside (padding box, content box, a
   double border's lines) take each side's width on their own axis: a
-  thick top border under thin sides curves as in Firefox. The
-  "h / v" syntax is still parsed as h alone. Since 2026-11-03.
+  thick top border under thin sides curves as in Firefox. Since
+  2026-11-03.
+- Radii down that differ from those across (`border-radius: 40px /
+  15px`, `border-top-left-radius: 60px 20px`): a kind of their own,
+  K_RADIUS, the across radius a length as before and the down one in
+  the computed value's spare bytes (v, flag 1 px, 2 %), so styles stay
+  24 bytes a value and no longhands are added; the specified value
+  keeps a second slen (len2). A calc() mixing px and % down keeps its
+  px. Getters give "40px 15px", or one value when both are the same,
+  as Firefox. Before, the part after the slash was dropped.
 - overflow other than visible clips to the padding box, in the curve
   of its corners: a mask of what the clip shows (as mask-image's), its
   rounded rectangle times the mask there was. An image, video or SVG
@@ -973,6 +1013,15 @@ reversed, edit the entry and say why; do not leave stale rules here.
 - text-overflow: ellipsis at paint time: a line that runs past the
   edge of a box that clips it is drawn up to what fits and ends with
   the ellipsis; the layout does not change.
+- The last line kept by -webkit-line-clamp ends with an ellipsis too,
+  whatever text-overflow says (Firefox and Chrome draw it with clip):
+  after the line's content when it fits in the box, the line not
+  aligned again (a centered "bbb..." stays where "bbb" was), else in
+  place of the content's end through the text-overflow path.
+  line_clamp() is the one test of a clamping box, for layout and
+  paint. `line-clamp` is an alias of `-webkit-line-clamp`: it clamps
+  only the old WebKit box, as the prefixed one; Firefox 140 ignores it
+  and css-overflow-4 makes it work on any block (not done).
 - Floats are painted over the backgrounds of all the blocks of their
   formatting context (Appendix E): they wait in a list for the box
   that paints as a unit around them (float_owner(): the root, a
@@ -1548,7 +1597,8 @@ reversed, edit the entry and say why; do not leave stale rules here.
   sets SliTaz-Dark there), again each time the window gets the focus.
   No XSETTINGS or portal: one more protocol for the same answer. Their
   bars have their own dark colours. A page without dark rules stays
-  as it is (no forced inversion, color-scheme not implemented).
+  as it is (no forced inversion); one with color-scheme gets the dark
+  canvas and system colors.
 - Private windows: SOIE_REQ_PRIVATE on every request of a private
   shell (page, resources, scripts' requests through the script host's
   flags, players) and document.cookie: the cookie extension keeps a
@@ -2056,6 +2106,24 @@ on the same frozen DOM.
 - Line names before the first track ([a] repeat(...)) were dropped
   when the first track was added, and their memory with them (found
   by ASan on WPT): kept now.
+- Grid lines by name (CSS Grid 8.3): `name N` is the Nth line of
+  that name (from the end when N < 0), `span name` reaches the next
+  line of that name from the item's other, definite line, and a name
+  the grid lacks is on all its implicit lines: the item goes past the
+  explicit grid, as in browsers (it was auto placed). The names inside
+  repeat() are repeated with its tracks: the body is parsed apart and
+  copied ([a] x [b] twice is [a] x [b a] x [b]); only the first
+  repetition had them. An end line before the start swaps with it.
+  An absolute item's line past the grid is auto. Not done: two name
+  lists side by side (`[a] [b]`, possible after var()) are invalid
+  for browsers, Soie merges them.
+  The WPT subset loses grid-placement-using-named-grid-lines-007 by
+  this: tests/wpt/run.sh runs no script (soie-render needs -x
+  ext/script.so), the test stays in its first state, without a line
+  named main, and its item now goes past the grid, red as in Firefox
+  without the script; it passed by the old auto placement. With the
+  script extension it passes. subgrid/line-names-004 moves the same
+  way (no subgrid: its names are all missing).
 - Baseline alignment (align-self/-items baseline, first and last), in
   flex lines and grid rows (items of one row): the items of a group
   share the line's largest ascent (first) or descent (last), the line

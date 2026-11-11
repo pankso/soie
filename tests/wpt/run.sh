@@ -34,10 +34,16 @@ wpt=$(cd "$wpt" && pwd) || exit 1
 out=${keep:-$(mktemp -d)} || exit 1
 mkdir -p "$out"
 [ -x "$render" ] || { echo "run.sh: no $render (make)" >&2; exit 1; }
+# scripts run in the script extension: soie-render's -j alone runs
+# none, and tests that change the page from a script were judged on
+# their first state
+ext=$(dirname "$render")/../ext/script.so
+script=
+[ -f "$ext" ] && script="-x $ext"
 
 # Render page $1 (relative to WPT_DIR) to $2.
 shot() {
-	timeout -k 5 30 "$render" -j -w 800 -H 600 -r "$wpt" \
+	timeout -k 5 30 "$render" $script -j -w 800 -H 600 -r "$wpt" \
 		-b "file:///$1" -o "$2" "$wpt/$1" >/dev/null 2>&1 &&
 	[ -s "$2" ]
 }

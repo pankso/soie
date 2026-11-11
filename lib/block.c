@@ -538,6 +538,22 @@ static float layout_flow(struct box *b, struct bfc *f, float y,
  * when collapse_top. Sets b->y and returns the content height. On
  * return s holds the margins still pending at the bottom.
  */
+/* -webkit-line-clamp: the lines b keeps, when it has more, else 0.
+ * The old WebKit box, vertical, is a flow-root (cascade.c fixups()) */
+int line_clamp(const struct box *b)
+{
+	const struct cval *lc = b->style ?
+		&b->style->v[P_WEBKIT_LINE_CLAMP] : NULL;
+
+	if (lc && !lc->kw && lc->u.num >= 1 && b->nlines > lc->u.num &&
+	    (b->flags & BF_INLINE_KIDS) &&
+	    kw(b->style, P_DISPLAY, "flow-root") &&
+	    (kw(b->style, P_WEBKIT_BOX_ORIENT, "vertical") ||
+	    kw(b->style, P_WEBKIT_BOX_ORIENT, "block-axis")))
+		return (int)lc->u.num;
+	return 0;
+}
+
 static float layout_contents(struct box *b, struct bfc *f, float y,
 	struct strut *s, int collapse_top, float cbh)
 {
@@ -552,8 +568,7 @@ static float layout_contents(struct box *b, struct bfc *f, float y,
 	}
 	if (b->flags & BF_INLINE_KIDS) {
 		float top = collapse_top ? y + strut_val(s) : y;
-		const struct cval *lc = b->style ?
-			&b->style->v[P_WEBKIT_LINE_CLAMP] : NULL;
+		int n;
 
 		b->y = top;
 		h = layout_inline(b, f, b->x, top, b->w, cbh);
@@ -561,12 +576,8 @@ static float layout_contents(struct box *b, struct bfc *f, float y,
 			s->pos = s->neg = 0;
 		/* -webkit-line-clamp: the first lines only (the others
 		 * overflow, clipped by its overflow: hidden) */
-		if (lc && !lc->kw && lc->u.num >= 1 &&
-		    b->nlines > lc->u.num &&
-		    kw(b->style, P_DISPLAY, "flow-root") &&
-		    (kw(b->style, P_WEBKIT_BOX_ORIENT, "vertical") ||
-		    kw(b->style, P_WEBKIT_BOX_ORIENT, "block-axis"))) {
-			const struct line *ln = &b->lines[(int)lc->u.num - 1];
+		if ((n = line_clamp(b))) {
+			const struct line *ln = &b->lines[n - 1];
 
 			h = ln->y + ln->h - top;
 		}

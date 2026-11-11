@@ -20,6 +20,7 @@ struct fontm {
 
 void font_metrics(const struct style *st, struct fontm *m);
 float text_width(const struct style *st, const char *s, size_t len);
+unsigned other_case(unsigned c, int up);
 
 enum {
 	B_BLOCK,		/* block container, block-level */
@@ -214,6 +215,7 @@ void layout_table(struct box *t, float avail);
 
 /* Used values helpers (block.c) */
 float len_val(const struct cval *v, float ref);
+int line_clamp(const struct box *b);
 int is_auto(const struct style *st, int prop);
 
 #endif

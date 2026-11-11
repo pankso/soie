@@ -63,12 +63,12 @@ static struct glyph *add_glyph(struct glyph **g, int n, int *cap)
 }
 
 /* Glyphs of s[from, to) in face fi, appended at pen x. */
-static int shape_run(int fi, const struct style *st, const char *s,
-	size_t len, size_t from, size_t to, struct glyph **g, int n,
-	int *cap, float *pen)
+static int shape_run(int fi, float em, const char *s, size_t len,
+	size_t from, size_t to, struct glyph **g, int n, int *cap,
+	float *pen)
 {
 	struct face *x = &faces[fi];
-	float scale = font_size(st) / (float)x->upem;
+	float scale = em / (float)x->upem;
 #ifdef SOIE_HARFBUZZ
 	hb_buffer_t *buf;
 	hb_glyph_info_t *info;
@@ -97,6 +97,7 @@ static int shape_run(int fi, const struct style *st, const char *s,
 		gl->x = *pen + (float)pos[i].x_offset * scale;
 		gl->y = -(float)pos[i].y_offset * scale;
 		gl->adv = (float)pos[i].x_advance * scale;
+		gl->em = em;
 		*pen += gl->adv;
 		n++;
 	}
@@ -128,6 +129,7 @@ static int shape_run(int fi, const struct style *st, const char *s,
 		gl->x = *pen;
 		gl->y = 0;
 		gl->adv = (float)adv * scale;
+		gl->em = em;
 		*pen += gl->adv;
 		prev = gid;
 		n++;
@@ -136,22 +138,81 @@ static int shape_run(int fi, const struct style *st, const char *s,
 	return n;
 }
 
+/* font-variant-caps: 1 small-caps (petite-caps falls back to it, CSS
+ * Fonts 3 6.3), 2 all-small-caps, else 0 */
+static int small_caps(const struct style *st)
+{
+	if (kw(st, P_FONT_VARIANT_CAPS, "normal"))
+		return 0;
+	if (kw(st, P_FONT_VARIANT_CAPS, "small-caps") ||
+	    kw(st, P_FONT_VARIANT_CAPS, "petite-caps"))
+		return 1;
+	return kw(st, P_FONT_VARIANT_CAPS, "all-small-caps") ||
+		kw(st, P_FONT_VARIANT_CAPS, "all-petite-caps") ? 2 : 0;
+}
+
 /*
- * Shape s: split it into runs of the face each character needs, shape
- * them, then add letter-spacing and word-spacing. Returns the glyph
- * count; *out is malloc'ed.
+ * Small caps, synthesized as browsers do without the font's smcp
+ * feature: s with its lowercase letters (all letters for all-small-
+ * caps) in capitals, in a copy of the same length (ASCII and the
+ * two-byte letters other_case() knows), and in small[] 1 at the bytes
+ * drawn smaller.
+ */
+static char *caps_copy(const char *s, size_t len, int all, char *small)
+{
+	char *u = xmalloc(len + 1);
+	size_t i;
+
+	memcpy(u, s, len);
+	memset(small, 0, len);
+	for (i = 0; i < len; i++) {
+		unsigned char c = (unsigned char)s[i];
+
+		if (c >= 'a' && c <= 'z') {
+			u[i] = (char)(c - 32);
+			small[i] = 1;
+		} else if (c >= 'A' && c <= 'Z') {
+			small[i] = (char)all;
+		} else if ((c & 0xe0) == 0xc0 && i + 1 < len) {
+			unsigned w = (unsigned)(c & 0x1f) << 6 |
+				((unsigned char)s[i + 1] & 0x3f);
+			unsigned v = other_case(w, 1);
+
+			if (v != w) {
+				u[i] = (char)(0xc0 | v >> 6);
+				u[i + 1] = (char)(0x80 | (v & 0x3f));
+			}
+			small[i] = small[i + 1] = (char)(v != w ||
+				(all && other_case(w, 0) != w));
+			i++;
+		}
+	}
+	return u;
+}
+
+/* Firefox's size of a synthesized small cap */
+#define SMALL_CAP 0.8f
+
+/*
+ * Shape s: split it into runs of the face each character needs (and,
+ * for small caps, of one size), shape them, then add letter-spacing
+ * and word-spacing. Returns the glyph count; *out is malloc'ed.
  */
 int text_shape(const struct style *st, const char *s, size_t len,
 	struct glyph **out)
 {
 	struct glyph *g = NULL;
-	int n = 0, cap = 0, k;
-	float pen = 0, ls, ws, shift = 0;
+	int n = 0, cap = 0, k, sc = small_caps(st);
+	float pen = 0, ls, ws, shift = 0, em = font_size(st);
 	size_t i = 0;
+	const char *orig = s;
+	char *u = NULL, *small = NULL;
 
+	if (sc && len) {
+		small = xmalloc(len);
+		s = u = caps_copy(s, len, sc == 2, small);
+	}
 	if (fonts_stub()) {
-		float em = font_size(st);
-
 		while (i < len) {
 			struct glyph *gl = add_glyph(&g, n, &cap);
 			size_t start = i;
@@ -162,7 +223,8 @@ int text_shape(const struct style *st, const char *s, size_t len,
 			gl->cluster = (unsigned)start;
 			gl->x = pen;
 			gl->y = 0;
-			gl->adv = em * 0.5f;
+			gl->em = small && small[start] ? em * SMALL_CAP : em;
+			gl->adv = gl->em * 0.5f;
 			pen += gl->adv;
 			n++;
 		}
@@ -171,6 +233,7 @@ int text_shape(const struct style *st, const char *s, size_t len,
 			size_t start = i, j;
 			unsigned long cp = utf8_cp(s, len, &i);
 			int fi = font_pick(st, cp);
+			int sm = small && small[start];
 
 			if (fi < 0 || !face_open(&faces[fi]))
 				continue;
@@ -179,15 +242,19 @@ int text_shape(const struct style *st, const char *s, size_t len,
 				size_t nx = j;
 				unsigned long c2 = utf8_cp(s, len, &nx);
 
-				if (c2 != ' ' && font_pick(st, c2) != fi)
+				if ((c2 != ' ' && font_pick(st, c2) != fi) ||
+				    (small && small[j] != sm))
 					break;
 				j = nx;
 			}
-			n = shape_run(fi, st, s, len, start, j, &g, n, &cap,
-				&pen);
+			n = shape_run(fi, sm ? em * SMALL_CAP : em, s, len,
+				start, j, &g, n, &cap, &pen);
 			i = j;
 		}
 	}
+	free(u);
+	free(small);
+	s = orig;
 	spacing(st, &ls, &ws);
 	if (ls || ws)
 		for (k = 0; k < n; k++) {
@@ -230,7 +297,7 @@ float text_width(const struct style *st, const char *s, size_t len)
 	int n, k;
 	size_t i;
 
-	if (fonts_stub()) {
+	if (fonts_stub() && !small_caps(st)) {
 		em = font_size(st);
 		spacing(st, &ls, &ws);
 		for (i = 0; i < len; i++) {

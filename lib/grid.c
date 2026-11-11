@@ -121,11 +121,14 @@ static void add_track(struct tracks *t, struct tsize mn, struct tsize mx)
 		t->names[0] = NULL;
 }
 
-static void add_names(struct tracks *t, const struct cv *block)
+/* Names s (" a b ") to the line after the last track */
+static void line_names(struct tracks *t, const char *s)
 {
-	int line = t->n, i;
+	int line = t->n;
 	struct buf b = { 0 };
 
+	if (!s)
+		return;
 	if (!t->names) {
 		t->names = xmalloc(sizeof(*t->names));
 		t->names[0] = NULL;
@@ -135,13 +138,23 @@ static void add_names(struct tracks *t, const struct cv *block)
 		buf_add(&b, t->names[line], strlen(t->names[line]));
 		free(t->names[line]);
 	}
+	buf_add(&b, s, strlen(s));
+	t->names[line] = b.s;
+}
+
+static void add_names(struct tracks *t, const struct cv *block)
+{
+	struct buf b = { 0 };
+	int i;
+
 	for (i = 0; i < block->kids.n; i++)
 		if (block->kids.v[i].type == CT_IDENT) {
 			buf_add(&b, block->kids.v[i].str,
 				strlen(block->kids.v[i].str));
 			buf_putc(&b, ' ');
 		}
-	t->names[line] = b.s;
+	line_names(t, b.s);
+	free(b.s);
 }
 
 /* One <track-size>, minmax() or fit-content(). */
@@ -190,6 +203,8 @@ static float fixed_size(const struct tsize *s, float avail)
 	return 0;
 }
 
+static void free_tracks(struct tracks *t);
+
 static void parse_tracks(const char *text, const struct style *st,
 	float avail, float g, struct tracks *t)
 {
@@ -208,8 +223,9 @@ static void parse_tracks(const char *text, const struct style *st,
 			cur_next(&c);
 		} else if (cv_func(v, "repeat")) {
 			struct cur in;
-			const struct cv *n;
-			int count = 1, k, first, auto_rep = 0, fit;
+			const struct cv *n, *b;
+			struct tracks r;
+			int count = 1, i, k, auto_rep = 0, fit;
 
 			cur_init(&in, &v->kids);
 			n = cur_next(&in);
@@ -220,53 +236,50 @@ static void parse_tracks(const char *text, const struct style *st,
 				auto_rep = 1;
 			fit = cv_ident(n, "auto-fit");
 			cur_next(&in);	/* comma */
-			first = t->n;
-			{
-				struct cur body = in;
-
-				while (cur_peek(&body)) {
-					const struct cv *b = cur_peek(&body);
-
-					if (b->type == CT_BLOCK && b->delim == '[') {
-						add_names(t, b);
-						cur_next(&body);
-					} else if (!one_track(&body, st, t)) {
-						break;
-					}
+			/* the body apart, then count times: its names are
+			 * repeated with its tracks ([a] x [b] twice is
+			 * [a] x [b a] x [b]) */
+			memset(&r, 0, sizeof(r));
+			while ((b = cur_peek(&in))) {
+				if (b->type == CT_BLOCK && b->delim == '[') {
+					add_names(&r, b);
+					cur_next(&in);
+				} else if (!one_track(&in, st, &r)) {
+					break;
 				}
 			}
 			if (auto_rep) {
 				/* as many as fit, at least one */
 				float one = 0;
-				int per = t->n - first;
 
-				for (k = first; k < t->n; k++) {
-					float s = fixed_size(&t->t[k].max, avail);
+				for (k = 0; k < r.n; k++) {
+					float s = fixed_size(&r.t[k].max,
+						avail);
 
 					if (s <= 0)
-						s = fixed_size(&t->t[k].min, avail);
+						s = fixed_size(&r.t[k].min,
+							avail);
 					one += s + g;
 				}
 				count = one > 0 && avail > 0 ?
 					(int)((avail + g) / one) : 1;
-				if (count < 1)
-					count = 1;
-				if (count > 1000)
-					count = 1000;
-				(void)per;
 			}
+			if (count < 1)
+				count = 1;
 			if (count > 1000)
 				count = 1000;
-			{
-				int per = t->n - first, r;
-
-				for (r = 1; r < count; r++)
-					for (k = 0; k < per; k++)
-						add_track(t, t->t[first + k].min,
-							t->t[first + k].max);
-				for (k = first; fit && k < t->n; k++)
-					t->t[k].fit = 1;
-			}
+			for (i = 0; i < count && r.n; i++)
+				for (k = 0; k < r.n; k++) {
+					if (r.names && i && !k)
+						line_names(t, r.names[r.n]);
+					if (r.names)
+						line_names(t, r.names[k]);
+					add_track(t, r.t[k].min, r.t[k].max);
+					t->t[t->n - 1].fit = (unsigned char)fit;
+				}
+			if (r.names && r.n)
+				line_names(t, r.names[r.n]);
+			free_tracks(&r);
 			cur_next(&c);
 		} else if (!one_track(&c, st, t)) {
 			cur_next(&c);	/* skip what we do not know */
@@ -342,53 +355,74 @@ static int parse_areas(const char *text, struct area *a, int max, int *rows,
 	return n;
 }
 
-/* The first line named name, explicit or of an area's edges
- * (area a makes lines a-start and a-end), or -1 */
-static int line_named(const struct tracks *t, const struct area *areas,
-	int nareas, const char *name, int row)
-{
-	char key[80];
-	size_t n = strlen(name);
-	int i, end = -1;
-
-	if (n > 6 && !strcmp(name + n - 6, "-start"))
-		end = 0, n -= 6;
-	else if (n > 4 && !strcmp(name + n - 4, "-end"))
-		end = 1, n -= 4;
-	snprintf(key, sizeof(key), " %s ", name);
-	for (i = 0; t->names && i <= t->n; i++)
-		if (t->names[i] && strstr(t->names[i], key))
-			return i;
-	for (i = 0; end >= 0 && i < nareas; i++)
-		if (strlen(areas[i].name) == n &&
-		    !strncmp(areas[i].name, name, n))
-			return row ? (end ? areas[i].r1 : areas[i].r0) :
-				(end ? areas[i].c1 : areas[i].c0);
-	return -1;
-}
-
-/* A line by its <custom-ident> (CSS Grid 8.3.1): a line named
- * name-start (name-end for an end), the area's edge, else one named
- * name. */
-static int named_line(const struct tracks *t, const struct area *areas,
-	int nareas, const char *name, int end, int row)
-{
-	char edge[80];
-	int i;
-
-	snprintf(edge, sizeof(edge), "%s%s", name, end ? "-end" : "-start");
-	if ((i = line_named(t, areas, nareas, edge, row)) >= 0)
-		return i;
-	return line_named(t, areas, nareas, name, row);
-}
-
-/* grid-row-start and friends: line (0-based) or -1 auto; *span. */
 /* Lines beyond are clamped, as browsers do (Firefox: 10000): the
  * occupancy grid is rows x columns */
 #define GRID_LINES 10000
 
+/* The nth line named name from line from, going dir (1 or -1), from
+ * excluded: named so explicitly, or as an area's edge (area a makes
+ * lines a-start and a-end). Short of names, the implicit lines past
+ * the grid all have them (CSS Grid 8.3); before it, line 0 (no
+ * negative tracks). *found tells which. */
+static int nth_named(const struct tracks *t, const struct area *areas,
+	int nareas, const char *name, int n, int from, int dir, int row,
+	int *found)
+{
+	char key[80];
+	size_t len = strlen(name);
+	int i, k, end = -1;
+
+	snprintf(key, sizeof(key), " %s ", name);
+	if (len > 6 && !strcmp(name + len - 6, "-start"))
+		end = 0, len -= 6;
+	else if (len > 4 && !strcmp(name + len - 4, "-end"))
+		end = 1, len -= 4;
+	*found = 1;
+	for (i = from + dir; i >= 0 && i <= t->n; i += dir) {
+		int named = t->names && t->names[i] &&
+			strstr(t->names[i], key);
+
+		for (k = 0; !named && end >= 0 && k < nareas; k++)
+			named = i == (row ? (end ? areas[k].r1 :
+				areas[k].r0) : (end ? areas[k].c1 :
+				areas[k].c0)) && strlen(areas[k].name) == len &&
+				!strncmp(areas[k].name, name, len);
+		if (named && !--n)
+			return i;
+	}
+	*found = 0;
+	return dir < 0 ? 0 : t->n + n < GRID_LINES ? t->n + n : GRID_LINES;
+}
+
+/* A line by name and number (CSS Grid 8.3.1): a lone <custom-ident>
+ * is the line name-start (name-end for an end), the area's edge, else
+ * the first named name; with a number n, the nth named name, from the
+ * end when n < 0. */
+static int named_line(const struct tracks *t, const struct area *areas,
+	int nareas, const char *name, int n, int end, int row)
+{
+	char edge[80];
+	int i, found;
+
+	if (!n) {
+		snprintf(edge, sizeof(edge), "%s%s", name,
+			end ? "-end" : "-start");
+		i = nth_named(t, areas, nareas, edge, 1, -1, 1, row, &found);
+		if (found)
+			return i;
+		n = 1;
+	}
+	return n > 0 ? nth_named(t, areas, nareas, name, n, -1, 1, row,
+		&found) : nth_named(t, areas, nareas, name, -n, t->n + 1, -1,
+		row, &found);
+}
+
+/* grid-row-start and friends: line (0-based) or -1 auto; *span, and
+ * in sname the line name of a span to a named line ("" if none). */
+
 static int line_of(const char *s, const struct tracks *t,
-	const struct area *areas, int nareas, int end, int row, int *span)
+	const struct area *areas, int nareas, int end, int row, int *span,
+	char *sname)
 {
 	struct cvlist l;
 	struct cur c;
@@ -397,6 +431,7 @@ static int line_of(const char *s, const struct tracks *t,
 	const char *name = NULL;
 
 	*span = 0;
+	*sname = '\0';
 	if (!s || !strcmp(s, "auto"))
 		return -1;
 	css_component_values(s, strlen(s), &l);
@@ -412,8 +447,10 @@ static int line_of(const char *s, const struct tracks *t,
 	}
 	if (is_span) {
 		*span = n > 0 ? n : 1;
+		if (name && strlen(name) < 64)
+			strcpy(sname, name);
 	} else if (name) {
-		line = named_line(t, areas, nareas, name, end, row);
+		line = named_line(t, areas, nareas, name, n, end, row);
 	} else if (n > 0) {
 		line = n - 1;
 	} else if (n < 0) {
@@ -422,7 +459,47 @@ static int line_of(const char *s, const struct tracks *t,
 			line = 0;
 	}
 	cvlist_free(&l);
-	return line;
+	return line > GRID_LINES ? GRID_LINES : line;
+}
+
+/* An item's lines in one axis, start a and end b (end exclusive), from
+ * its two properties; 1 if definite */
+static int item_lines(const char *start, const char *end,
+	const struct tracks *t, const struct area *areas, int nareas, int row,
+	int *a, int *b)
+{
+	char n1[64], n2[64];
+	int s1, s2, found;
+	int x = line_of(start, t, areas, nareas, 0, row, &s1, n1);
+	int y = line_of(end, t, areas, nareas, 1, row, &s2, n2);
+
+	/* a span to a named line counts from the other, definite one */
+	if (x >= 0 && y < 0 && *n2)
+		y = nth_named(t, areas, nareas, n2, s2, x, 1, row, &found);
+	else if (y >= 0 && x < 0 && *n1)
+		x = nth_named(t, areas, nareas, n1, s1, y, -1, row, &found);
+	if (x >= 0 && y >= 0 && y < x) {
+		int k = x;
+
+		x = y;
+		y = k;
+	}
+	if (x >= 0) {
+		*a = x;
+		*b = y > x ? y : x + (s2 ? s2 : 1);
+		return 1;
+	}
+	if (y >= 0) {
+		*b = y;
+		*a = y - (s1 ? s1 : 1);
+		if (*a < 0)
+			*a = 0;
+		return 1;
+	}
+	/* a span to a named line alone is a span of 1 */
+	*a = 0;
+	*b = s1 && !*n1 ? s1 : s2 && !*n2 ? s2 : 1;
+	return 0;
 }
 
 /* Fill [from, to) of an occupancy grid. */
@@ -767,24 +844,28 @@ static void abs_place(struct box *c, struct tracks *cols,
 {
 	const struct style *st = c->style;
 	struct gitem *it;
+	char n[64];
 	int s1, s2, a, b;
 
 	*abs = xrealloc(*abs, (size_t)(*nabs + 1) * sizeof(**abs));
 	it = &(*abs)[(*nabs)++];
 	memset(it, 0, sizeof(*it));
 	it->b = c;
+	/* a line past the grid is auto here (CSS Grid 9.1) */
 	a = line_of(st->v[P_GRID_COLUMN_START].u.str, cols, areas, nareas, 0,
-		0, &s1);
+		0, &s1, n);
 	b = line_of(st->v[P_GRID_COLUMN_END].u.str, cols, areas, nareas, 1,
-		0, &s2);
-	it->c0 = a;
-	it->c1 = b >= 0 ? b : a >= 0 && s2 ? a + s2 : -1;
+		0, &s2, n);
+	it->c0 = a <= cols->n ? a : -1;
+	it->c1 = b >= 0 && b <= cols->n ? b : it->c0 >= 0 && s2 ?
+		it->c0 + s2 : -1;
 	a = line_of(st->v[P_GRID_ROW_START].u.str, rows, areas, nareas, 0,
-		1, &s1);
+		1, &s1, n);
 	b = line_of(st->v[P_GRID_ROW_END].u.str, rows, areas, nareas, 1,
-		1, &s2);
-	it->r0 = a;
-	it->r1 = b >= 0 ? b : a >= 0 && s2 ? a + s2 : -1;
+		1, &s2, n);
+	it->r0 = a <= rows->n ? a : -1;
+	it->r1 = b >= 0 && b <= rows->n ? b : it->r0 >= 0 && s2 ?
+		it->r0 + s2 : -1;
 }
 
 /* Shared by layout and intrinsic sizes. */
@@ -810,7 +891,6 @@ static int place(struct box *gb, float W, float H, struct tracks *cols,
 	occ_grow(&o, rows->n ? rows->n : 1, cols->n ? cols->n : 1);
 	for (c = gb->first; c; c = c->next) {
 		struct gitem *it;
-		int rs, re, cs, ce, s1, s2;
 
 		if (c->flags & BF_ABS) {
 			box_edges(c, W);
@@ -824,40 +904,12 @@ static int place(struct box *gb, float W, float H, struct tracks *cols,
 		it = &v[n++];
 		memset(it, 0, sizeof(*it));
 		it->b = c;
-		cs = line_of(c->style->v[P_GRID_COLUMN_START].u.str, cols, areas,
-			nareas, 0, 0, &s1);
-		ce = line_of(c->style->v[P_GRID_COLUMN_END].u.str, cols, areas,
-			nareas, 1, 0, &s2);
-		if (cs >= 0) {
-			it->c0 = cs;
-			it->c1 = ce > cs ? ce : cs + (s2 ? s2 : 1);
-			it->cdef = 1;
-		} else if (ce >= 0) {
-			it->c1 = ce;
-			it->c0 = ce - (s1 ? s1 : 1);
-			if (it->c0 < 0)
-				it->c0 = 0;
-			it->cdef = 1;
-		} else {
-			it->c1 = s1 ? s1 : s2 ? s2 : 1;
-		}
-		rs = line_of(c->style->v[P_GRID_ROW_START].u.str, rows, areas,
-			nareas, 0, 1, &s1);
-		re = line_of(c->style->v[P_GRID_ROW_END].u.str, rows, areas,
-			nareas, 1, 1, &s2);
-		if (rs >= 0) {
-			it->r0 = rs;
-			it->r1 = re > rs ? re : rs + (s2 ? s2 : 1);
-			it->rdef = 1;
-		} else if (re >= 0) {
-			it->r1 = re;
-			it->r0 = re - (s1 ? s1 : 1);
-			if (it->r0 < 0)
-				it->r0 = 0;
-			it->rdef = 1;
-		} else {
-			it->r1 = s1 ? s1 : s2 ? s2 : 1;
-		}
+		it->cdef = item_lines(c->style->v[P_GRID_COLUMN_START].u.str,
+			c->style->v[P_GRID_COLUMN_END].u.str, cols, areas,
+			nareas, 0, &it->c0, &it->c1);
+		it->rdef = item_lines(c->style->v[P_GRID_ROW_START].u.str,
+			c->style->v[P_GRID_ROW_END].u.str, rows, areas, nareas,
+			1, &it->r0, &it->r1);
 		if (it->cdef && it->rdef)
 			occ_set(&o, it->r0, it->r1, it->c0, it->c1);
 	}

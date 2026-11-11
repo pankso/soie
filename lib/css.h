@@ -247,7 +247,7 @@ struct color {
 	unsigned char space;
 	unsigned char none;	/* bit per missing component, 8 = alpha */
 	unsigned char current;	/* currentcolor */
-	unsigned char pad;
+	unsigned char sys;	/* system color: its index + 1, 0 if not */
 };
 
 /* A length-percentage computed to px + % of a reference. */
@@ -266,15 +266,16 @@ struct ucontext {
 };
 /* Set when a length was resolved with viewport units (vw, vh...) */
 extern int vp_units_used;
-/* light-dark() gives its dark color: set by the cascade for the
- * element it computes, from its color-scheme; a worker's colors are
- * light */
+/* light-dark() and system colors give their dark color: set by the
+ * cascade for the element it computes, from its color-scheme; a
+ * worker's colors are light */
 extern THREAD_LOCAL int color_dark;
 
 int parse_color(struct cur *c, struct color *out);
 void serialize_color(struct buf *b, const struct color *col);
 void color_to_rgba(const struct color *col, unsigned char rgba[4]);
 int named_color(const char *name, struct color *out);
+void system_color(struct color *col, int dark);
 
 /* Length-percentage: specified form, before unit resolution. */
 struct slen;
@@ -300,7 +301,8 @@ int parse_anb(struct cur *c, int *a, int *b);
 
 enum {
 	K_KW, K_LEN, K_COLOR, K_NUM, K_INT, K_ALPHA, K_FSIZE, K_FWEIGHT,
-	K_LH, K_FAMILY, K_RAW, K_BWIDTH, K_LIST, K_DECO, K_DISPLAY
+	K_LH, K_FAMILY, K_RAW, K_BWIDTH, K_LIST, K_DECO, K_DISPLAY,
+	K_RADIUS
 };
 
 #define BORDER_STYLES "none|hidden|dotted|dashed|solid|double|groove|" \
@@ -333,6 +335,7 @@ struct sval {
 	unsigned char flag;
 	double num;
 	struct slen *len;
+	struct slen *len2;	/* K_RADIUS: the vertical one, or NULL */
 	struct color color;
 	char *str;		/* raw text, family list, pending text */
 };
@@ -345,8 +348,11 @@ struct svec {
 /* A computed value: 24 bytes, so that styles stay small. */
 struct cval {
 	unsigned char kw;	/* 1 + keyword index, 0 if a value */
-	unsigned char flag;	/* K_LH: 1 number, 2 length */
-	unsigned char pad[6];
+	unsigned char flag;	/* K_LH: 1 number, 2 length; K_RADIUS: 1
+				 * vertical radius v px, 2 v %, 0 the same
+				 * as across (u.len) */
+	unsigned char pad[2];
+	float v;
 	union {
 		struct len len;
 		double num;
@@ -390,6 +396,7 @@ int has_var(const struct cv *v, int n);
 
 /* Interning (cascade.c) */
 const struct style *anon_style(struct styledb *db, const struct style *parent);
+int style_dark(const struct styledb *db, const struct style *s);
 const char *db_string(struct styledb *db, const char *s, size_t len);
 const struct color *db_color(struct styledb *db, const struct color *c);
 struct calc *db_calc(struct styledb *db, struct calc *k);
