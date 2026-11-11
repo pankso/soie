@@ -2861,6 +2861,13 @@ static void style_element(struct styledb *db, soie_node *el,
 }
 
 /* @font-face (CSS Fonts 4 4): fetch the first usable src. */
+/*
+ * FreeType reads WOFF2 only when it was built with brotli, and does not
+ * say so: the first WOFF2 font it refuses sets this, and the next ones
+ * are not fetched.
+ */
+static int no_woff2;
+
 static void load_font_face(struct styledb *db, const void *doc,
 	const char *block, const char *base)
 {
@@ -2897,7 +2904,7 @@ static void load_font_face(struct styledb *db, const void *doc,
 		const char *url = NULL;
 		char *buf = NULL, *abs;
 		size_t len = 0;
-		int k;
+		int k, woff2;
 
 		if (v->type == CT_URL)
 			url = v->str;
@@ -2906,13 +2913,14 @@ static void load_font_face(struct styledb *db, const void *doc,
 			url = v->kids.v[0].str;
 		if (!url)
 			continue;
-		/* skip formats FreeType cannot read here (woff2: brotli) */
+		/* skip formats FreeType cannot read (woff2: see no_woff2) */
 		for (k = i + 1; k < src->value.n &&
 		     src->value.v[k].type != CT_COMMA; k++) {
 			f = &src->value.v[k];
 			if (cv_func(f, "format") && f->kids.n &&
-			    f->kids.v[0].str && (ascii_ieq(f->kids.v[0].str,
-				"woff2") || ascii_ieq(f->kids.v[0].str,
+			    f->kids.v[0].str && ((no_woff2 &&
+				ascii_ieq(f->kids.v[0].str, "woff2")) ||
+				ascii_ieq(f->kids.v[0].str,
 				"embedded-opentype") ||
 				ascii_ieq(f->kids.v[0].str, "svg")))
 				url = NULL;
@@ -2927,11 +2935,18 @@ static void load_font_face(struct styledb *db, const void *doc,
 		if (r == SOIE_FETCH_LATER)
 			pending_add(db, url);
 		free(abs);
+		/* wait for it: the next sources are for when it fails */
+		if (r == SOIE_FETCH_LATER)
+			break;
 		if (r || !buf)
 			continue;
+		/* font_add_memory() frees the bytes it cannot read */
+		woff2 = len > 4 && !memcmp(buf, "wOF2", 4);
 		if (font_add_memory(doc, fam.s, (unsigned char *)buf, len,
 				    weight, italic))
 			break;
+		if (woff2)
+			no_woff2 = 1;
 	}
 	buf_free(&fam);
 	cvlist_free(&l);

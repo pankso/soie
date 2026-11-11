@@ -783,10 +783,14 @@ reversed, edit the entry and say why; do not leave stale rules here.
 - Metrics: OS/2 typo metrics when USE_TYPO_METRICS is set, else hhea,
   as browsers do; normal line-height = ascent + descent + line gap.
 - Web fonts: @font-face fonts are fetched through the host callback
-  during the cascade and opened from memory. FreeType here has zlib
-  but no brotli, so WOFF2 (most web fonts today) is skipped and the
-  page falls back to system fonts. A small brotli decoder would fix
-  that; not done yet.
+  during the cascade and opened from memory. WOFF2 (most web fonts
+  today) is FreeType's work: it reads it when it was built with
+  brotli (SliTaz's freetype package is, since 2026-11: libbrotli, the
+  decoder alone, 75 KB). No decoder of our own: the glyf and hmtx
+  transforms are 2,000 lines in FreeType, already fuzzed. FreeType
+  does not say whether it has brotli, so WOFF2 sources are tried; the
+  first one it refuses (no_woff2, lib/cascade.c) stops the fetching
+  of the others, and each font goes on to its next source.
 - `soie_fonts_stub(1)` keeps the 0.5em stub font: the test runner and
   `soie-render -S` use it, so layout tests do not depend on fonts.
 - Faces are matched by width first, then style, then weight (CSS

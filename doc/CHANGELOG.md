@@ -7,6 +7,11 @@ each change are in [DECISIONS.md](DECISIONS.md).
 
 ## [Unreleased]
 
+### Added
+- WOFF2 web fonts, when FreeType is built with brotli: most sites'
+  fonts were skipped and their text came in DejaVu, with other
+  widths. A FreeType without brotli falls back as before.
+
 ## [0.1.5] - 2026-11-11
 
 ### Added
