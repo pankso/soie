@@ -2969,15 +2969,23 @@ run again):
   soie_shadow_root(), soie_shadow_host(), soie_shadow_open(),
   soie_shadow_css(), soie_shadow_claim(), soie_assigned_slot(),
   soie_element_set_defined(), soie_element_set_states().
+- 0.1.6 (2026-11-11): what real pages missed most after 0.1.5.
+  WOFF2 fonts (FreeType with brotli), Content-Encoding: br, a pop-up
+  list for select, the dark canvas from color-scheme, small caps,
+  tab-size, elliptical radii, grid lines by name, the line-clamp
+  ellipsis. The WPT run now really runs the tests' scripts: flexbox
+  66 %, grid 51 %. Same soname, extension ABI and public API. The
+  packages need libbrotli; without it at build time the engine is
+  the same, less br.
 - The site's figures are rounded so that they stay true across
   releases: "under 50,000 lines of code" (tools/loc.sh: 45,503 in
-  0.1.2, 47,548 in 0.1.3, 51,661 in 0.1.4, 53,444 in 0.1.5: "under
-  50,000" became "under 55,000"; "about 45,000" was out of date one
-  release later). At each release, check them all the same: tools/loc.sh,
-  the WPT percentages (tests/wpt/run.sh; the site said 44 and 23 %
-  until 0.1.3, when they were 62 and 46), the download size (soie
-  and xsoie packages: 725 KB in 0.1.3), then
-  tools/releases-atom.sh.
+  0.1.2, 47,548 in 0.1.3, 51,661 in 0.1.4, 53,444 in 0.1.5, 54,517
+  in 0.1.6: "under 50,000" became "under 55,000"; "about 45,000" was
+  out of date one release later). At each release, check them all the
+  same: tools/loc.sh, the WPT percentages (tests/wpt/run.sh; the site
+  said 44 and 23 % until 0.1.3, when they were 62 and 46), the
+  download size (soie and xsoie packages: 725 KB in 0.1.3, 773 KB in
+  0.1.5: "700 KB" became "under 800 KB"), then tools/releases-atom.sh.
 
 ## Build
 

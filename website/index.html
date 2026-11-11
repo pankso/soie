@@ -13,7 +13,7 @@
 	<meta property="og:site_name" content="SliTaz" />
 	<meta property="og:url" content="https://soie.slitaz.org/" />
 	<meta property="og:title" content="Soie - the web, light" />
-	<meta property="og:description" content="A web engine in plain C99: HTML, CSS, JavaScript and video in a 700 KB download, 13 times less memory than Firefox, for old PCs and new ones." />
+	<meta property="og:description" content="A web engine in plain C99: HTML, CSS, JavaScript and video in a download under 800 KB, 13 times less memory than Firefox, for old PCs and new ones." />
 	<meta property="og:image" content="https://soie.slitaz.org/images/share.png" />
 	<meta property="og:image:width" content="1200" />
 	<meta property="og:image:height" content="630" />
@@ -56,12 +56,12 @@
 				Soie is a web engine written from scratch in plain C99:
 				HTML, CSS, JavaScript and video in under 55,000 lines of
 				code, plus QuickJS and FFmpeg as dependencies. It
-				fits in a 700&nbsp;KB download, runs on the
+				fits in a download under 800&nbsp;KB, runs on the
 				32-bit PCs every big browser has left behind and leaves
 				the memory of new machines to the work that matters.
 			</p>
 			<div class="hero-buttons">
-				<a href="#get" class="btn btn-primary">Get Soie 0.1.5</a>
+				<a href="#get" class="btn btn-primary">Get Soie 0.1.6</a>
 				<a href="#why" class="btn btn-secondary">Why Soie?</a>
 			</div>
 			<small>Free software, BSD licence. Made for and by SliTaz.</small>
@@ -288,7 +288,7 @@
 	</div>
 	<p class="note">Against the Web Platform Tests, the test suite the
 		big engines share: 66&nbsp;% of 100 flexbox reftests and
-		49&nbsp;% of 100 grid reftests pass, compared as WPT compares
+		51&nbsp;% of 100 grid reftests pass, compared as WPT compares
 		them. A fixed subset at a pinned WPT commit, run by
 		<a href="https://hg.slitaz.org/soie/file/tip/tests/wpt">tests/wpt</a>
 		in 35 seconds; each failure is a layout bug on the list.</p>
@@ -318,7 +318,7 @@
 <!-- Get it -->
 <section id="get" class="band">
 	<div class="part">
-		<h2>Get Soie 0.1.5</h2>
+		<h2>Get Soie 0.1.6</h2>
 		<p>On SliTaz, the lightest way to browse the web:</p>
 		<pre><code>spk-add xsoie</code></pre>
 		<p>Soie comes in many packages, so that a system installs only what it
@@ -337,8 +337,8 @@
 			HarfBuzz, libpng and libjpeg (the browsers also want Xlib or
 			Wayland, GnuTLS and zlib; the extensions libwebp, FFmpeg and
 			ALSA, and QuickJS 2026-06-04):</p>
-		<pre><code>wget https://hg.slitaz.org/soie/archive/0.1.5.tar.gz
-tar xzf 0.1.5.tar.gz &amp;&amp; cd soie-0.1.5
+		<pre><code>wget https://hg.slitaz.org/soie/archive/0.1.6.tar.gz
+tar xzf 0.1.6.tar.gz &amp;&amp; cd soie-0.1.6
 make &amp;&amp; make check
 make install PREFIX=/usr</code></pre>
 		<p>The <a href="https://hg.slitaz.org/soie/file/tip/README.md">README</a>

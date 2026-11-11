@@ -7,6 +7,8 @@ each change are in [DECISIONS.md](DECISIONS.md).
 
 ## [Unreleased]
 
+## [0.1.6] - 2026-11-11
+
 ### Added
 - `Content-Encoding: br` over HTTPS, when brotli's decoder
   (libbrotlidec) is there at build time: pages and scripts come 15
@@ -400,6 +402,7 @@ each change are in [DECISIONS.md](DECISIONS.md).
 - Browsers: xsoie (X11), wsoie (Wayland), SoieView (GTK 3 widget).
 - soie-render, a headless renderer for tests and screenshots.
 
+[0.1.6]: https://hg.slitaz.org/soie/rev/0.1.6
 [0.1.5]: https://hg.slitaz.org/soie/rev/0.1.5
 [0.1.4]: https://hg.slitaz.org/soie/rev/0.1.4
 [0.1.3]: https://hg.slitaz.org/soie/rev/0.1.3
