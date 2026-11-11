@@ -165,6 +165,11 @@ tests/unit: tests/unit.o lib/libsoie.a
 # browser's fronts (browser/): their common part (front.c) and their
 # toolkits: xsoie on Xlib (MIT-SHM).
 SHELL_PKGS = gnutls zlib libpng
+# Content-Encoding: br when brotli's decoder is there
+ifeq ($(shell pkg-config --exists libbrotlidec && echo y),y)
+BROTLI_LIBS = -lbrotlidec
+BROTLI = -DSOIE_BROTLI
+endif
 SHELL_OBJS = shell/shell.o shell/net.o shell/fetch.o shell/debug.o \
 	shell/settings.o shell/auth.o shell/cache.o
 SHELL_HEADERS = shell/shell.h shell/net.h shell/fetch.h shell/debug.h \
@@ -173,12 +178,13 @@ FRONT_OBJS = browser/front.o $(SHELL_OBJS)
 browser/xsoie: browser/xsoie.o $(FRONT_OBJS) lib/libsoie.so.$(SOVERSION)
 	$(CC) $(LDFLAGS) $(RPATH) -o $@ browser/xsoie.o $(FRONT_OBJS) \
 		lib/libsoie.so.$(SOVERSION) $(LIBS) \
-		$(shell pkg-config --libs $(SHELL_PKGS) x11 xext) -lpthread
+		$(shell pkg-config --libs $(SHELL_PKGS) x11 xext) \
+		$(BROTLI_LIBS) -lpthread
 
 browser/xsoie.o $(FRONT_OBJS): $(SHELL_HEADERS) browser/front.h $(HEADERS)
 browser/xsoie.o browser/wsoie.o browser/front.o: CPPFLAGS += -Ishell
 $(SHELL_OBJS): CPPFLAGS += $(shell pkg-config --cflags $(SHELL_PKGS)) \
-	-DSOIE_EXT_DIR='"$(EXTDIR)"'
+	-DSOIE_EXT_DIR='"$(EXTDIR)"' $(BROTLI)
 browser/xsoie.o: CPPFLAGS += $(shell pkg-config --cflags x11 xext)
 
 # wsoie on Wayland, when its libraries are there; xdg-shell's and
@@ -190,7 +196,8 @@ browser/wsoie: browser/wsoie.o $(WL_OBJS) $(FRONT_OBJS) \
 	lib/libsoie.so.$(SOVERSION)
 	$(CC) $(LDFLAGS) $(RPATH) -o $@ browser/wsoie.o $(WL_OBJS) \
 		$(FRONT_OBJS) lib/libsoie.so.$(SOVERSION) $(LIBS) \
-		$(shell pkg-config --libs $(SHELL_PKGS) $(WL_PKGS)) -lpthread
+		$(shell pkg-config --libs $(SHELL_PKGS) $(WL_PKGS)) \
+		$(BROTLI_LIBS) -lpthread
 browser/xdg-shell.h: $(WL_PROTO)/stable/xdg-shell/xdg-shell.xml
 	wayland-scanner client-header $< $@
 browser/xdg-shell.c: $(WL_PROTO)/stable/xdg-shell/xdg-shell.xml
@@ -246,7 +253,8 @@ gtk/libsoie-gtk.so.$(SOVERSION): gtk/soie-view.o $(SHELL_OBJS) \
 	$(CC) -shared -Wl,-soname,libsoie-gtk.so.$(SOVERSION) $(LDFLAGS) \
 		-o $@ gtk/soie-view.o $(SHELL_OBJS) \
 		lib/libsoie.so.$(SOVERSION) $(LIBS) \
-		$(shell pkg-config --libs $(SHELL_PKGS)) $(GTK_LIBS) -lpthread
+		$(shell pkg-config --libs $(SHELL_PKGS)) $(BROTLI_LIBS) \
+		$(GTK_LIBS) -lpthread
 gtk/gsoie: gtk/gsoie.o gtk/libsoie-gtk.so.$(SOVERSION)
 	$(CC) $(LDFLAGS) -Wl,-rpath,'$$ORIGIN:$$ORIGIN/../lib' -o $@ \
 		gtk/gsoie.o gtk/libsoie-gtk.so.$(SOVERSION) \

@@ -1158,6 +1158,14 @@ reversed, edit the entry and say why; do not leave stale rules here.
   bodies, gzip and deflate (zlib), 20 s timeouts, file:// URLs. TLS
   through GnuTLS with the system trust store, SNI, certificate and
   host name verification.
+- Brotli bodies (`Content-Encoding: br`) when libbrotlidec is there
+  at build time (pkg-config --exists; the system has it since
+  FreeType reads WOFF2 with it). Asked for over HTTPS only, as
+  browsers do: a proxy on the way of plain HTTP may not know it.
+  Same limit and same leniency as gzip (a body that is not brotli is
+  kept as it came, a cut one keeps what was decoded). Linked as
+  -lbrotlidec, not through its .pc: brotli 1.0.9's has a `-R` flag
+  that cc refuses.
 - Loading is in the background (browser/fetch.c): six threads run the
   requests, the page's own, its style sheets and scripts before its
   images; a pipe wakes the X loop when one finishes. The page on

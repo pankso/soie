@@ -8,6 +8,9 @@ each change are in [DECISIONS.md](DECISIONS.md).
 ## [Unreleased]
 
 ### Added
+- `Content-Encoding: br` over HTTPS, when brotli's decoder
+  (libbrotlidec) is there at build time: pages and scripts come 15
+  to 20 % smaller than with gzip.
 - A drop-down `<select>` opens a pop-up list of its options on a
   click, or with Space, Enter, F4 or Alt+Down: the current option
   highlighted, `<optgroup>` labels bold with their options indented,

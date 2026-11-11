@@ -27,6 +27,9 @@
 #include <netinet/in.h>
 #include <gnutls/gnutls.h>
 #include <zlib.h>
+#ifdef SOIE_BROTLI
+#include <brotli/decode.h>
+#endif
 #include "net.h"
 #include "cache.h"
 #include "debug.h"
@@ -845,6 +848,48 @@ static int inflate_body(struct response *r)
 	return 0;
 }
 
+#ifdef SOIE_BROTLI
+/* Content-Encoding: br, with gzip's limit and gzip's leniency */
+static int brotli_body(struct response *r)
+{
+	BrotliDecoderState *st = BrotliDecoderCreateInstance(NULL, NULL, NULL);
+	BrotliDecoderResult res;
+	struct response out;
+	const uint8_t *in = (const uint8_t *)r->body;
+	uint8_t buf[16384], *o;
+	size_t nin = r->len, nout;
+
+	if (!st)
+		return -1;
+	memset(&out, 0, sizeof(out));
+	do {
+		o = buf;
+		nout = sizeof(buf);
+		res = BrotliDecoderDecompressStream(st, &nin, &in, &nout, &o,
+			NULL);
+		add(&out, (char *)buf, sizeof(buf) - nout);
+		if (out.len > MAX_INFLATED) {
+			/* a compression bomb */
+			BrotliDecoderDestroyInstance(st);
+			free(out.body);
+			return -1;
+		}
+	} while (res == BROTLI_DECODER_RESULT_NEEDS_MORE_OUTPUT);
+	BrotliDecoderDestroyInstance(st);
+	if (res != BROTLI_DECODER_RESULT_SUCCESS && !out.len && r->len) {
+		/* not brotli, whatever the header says: as it came */
+		free(out.body);
+		return 0;
+	}
+	/* a cut stream keeps what came, as a cut gzip does */
+	free(r->body);
+	r->body = out.body;
+	r->len = out.len;
+	r->cap = out.cap;
+	return 0;
+}
+#endif
+
 static int fetch_file(const char *url, struct response *r)
 {
 	FILE *f = fopen(url + 7, "rb");
@@ -1369,8 +1414,15 @@ static int request(const char *url, const soie_request *rq,
 	snprintf(key, sizeof(key), "%s://%s:%s", u.scheme, u.host, u.port);
 	{
 		char line[1024];
+		const char *br = "";
 		int dflt;
 
+#ifdef SOIE_BROTLI
+		/* over TLS only, as browsers do: a proxy on the way of
+		 * plain HTTP may not know it */
+		if (!strcmp(u.scheme, "https"))
+			br = ", br";
+#endif
 		snprintf(line, sizeof(line), "%s ", method);
 		adds(&req, line);
 		adds(&req, u.path);
@@ -1381,8 +1433,8 @@ static int request(const char *url, const soie_request *rq,
 			"80");
 		snprintf(line, sizeof(line), " HTTP/1.1\r\nHost: %s%s%s\r\n"
 			"User-Agent: Mozilla/5.0 (X11; Linux) Soie/0.1\r\n"
-			"Accept-Encoding: gzip, deflate\r\n", u.host,
-			dflt ? "" : ":", dflt ? "" : u.port);
+			"Accept-Encoding: gzip, deflate%s\r\n", u.host,
+			dflt ? "" : ":", dflt ? "" : u.port, br);
 		adds(&req, line);
 	}
 	if (!has_header(headers, "Accept"))
@@ -1515,6 +1567,13 @@ static int request(const char *url, const soie_request *rq,
 		set_error(r, "body too large");
 		goto out;
 	}
+#ifdef SOIE_BROTLI
+	if (v && !strncasecmp(v, "br", 2) && header_len(v) == 2 &&
+	    brotli_body(r)) {
+		set_error(r, "body too large");
+		goto out;
+	}
+#endif
 	ret = 0;
 out:
 	if (ret == 0 && reuse && c.fd >= 0) {
