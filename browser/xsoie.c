@@ -628,6 +628,11 @@ int main(int argc, char **argv)
 		case FocusOut:
 			if (xic)
 				XUnsetICFocus(xic);
+			/* not for a grab (a window manager's shortcut) */
+			if (ev.xfocus.mode != NotifyGrab &&
+			    ev.xfocus.detail != NotifyInferior)
+				front_unfocus();
+			front_redraw();
 			break;
 		case ButtonPress:
 			last = ev.xbutton.time;

@@ -8,6 +8,18 @@ each change are in [DECISIONS.md](DECISIONS.md).
 ## [Unreleased]
 
 ### Added
+- A drop-down `<select>` opens a pop-up list of its options on a
+  click, or with Space, Enter, F4 or Alt+Down: the current option
+  highlighted, `<optgroup>` labels bold with their options indented,
+  disabled options greyed, in the select's font and the system colours
+  of its color scheme. The pointer, the arrows, Home, End, Page Up and
+  Down move in it, a click, Enter or Space picks, Escape or a click
+  elsewhere closes it, letters jump to the option they start. A long
+  list fits in the view and scrolls; a select at the bottom opens it
+  upwards. A click cycled through the options before, with no way to
+  see them. A focused select also changes with the arrows and letters,
+  list closed. The shell paints the list over the page: xsoie, wsoie
+  and SoieView all have it.
 - A page dark by `color-scheme` alone (`:root { color-scheme: dark }`,
   `<meta name="color-scheme" content="dark">`, or `light dark` when
   the user prefers dark) gets the dark canvas, light text, links and

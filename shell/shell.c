@@ -65,6 +65,15 @@ struct res {
  * waits for them), its scripts (they run in order once all are here) */
 enum { L_NONE, L_DOC, L_STYLE, L_SCRIPTS };
 
+/* A row of a select's pop-up list: an option, or an optgroup's label */
+enum { R_LABEL = 1, R_OFF = 2, R_IN = 4 };	/* label, disabled, indented */
+struct poprow {
+	soie_node *opt;		/* the option, the optgroup of a label */
+	soie_node *div;		/* its line in the list's page */
+	int kind;		/* R_* */
+	float y, h;		/* the line's, in the list's page */
+};
+
 struct shell {
 	struct {
 		char url[4096];
@@ -153,6 +162,33 @@ struct shell {
 		int unit, n, cap;
 		float *r;
 	} sel;
+	/* The pop-up list of a select, when open: a little page of its
+	 * options that paint_view() paints over the page, the shell's
+	 * clicks, keys and wheel going to it first (pop_*()) */
+	struct {
+		soie_node *sel;		/* NULL: closed */
+		soie_node *page;	/* the document of sel */
+		soie_node *doc;		/* the list */
+		struct poprow *row;
+		int n, cur;		/* rows, the highlighted one or -1 */
+		char *src;		/* its HTML: other options close it */
+		unsigned long gen;	/* the page's when it was checked */
+		int page_scroll;	/* the page scrolled: it closes */
+		int x, y, w, h;		/* in the view, its border included */
+		int scroll, height;	/* the list's own, its page's height */
+		int bar;		/* the scroll bar's width, 0 for none */
+		int mx, my;		/* the pointer, last seen */
+		int dark;
+		int dmg[4], dirty;	/* to paint again: x0 y0 x1 y1 */
+		int ate;		/* the last click was its */
+		soie_node *want;	/* to open once scripts ran */
+	} pop;
+	/* Type-ahead in a select: what was typed, when last */
+	struct {
+		char s[64];
+		size_t len;
+		double at;
+	} ta;
 	char loading_text[64];	/* shell_loading()'s */
 	struct download *page_dl;	/* the page load's, its job's */
 };
@@ -186,6 +222,7 @@ static struct shell *shells;
 static unsigned gens;		/* the last load's gen */
 
 static int page_changed(struct shell *s);
+static void pop_close(struct shell *s);
 
 /* Fetching */
 
@@ -1238,6 +1275,7 @@ static void load_start(struct shell *s, const char *url, int push)
 	}
 	if (s->page.doc && push && s->hist.cur >= 0)
 		s->hist.scroll[s->hist.cur] = s->page.scroll;
+	pop_close(s);
 	s->page.t_load = now_s();
 	s->page.done = 0;
 	if (s->page.gen)
@@ -2192,18 +2230,794 @@ static soie_node *check_radio(soie_node *n)
 	return was;
 }
 
+/*
+ * Selects. A drop-down one opens a pop-up list of its options: a little
+ * page the shell lays out and paints itself over the page view (as the
+ * fronts paint their bars), in the select's font and the system colours
+ * of its scheme. It lives in the view: it never reaches out of it, a
+ * select near the bottom opens it upwards, a long one scrolls. The
+ * select's value is its first selected option, else its first, as
+ * lib/forms.c paints it and the scripts read it.
+ */
+
+#define POP_BAR 8	/* the list's scroll bar, px */
+#define POP_CSS "html{background:Field;color:FieldText;line-height:normal}" \
+	"body{margin:0}#w{display:inline-block;min-width:100%}" \
+	"#w div{padding:2px 6px;white-space:pre}#w .i{padding-left:20px}" \
+	".g{font-weight:bold}.d{color:GrayText}" \
+	"#w [h]{background:Highlight;color:HighlightText}"
+
+static int paint_doc(struct shell *s, soie_node *doc, unsigned char *px, int w,
+	int h, int stride, int sx, int sy);
+
+static int is_el(soie_node *n, const char *tag)
+{
+	return n && soie_node_get_type(n) == SOIE_ELEMENT &&
+		!strcmp(soie_element_name(n), tag);
+}
+
+/* A drop-down select, not a list box (multiple, a size above 1) */
+static int is_dropdown(soie_node *n)
+{
+	const char *v;
+
+	if (!is_el(n, "select") || soie_element_get_attr(n, "multiple"))
+		return 0;
+	v = soie_element_get_attr(n, "size");
+	return !v || atoi(v) <= 1;
+}
+
+/* The node after n in tree order inside root, into n's children when
+ * down; NULL past the end */
+static soie_node *next_in(soie_node *n, soie_node *root, int down)
+{
+	soie_node *c;
+
+	if (down && (c = soie_node_first_child(n)))
+		return c;
+	while (n != root && !soie_node_next_sibling(n))
+		n = soie_node_parent(n);
+	return n == root ? NULL : soie_node_next_sibling(n);
+}
+
+/* Is want in root's tree, its shadow trees included? want is only
+ * compared: a script may have freed it. */
+static int has_node(soie_node *root, const soie_node *want)
+{
+	soie_node *n, *r;
+
+	for (n = root; n; n = next_in(n, root, 1)) {
+		if (n == want)
+			return 1;
+		if (soie_node_get_type(n) == SOIE_ELEMENT &&
+		    (r = soie_shadow_root(n)) && has_node(r, want))
+			return 1;
+	}
+	return 0;
+}
+
+/* The option select sel shows */
+static soie_node *sel_current(soie_node *sel)
+{
+	soie_node *o, *first = NULL;
+
+	for (o = next_in(sel, sel, 1); o; o = next_in(o, sel, 1))
+		if (is_el(o, "option")) {
+			if (soie_element_get_attr(o, "selected"))
+				return o;
+			if (!first)
+				first = o;
+		}
+	return first;
+}
+
+/* The rows of sel's list into *out (to free()): its options and its
+ * optgroups' labels, the hidden ones left out; returns how many */
+static int sel_rows(soie_node *sel, struct poprow **out)
+{
+	struct poprow *r = NULL;
+	soie_node *o, *g;
+	int n = 0, cap = 0;
+
+	for (o = next_in(sel, sel, 1); o; ) {
+		int opt = is_el(o, "option"), k = opt ? 0 : R_LABEL;
+
+		if (!opt && !is_el(o, "optgroup")) {
+			o = next_in(o, sel, !is_el(o, "select"));
+			continue;
+		}
+		if (soie_element_get_attr(o, "hidden")) {
+			o = next_in(o, sel, 0);
+			continue;
+		}
+		if (soie_element_get_attr(o, "disabled"))
+			k |= R_OFF;
+		for (g = soie_node_parent(o); opt && g && g != sel;
+		     g = soie_node_parent(g))
+			if (is_el(g, "optgroup")) {
+				k |= R_IN;
+				if (soie_element_get_attr(g, "disabled"))
+					k |= R_OFF;
+				break;
+			}
+		if (n == cap) {
+			cap = cap ? cap * 2 : 16;
+			if (!(r = realloc(r, (size_t)cap * sizeof(*r))))
+				abort();
+		}
+		memset(&r[n], 0, sizeof(*r));
+		r[n].opt = o;
+		r[n++].kind = k;
+		/* nothing in an option is a row */
+		o = next_in(o, sel, !opt);
+	}
+	*out = r;
+	return n;
+}
+
+static int usable(const struct poprow *r)
+{
+	return !(r->kind & (R_LABEL | R_OFF));
+}
+
+/* The row of option o, -1 when it has none */
+static int row_of(const struct poprow *r, int n, const soie_node *o)
+{
+	int i;
+
+	for (i = 0; i < n; i++)
+		if (r[i].opt == o && !(r[i].kind & R_LABEL))
+			return i;
+	return -1;
+}
+
+/* What row r shows: its label attribute, else an option's text, its
+ * white space collapsed, cut to a whole character */
+static void row_label(const struct poprow *r, char *out, size_t size)
+{
+	const char *l = soie_element_get_attr(r->opt, "label"), *p;
+	char t[1024] = "";
+	size_t k = 0;
+
+	if ((!l || !*l) && !(r->kind & R_LABEL)) {
+		text_of(r->opt, t, sizeof(t));
+		l = t;
+	}
+	for (p = l ? l : ""; *p && k + 1 < size; p++)
+		if (strchr(" \t\n\r\f", *p)) {
+			if (k && out[k - 1] != ' ')
+				out[k++] = ' ';
+		} else {
+			out[k++] = *p;
+		}
+	if (((unsigned char)*p & 0xc0) == 0x80)
+		while (k && ((unsigned char)out[--k] & 0xc0) == 0x80)
+			;
+	if (k && out[k - 1] == ' ')
+		k--;
+	out[k] = '\0';
+}
+
+/*
+ * The row a key moves to from row i (-1 for none): the next usable one
+ * that way, page rows away for Page Up and Down, the first or the last
+ * for Home and End; i when there is none or the key is not one of them.
+ */
+static int row_key(const struct poprow *r, int n, int i, const char *key,
+	int page)
+{
+	int j, k, d = 1;
+
+	if (!strcmp(key, "Home"))
+		j = 0;
+	else if (!strcmp(key, "End"))
+		j = n - 1, d = -1;
+	else if (!strcmp(key, "ArrowDown"))
+		j = i + 1;
+	else if (!strcmp(key, "ArrowUp"))
+		j = i < 0 ? n - 1 : i - 1, d = -1;
+	else if (!strcmp(key, "PageDown"))
+		j = i + page;
+	else if (!strcmp(key, "PageUp"))
+		j = i - page, d = -1;
+	else
+		return i;
+	j = j < 0 ? 0 : j >= n ? n - 1 : j;
+	for (k = j; k >= 0 && k < n; k += d)
+		if (usable(&r[k]))
+			return k;
+	/* none past it: the nearest before */
+	for (k = j; k >= 0 && k < n; k -= d)
+		if (usable(&r[k]))
+			return k;
+	return i;
+}
+
+/*
+ * Type-ahead: the usable row from i on whose label starts with what was
+ * typed, each key within a second of the last; the same letter again
+ * goes on to the next row that starts with it (browsers do both).
+ */
+static int row_typed(struct shell *s, const struct poprow *r, int n, int i,
+	const char *text)
+{
+	size_t k = strlen(text), j;
+	double t = now_s();
+	char label[256];
+	int a, from, same = 1;
+
+	if (t - s->ta.at > 1)
+		s->ta.len = 0;
+	s->ta.at = t;
+	if (!k || s->ta.len + k >= sizeof(s->ta.s))
+		return i;
+	memcpy(s->ta.s + s->ta.len, text, k);
+	s->ta.len += k;
+	s->ta.s[s->ta.len] = '\0';
+	for (j = k; j < s->ta.len; j++)
+		if (s->ta.s[j] != s->ta.s[j - k])
+			same = 0;
+	if (!same)
+		k = s->ta.len;
+	/* a first letter, or the same again: from the next row */
+	from = (same ? i + 1 : i < 0 ? 0 : i) % (n ? n : 1);
+	for (a = 0; a < n; a++) {
+		int x = (from + a) % n;
+
+		if (!usable(&r[x]))
+			continue;
+		row_label(&r[x], label, sizeof(label));
+		if (!strncasecmp(label, s->ta.s, k))
+			return x;
+	}
+	return i;
+}
+
+/* A space typed within a second of another key is type-ahead */
+static int typing(struct shell *s, const char *key)
+{
+	return !strcmp(key, " ") && s->ta.len && now_s() - s->ta.at <= 1;
+}
+
+/* A rect of the view (x0, y0, x1, y1) to paint again */
+static void pop_damage(struct shell *s, int x0, int y0, int x1, int y1)
+{
+	int *d = s->pop.dmg;
+
+	if (x0 >= x1 || y0 >= y1)
+		return;
+	if (!s->pop.dirty) {
+		d[0] = x0, d[1] = y0, d[2] = x1, d[3] = y1;
+	} else {
+		d[0] = x0 < d[0] ? x0 : d[0];
+		d[1] = y0 < d[1] ? y0 : d[1];
+		d[2] = x1 > d[2] ? x1 : d[2];
+		d[3] = y1 > d[3] ? y1 : d[3];
+	}
+	s->pop.dirty = 1;
+}
+
+static void pop_dirty(struct shell *s)
+{
+	pop_damage(s, s->pop.x, s->pop.y, s->pop.x + s->pop.w,
+		s->pop.y + s->pop.h);
+}
+
+/* Select option o of sel, as the user does: input and change when it
+ * was not the one shown; returns 1 then */
+static int sel_set(struct shell *s, soie_node *sel, soie_node *o)
+{
+	soie_node *c;
+	float x, y, w, h;
+
+	if (!o || sel_current(sel) == o)
+		return 0;
+	for (c = next_in(sel, sel, 1); c; c = next_in(c, sel, 1))
+		if (c != o && is_el(c, "option") &&
+		    soie_element_get_attr(c, "selected"))
+			soie_element_remove_attr(c, "selected");
+	soie_element_set_attr(o, "selected", "");
+	/* an option has no box: the engine's damage may miss the select */
+	if (!soie_element_rect(sel, &x, &y, &w, &h))
+		pop_damage(s, (int)floorf(x), (int)floorf(y) - s->page.scroll,
+			(int)ceilf(x + w), (int)ceilf(y + h) - s->page.scroll);
+	changed(s, sel);
+	return 1;
+}
+
+static void cat(char **s, size_t *len, const char *t, int esc)
+{
+	size_t n = strlen(t);
+
+	*s = realloc(*s, *len + n * 6 + 1);
+	if (!*s)
+		abort();
+	for (; *t; t++) {
+		const char *r = !esc ? NULL : *t == '<' ? "&lt;" : *t == '&' ?
+			"&amp;" : *t == '>' ? "&gt;" : *t == '"' ? "&quot;" :
+			NULL;
+
+		if (r) {
+			strcpy(*s + *len, r);
+			*len += strlen(r);
+		} else {
+			(*s)[(*len)++] = *t;
+		}
+	}
+	(*s)[*len] = '\0';
+}
+
+/* The list's page: a line a row, in the select's font, in the light or
+ * the dark system colours */
+static char *pop_html(soie_node *sel, const struct poprow *r, int n,
+	int dark, float zoom)
+{
+	static const char *const font[] = { "font-family", "font-size",
+		"font-style", "font-weight" };
+	char *h = NULL, label[256], *v;
+	size_t len = 0;
+	int i;
+
+	cat(&h, &len, "<!DOCTYPE html><html style=\"color-scheme:", 0);
+	cat(&h, &len, dark ? "dark" : "light", 0);
+	for (i = 0; i < 4; i++)
+		if ((v = soie_computed_value(sel, NULL, font[i]))) {
+			char px[32], *e;
+			float f = strtof(v, &e);
+
+			cat(&h, &len, ";", 0);
+			cat(&h, &len, font[i], 0);
+			cat(&h, &len, ":", 0);
+			/* computed lengths are device px, the zoom in: the
+			 * list's page has the zoom too */
+			if (i == 1 && !strcmp(e, "px") && zoom > 0) {
+				snprintf(px, sizeof(px), "%.2fpx", f / zoom);
+				cat(&h, &len, px, 0);
+			} else {
+				cat(&h, &len, v, 1);
+			}
+			free(v);
+		}
+	cat(&h, &len, "\"><style>" POP_CSS "</style><body><div id=w>", 0);
+	for (i = 0; i < n; i++) {
+		cat(&h, &len, "<div class=\"", 0);
+		cat(&h, &len, r[i].kind & R_LABEL ? "g" : r[i].kind & R_IN ?
+			"i" : "", 0);
+		cat(&h, &len, r[i].kind & R_OFF ? " d\">" : "\">", 0);
+		row_label(&r[i], label, sizeof(label));
+		/* an empty one keeps its line */
+		cat(&h, &len, *label ? label : "\xc2\xa0", 1);
+		cat(&h, &len, "</div>", 0);
+	}
+	cat(&h, &len, "</div>", 0);
+	return h;
+}
+
+/* Is sel in the dark scheme? As the cascade decides (style_dark()) */
+static int sel_dark(struct shell *s, soie_node *sel)
+{
+	char *v = soie_computed_value(sel, NULL, "color-scheme"), *w, *k;
+	int dark = 0, light = 0;
+
+	for (w = v ? strtok_r(v, " \t\n", &k) : NULL; w;
+	     w = strtok_r(NULL, " \t\n", &k)) {
+		dark |= !strcasecmp(w, "dark");
+		light |= !strcasecmp(w, "light");
+	}
+	free(v);
+	return dark && (!light || s->dark);
+}
+
+static void pop_close(struct shell *s)
+{
+	if (s->pop.sel)
+		pop_dirty(s);
+	if (s->pop.doc)
+		soie_node_free(s->pop.doc);
+	free(s->pop.row);
+	free(s->pop.src);
+	s->pop.sel = s->pop.page = s->pop.doc = NULL;
+	s->pop.row = NULL;
+	s->pop.src = NULL;
+	s->pop.n = 0;
+	s->pop.cur = -1;
+}
+
+static void pop_scroll(struct shell *s, int y)
+{
+	int max = s->pop.height - (s->pop.h - 2);
+
+	y = y > max ? max : y;
+	y = y < 0 ? 0 : y;
+	if (y != s->pop.scroll) {
+		s->pop.scroll = y;
+		pop_dirty(s);
+	}
+}
+
+/* Highlight row i, scrolled into the list's view when show */
+static void pop_cur(struct shell *s, int i, int show)
+{
+	struct poprow *r = s->pop.row;
+
+	if (i == s->pop.cur)
+		return;
+	if (s->pop.cur >= 0)
+		soie_element_remove_attr(r[s->pop.cur].div, "h");
+	s->pop.cur = i;
+	if (i >= 0) {
+		soie_element_set_attr(r[i].div, "h", "");
+		if (show && r[i].y < s->pop.scroll)
+			pop_scroll(s, (int)floorf(r[i].y));
+		else if (show && r[i].y + r[i].h > s->pop.scroll +
+			 s->pop.h - 2)
+			pop_scroll(s, (int)ceilf(r[i].y + r[i].h) -
+				(s->pop.h - 2));
+	}
+	soie_document_update(s->pop.doc);
+	pop_dirty(s);
+}
+
+/* Open sel's list, under it if it fits there, else over it, else on
+ * the larger side, scrolling */
+static void pop_open(struct shell *s, soie_node *sel)
+{
+	soie_style_options so;
+	soie_node *w, *c;
+	float sx, sy, sw, sh, cx, cy, cw, ch, x, y;
+	int i, top, bottom, need;
+
+	pop_close(s);
+	s->ta.len = 0;
+	if (!s->page.doc || soie_element_rect(sel, &sx, &sy, &sw, &sh) ||
+	    !(s->pop.n = sel_rows(sel, &s->pop.row)))
+		goto fail;
+	s->pop.dark = sel_dark(s, sel);
+	s->pop.src = pop_html(sel, s->pop.row, s->pop.n, s->pop.dark,
+		s->zoom);
+	s->pop.doc = soie_html_parse(s->pop.src, strlen(s->pop.src), NULL);
+	memset(&so, 0, sizeof(so));
+	so.width = s->view_w;
+	so.height = s->view_h;
+	so.zoom = s->zoom;
+	so.dark = s->dark;
+	soie_style_document(s->pop.doc, &so);
+	/* as wide as its widest row: an inline-block's width, its lines
+	 * never wrapping (pre), its min-width nothing in a 1 px view */
+	soie_layout_document(s->pop.doc, 1, s->view_h);
+	if (!(w = find_id(s->pop.doc, "w")) ||
+	    soie_element_rect(w, &cx, &cy, &cw, &ch))
+		goto fail;
+	for (c = soie_node_first_child(w), i = 0; c && i < s->pop.n;
+	     c = soie_node_next_sibling(c))
+		if (soie_node_get_type(c) == SOIE_ELEMENT)
+			s->pop.row[i++].div = c;
+	if (i < s->pop.n)
+		goto fail;
+	top = (int)floorf(sy) - s->page.scroll;
+	bottom = (int)ceilf(sy + sh) - s->page.scroll;
+	top = top < 0 ? 0 : top > s->view_h ? s->view_h : top;
+	bottom = bottom < top ? top : bottom > s->view_h ? s->view_h : bottom;
+	need = (int)ceilf(ch) + 2;
+	if (need <= s->view_h - bottom || (need > top &&
+	    s->view_h - bottom >= top)) {
+		s->pop.y = bottom;
+		s->pop.h = need < s->view_h - bottom ? need :
+			s->view_h - bottom;
+	} else {
+		s->pop.h = need < top ? need : top;
+		s->pop.y = top - s->pop.h;
+	}
+	s->pop.bar = s->pop.h < need ? POP_BAR : 0;
+	s->pop.w = (int)ceilf(cw) + 2 + s->pop.bar;
+	if (s->pop.w < (int)ceilf(sw))
+		s->pop.w = (int)ceilf(sw);
+	if (s->pop.w > s->view_w)
+		s->pop.w = s->view_w;
+	s->pop.x = (int)floorf(sx);
+	if (s->pop.x + s->pop.w > s->view_w)
+		s->pop.x = s->view_w - s->pop.w;
+	if (s->pop.x < 0)
+		s->pop.x = 0;
+	if (s->pop.h < 3 || s->pop.w - 2 - s->pop.bar < 1)
+		goto fail;
+	/* the rows as wide as the list (min-width: 100%) */
+	soie_layout_document(s->pop.doc, s->pop.w - 2 - s->pop.bar,
+		s->pop.h - 2);
+	s->pop.height = (int)ceilf(soie_layout_height(s->pop.doc));
+	for (i = 0; i < s->pop.n; i++)
+		if (soie_element_rect(s->pop.row[i].div, &x, &y, &cw,
+		    &s->pop.row[i].h))
+			goto fail;
+		else
+			s->pop.row[i].y = y;
+	s->pop.sel = sel;
+	s->pop.page = s->page.doc;
+	s->pop.gen = soie_document_generation(s->page.doc);
+	s->pop.page_scroll = s->page.scroll;
+	s->pop.scroll = 0;
+	s->pop.cur = -1;
+	s->pop.mx = s->pop.my = -1;
+	/* the option shown highlighted, in the middle when it scrolls */
+	i = row_of(s->pop.row, s->pop.n, sel_current(sel));
+	if (i >= 0 && usable(&s->pop.row[i])) {
+		pop_scroll(s, (int)(s->pop.row[i].y - (s->pop.h - 2 -
+			s->pop.row[i].h) / 2));
+		pop_cur(s, i, 1);
+	}
+	pop_dirty(s);
+	debug(2, "select list: %d rows, %dx%d at %d,%d", s->pop.n, s->pop.w,
+		s->pop.h, s->pop.x, s->pop.y);
+	return;
+fail:
+	s->pop.sel = NULL;
+	pop_close(s);
+}
+
+/*
+ * Is the list still of this page and this select? Scripts may have
+ * moved the focus, removed the select or changed its options, the page
+ * may have scrolled or gone: it closes then. 1 when open.
+ */
+static int pop_check(struct shell *s)
+{
+	struct poprow *r;
+	unsigned long g;
+	char *src = NULL;
+	int n, i, same;
+
+	if (!s->pop.sel)
+		return 0;
+	if (s->pop.page != s->page.doc || s->focus != s->pop.sel ||
+	    s->page.scroll != s->pop.page_scroll) {
+		pop_close(s);
+		return 0;
+	}
+	g = soie_document_generation(s->page.doc);
+	if (g == s->pop.gen)
+		return 1;
+	if (!has_node(s->page.doc, s->pop.sel)) {
+		pop_close(s);
+		return 0;
+	}
+	n = sel_rows(s->pop.sel, &r);
+	same = n == s->pop.n;
+	for (i = 0; same && i < n; i++)
+		same = r[i].opt == s->pop.row[i].opt &&
+			r[i].kind == s->pop.row[i].kind;
+	if (same)
+		src = pop_html(s->pop.sel, r, n, s->pop.dark, s->zoom);
+	same = same && !strcmp(src, s->pop.src);
+	free(r);
+	free(src);
+	if (!same) {
+		pop_close(s);
+		return 0;
+	}
+	s->pop.gen = g;
+	return 1;
+}
+
+static int pop_in(struct shell *s, int x, int y)
+{
+	return x >= s->pop.x && x < s->pop.x + s->pop.w && y >= s->pop.y &&
+		y < s->pop.y + s->pop.h;
+}
+
+/* The row at view x, y; -1 for none (the border, the scroll bar) */
+static int pop_row_at(struct shell *s, int x, int y)
+{
+	float py = (float)(y - s->pop.y - 1 + s->pop.scroll);
+	int i;
+
+	if (x < s->pop.x + 1 || x >= s->pop.x + s->pop.w - 1 - s->pop.bar)
+		return -1;
+	for (i = 0; i < s->pop.n; i++)
+		if (py >= s->pop.row[i].y &&
+		    py < s->pop.row[i].y + s->pop.row[i].h)
+			return i;
+	return -1;
+}
+
+/* The pointer at x, y: the usable row under it highlighted; 1 when
+ * the highlight moved */
+static int pop_hover(struct shell *s, int x, int y)
+{
+	int i = s->pop.cur;
+
+	s->pop.mx = x;
+	s->pop.my = y;
+	if (pop_in(s, x, y) && (i = pop_row_at(s, x, y)) >= 0 &&
+	    usable(&s->pop.row[i]) && i != s->pop.cur) {
+		pop_cur(s, i, 0);
+		return 1;
+	}
+	return 0;
+}
+
+/* Row i picked: the list closes, the select takes it */
+static void pop_pick(struct shell *s, int i)
+{
+	soie_node *sel = s->pop.sel, *o = i >= 0 ? s->pop.row[i].opt : NULL;
+
+	pop_close(s);
+	if (o)
+		sel_set(s, sel, o);
+}
+
+/* A click while the list is open: on a row it picks it, on the scroll
+ * bar it scrolls a page, anywhere else (the select too) it closes the
+ * list, and goes no further */
+static void pop_click(struct shell *s, int x, int y)
+{
+	int i, page = s->pop.h - 2;
+
+	if (!pop_in(s, x, y)) {
+		pop_close(s);
+	} else if (s->pop.bar && x >= s->pop.x + s->pop.w - 1 - s->pop.bar) {
+		pop_scroll(s, s->pop.scroll + (y < s->pop.y + s->pop.h / 2 ?
+			-page : page));
+	} else if ((i = pop_row_at(s, x, y)) >= 0 && usable(&s->pop.row[i])) {
+		pop_pick(s, i);
+	}
+}
+
+/* A key while the list is open; 1 when taken, 0 for the front's */
+static int pop_key(struct shell *s, const char *key, const char *text,
+	int mods)
+{
+	int alt = mods & SOIE_MOD_ALT, i = s->pop.cur, page;
+
+	if (mods & (SOIE_MOD_CTRL | SOIE_MOD_META)) {
+		pop_close(s);
+		return 0;
+	}
+	if (!strcmp(key, "Escape")) {
+		pop_close(s);
+		return 1;
+	}
+	if (!strcmp(key, "Enter") || !strcmp(key, "Tab") ||
+	    !strcmp(key, "F4") || (!strcmp(key, " ") && !typing(s, key)) ||
+	    (alt && (!strcmp(key, "ArrowDown") || !strcmp(key, "ArrowUp")))) {
+		pop_pick(s, i);
+		return 1;
+	}
+	if (alt) {
+		pop_close(s);
+		return 0;
+	}
+	/* rows of the list's view a page */
+	page = s->pop.h * s->pop.n / (s->pop.height + 1) - 1;
+	i = row_key(s->pop.row, s->pop.n, i, key, page < 1 ? 1 : page);
+	if (i == s->pop.cur && text && (unsigned char)*text >= 0x20 &&
+	    *text != 0x7f)
+		i = row_typed(s, s->pop.row, s->pop.n, i, text);
+	if (i != s->pop.cur)
+		pop_cur(s, i, 1);
+	return 1;
+}
+
+/* A key to a focused select, its list closed: arrows and type-ahead
+ * pick the next option at once, Space, Enter, F4, Alt+Down open the
+ * list; 1 when taken, 0 for the front's */
+static int sel_key(struct shell *s, const char *key, const char *text,
+	int mods)
+{
+	soie_node *sel = s->focus;
+	struct poprow *r;
+	int alt = mods & SOIE_MOD_ALT, n, i, j;
+
+	if (mods & (SOIE_MOD_CTRL | SOIE_MOD_META))
+		return 0;
+	if (!strcmp(key, "Escape")) {
+		set_page_focus(s, NULL, 0);
+		return 1;
+	}
+	if (soie_element_get_attr(sel, "disabled"))
+		return 1;
+	if (is_dropdown(sel) && (!strcmp(key, "F4") || (alt &&
+	    (!strcmp(key, "ArrowDown") || !strcmp(key, "ArrowUp"))) ||
+	    (!alt && (!strcmp(key, "Enter") || (!strcmp(key, " ") &&
+	    !typing(s, key)))))) {
+		s->pop.want = sel;
+		return 1;
+	}
+	if (alt)
+		return 0;
+	n = sel_rows(sel, &r);
+	i = j = row_of(r, n, sel_current(sel));
+	if (strcmp(key, "PageUp") && strcmp(key, "PageDown"))
+		j = row_key(r, n, i, key, 1);
+	if (j == i && text && (unsigned char)*text >= 0x20 && *text != 0x7f)
+		j = row_typed(s, r, n, i, text);
+	if (j != i && j >= 0)
+		sel_set(s, sel, r[j].opt);
+	free(r);
+	return 1;
+}
+
+/* Open the list a click or a key asked for, once their scripts ran:
+ * when its select still has the focus */
+static void pop_wanted(struct shell *s)
+{
+	soie_node *sel = s->pop.want;
+
+	s->pop.want = NULL;
+	if (sel && s->focus == sel && s->page.doc &&
+	    has_node(s->page.doc, sel))
+		pop_open(s, sel);
+}
+
+/* Fill view rect x0, y0, x1, y1 with rgb, inside clip (x0 y0 x1 y1) */
+static void pop_fill(struct shell *s, unsigned char *rgba, int stride,
+	const int *clip, int x0, int y0, int x1, int y1, unsigned rgb)
+{
+	int i, j, r = s->bgra ? 2 : 0;
+
+	x0 = x0 < clip[0] ? clip[0] : x0;
+	y0 = y0 < clip[1] ? clip[1] : y0;
+	x1 = x1 > clip[2] ? clip[2] : x1;
+	y1 = y1 > clip[3] ? clip[3] : y1;
+	for (j = y0; j < y1; j++)
+		for (i = x0; i < x1; i++) {
+			unsigned char *p = rgba + (size_t)j * (size_t)stride +
+				(size_t)i * 4;
+
+			p[r] = (unsigned char)(rgb >> 16);
+			p[1] = (unsigned char)(rgb >> 8);
+			p[2 - r] = (unsigned char)rgb;
+			p[3] = 255;
+		}
+}
+
+/* The open list, over the page, in the view's rect x, y, w, h: a border
+ * (ButtonBorder), its page, its scroll bar */
+static void pop_paint(struct shell *s, unsigned char *rgba, int stride,
+	int x, int y, int w, int h)
+{
+	int c[4] = { x, y, x + w, y + h }, px = s->pop.x, py = s->pop.y;
+	int x1 = px + s->pop.w, y1 = py + s->pop.h, dx1 = x1 - 1 - s->pop.bar;
+	int ix0, iy0, ix1, iy1;
+
+	if (!s->pop.sel || s->pop.page != s->page.doc)
+		return;
+	pop_fill(s, rgba, stride, c, px, py, x1, y1, s->pop.dark ?
+		0x8f8f9d : 0x767676);
+	if (s->pop.bar) {
+		int ih = s->pop.h - 2, th, ty;
+
+		th = ih * ih / (s->pop.height > ih ? s->pop.height : ih);
+		th = th < 16 ? (ih < 16 ? ih : 16) : th;
+		ty = py + 1 + (s->pop.height > ih ? (ih - th) * s->pop.scroll /
+			(s->pop.height - ih) : 0);
+		pop_fill(s, rgba, stride, c, dx1, py + 1, x1 - 1, y1 - 1,
+			s->pop.dark ? 0x2b2a33 : 0xf0f0f0);
+		pop_fill(s, rgba, stride, c, dx1 + 1, ty, x1 - 2, ty + th,
+			s->pop.dark ? 0x8f8f9d : 0xa0a0a0);
+	}
+	ix0 = px + 1 > c[0] ? px + 1 : c[0];
+	iy0 = py + 1 > c[1] ? py + 1 : c[1];
+	ix1 = dx1 < c[2] ? dx1 : c[2];
+	iy1 = y1 - 1 < c[3] ? y1 - 1 : c[3];
+	if (ix0 < ix1 && iy0 < iy1)
+		paint_doc(s, s->pop.doc, rgba + (size_t)iy0 * (size_t)stride +
+			(size_t)ix0 * 4, ix1 - ix0, iy1 - iy0, stride,
+			ix0 - px - 1, iy0 - py - 1 + s->pop.scroll);
+}
+
 static void click(struct shell *s, int x, int y, int mods)
 {
 	soie_node *n = s->page.doc ? soie_hit_test(s->page.doc, (float)x,
 		(float)(y + s->page.scroll)) : NULL, *a, *form, *sm;
 	const char *t;
 	float cy = (float)y;
+	int md = 0;
 
 	if (n) {
 		soie_node *was = NULL;
 		int box = 0;
 
-		fire(s, n, "mousedown", (float)x, cy, NULL, mods);
+		md = fire(s, n, "mousedown", (float)x, cy, NULL, mods);
 		fire(s, n, "mouseup", (float)x, cy, NULL, mods);
 		/* a checkbox or a radio changes before its click event, and
 		 * goes back if a handler cancels it (HTML 4.10.5.4): handlers
@@ -2251,6 +3065,16 @@ static void click(struct shell *s, int x, int y, int mods)
 		set_page_focus(s, n, v ? (int)strlen(v) : 0);
 		return;
 	}
+	if (is_dropdown(n) && !soie_element_get_attr(n, "disabled")) {
+		/* focused, its list opens; not when a script cancelled the
+		 * mousedown (a page's own list), as browsers do */
+		if (!md) {
+			set_page_focus(s, n, 0);
+			s->pop.want = n;
+		}
+		s->pop.ate = 1;
+		return;
+	}
 	set_page_focus(s, NULL, 0);
 	if (!n)
 		return;
@@ -2264,28 +3088,17 @@ static void click(struct shell *s, int x, int y, int mods)
 		}
 	}
 	if (!strcmp(soie_element_name(n), "select")) {
-		/* cycle through the options */
-		soie_node *o, *cur = NULL, *next = NULL, *first = NULL;
+		/* a list box, painted without scrolling yet: a click
+		 * cycles through its options */
+		struct poprow *r;
+		int k = sel_rows(n, &r), i = row_of(r, k, sel_current(n));
+		int j = row_key(r, k, i, "ArrowDown", 1);
 
-		for (o = find_tag(n, "option"); o; o = soie_node_next_sibling(o)) {
-			if (soie_node_get_type(o) != SOIE_ELEMENT)
-				continue;
-			if (!first)
-				first = o;
-			if (cur && !next)
-				next = o;
-			if (soie_element_get_attr(o, "selected"))
-				cur = o;
-		}
-		if (cur)
-			soie_element_remove_attr(cur, "selected");
-		if (!next)
-			next = cur ? first : (first ? soie_node_next_sibling(
-				first) : NULL);
-		if (next)
-			soie_element_set_attr(next, "selected", "");
-		changed(s, n);
-		relayout(s);
+		if (j == i)
+			j = row_key(r, k, -1, "Home", 1);
+		if (j >= 0 && !soie_element_get_attr(n, "disabled"))
+			sel_set(s, n, r[j].opt);
+		free(r);
 		return;
 	}
 	if ((a = ancestor(n, "button")) && (form = form_of(a))) {
@@ -2317,8 +3130,15 @@ void shell_click(struct shell *s, int x, int y, int mods)
 {
 	debug(2, "click %d,%d (scroll %d)", x, y, s->page.scroll);
 	s->in_input++;
-	click(s, x, y, mods);
+	s->pop.ate = 0;
+	if (pop_check(s)) {
+		pop_click(s, x, y);
+		s->pop.ate = 1;
+	} else {
+		click(s, x, y, mods);
+	}
 	after_scripts(s);
+	pop_wanted(s);
 	s->in_input--;
 	clamp_scroll(s);
 }
@@ -2384,11 +3204,22 @@ static int key_in(struct shell *s, const char *key, const char *text, int mods)
 	debug(2, "key %s%s%s%s", mods & SOIE_MOD_CTRL ? "Ctrl+" : "",
 		mods & SOIE_MOD_ALT ? "Alt+" : "", mods & SOIE_MOD_SHIFT ?
 		"Shift+" : "", key);
+	/* an open list takes the keys, the page sees none (a pop-up) */
+	if (pop_check(s)) {
+		r = pop_key(s, key, text, mods);
+		after_scripts(s);
+		return r;
+	}
 	if (s->page.doc && (fire(s, s->focus ? s->focus :
 	    find_tag(s->page.doc, "body"), "keydown", 0, 0, key, mods) ||
 	    s->pending_nav)) {
 		after_scripts(s);
 		return 1;
+	}
+	if (is_el(s->focus, "select")) {
+		r = sel_key(s, key, text, mods);
+		after_scripts(s);
+		return r;
 	}
 	if (s->focus) {
 		if (!strcmp(key, "Enter")) {
@@ -2452,16 +3283,23 @@ int shell_key(struct shell *s, const char *key, const char *text, int mods)
 
 	s->in_input++;
 	r = key_in(s, key, text, mods);
+	pop_wanted(s);
 	s->in_input--;
 	return r;
 }
 
 int shell_hover(struct shell *s, int x, int y, char *link, size_t size)
 {
-	soie_node *n = s->page.doc ? soie_hit_test(s->page.doc, (float)x,
-		(float)(y + s->page.scroll)) : NULL, *a;
+	soie_node *n, *a;
 
 	*link = '\0';
+	if (pop_check(s)) {
+		pop_hover(s, x, y);
+		if (pop_in(s, x, y))
+			return SHELL_ARROW;
+	}
+	n = s->page.doc ? soie_hit_test(s->page.doc, (float)x,
+		(float)(y + s->page.scroll)) : NULL;
 	if ((a = ancestor(n, "a")) && soie_element_get_attr(a, "href")) {
 		char *abs = soie_url_resolve(s->page.url,
 			soie_element_get_attr(a, "href"));
@@ -2499,12 +3337,22 @@ int shell_hit(struct shell *s, int x, int y, char *link, char *image,
 void shell_scroll(struct shell *s, int dy)
 {
 	debug(3, "scroll %+d", dy);
+	/* the wheel over an open list scrolls it, elsewhere closes it */
+	if (pop_check(s)) {
+		if (pop_in(s, s->pop.mx, s->pop.my)) {
+			pop_scroll(s, s->pop.scroll + dy);
+			pop_hover(s, s->pop.mx, s->pop.my);
+			return;
+		}
+		pop_close(s);
+	}
 	s->page.scroll += dy;
 	clamp_scroll(s);
 }
 
 void shell_scroll_to(struct shell *s, int y)
 {
+	pop_close(s);
 	s->page.scroll = y;
 	clamp_scroll(s);
 }
@@ -2518,7 +3366,13 @@ void shell_view(struct shell *s, int *scroll, int *height, int *view)
 
 void shell_blur(struct shell *s)
 {
+	pop_close(s);
 	set_page_focus(s, NULL, 0);
+}
+
+void shell_focus_out(struct shell *s)
+{
+	pop_close(s);
 }
 
 int shell_paste(struct shell *s, const char *text)
@@ -2528,7 +3382,7 @@ int shell_paste(struct shell *s, const char *text)
 	size_t len;
 	int multi;
 
-	if (!s->focus)
+	if (!is_text_control(s->focus))
 		return 0;
 	v = soie_element_get_attr(s->focus, "value");
 	if (!v)
@@ -2565,7 +3419,10 @@ const char *shell_field(struct shell *s)
 {
 	const char *v;
 
-	if (!s->focus)
+	/* an open list takes Escape as a field would (front.c) */
+	if (s->pop.sel)
+		return "";
+	if (!is_text_control(s->focus))
 		return NULL;
 	v = soie_element_get_attr(s->focus, "value");
 	return v ? v : "";
@@ -2653,8 +3510,12 @@ static int sel_rects(struct shell *s)
 int shell_select_start(struct shell *s, int x, int y, int unit)
 {
 	char link[16];
-	int had = sel_rects(s) > 0;
+	int had;
 
+	/* the press was the list's (it opened, picked or closed it) */
+	if (s->pop.sel || s->pop.ate)
+		return 0;
+	had = sel_rects(s) > 0;
 	s->sel.doc = NULL;
 	/* a press on a link or a field is theirs */
 	if (!s->page.doc || shell_hover(s, x, y, link, sizeof(link)) !=
@@ -2670,6 +3531,9 @@ int shell_select_start(struct shell *s, int x, int y, int unit)
 
 int shell_select_to(struct shell *s, int x, int y)
 {
+	/* the button held over an open list: it follows the pointer */
+	if (pop_check(s))
+		return pop_hover(s, x, y);
 	if (!s->sel.doc || s->sel.doc != s->page.doc)
 		return 0;
 	if (s->sel.pt[2] == (float)x && s->sel.pt[3] == (float)(y +
@@ -2758,6 +3622,11 @@ int shell_tick(struct shell *s, int *repaint)
 			now_s() - t1);
 	if (s->pending_nav)
 		t = 0;
+	/* the scripts' changes may close the list; the pointer or the
+	 * wheel may have changed it: shown */
+	pop_check(s);
+	if (s->pop.dirty && !*repaint)
+		*repaint = 1;
 	if (s->page.doc && !s->page.done && s->page.loading == L_NONE &&
 	    !res_pending(s, -1)) {
 		int i, failed = 0;
@@ -2886,6 +3755,7 @@ static soie_node *paint_view(struct shell *s, unsigned char *rgba,
 	    s->page.scroll + y)) {
 		sel_paint(s, rgba, stride, x, y, w, h);
 		highlight(s, rgba, stride, x, y, w, h);
+		pop_paint(s, rgba, stride, x, y, w, h);
 		return s->page.doc;
 	}
 	if (s->page.old && !paint_doc(s, s->page.old, p, w, h, stride, x,
@@ -2914,6 +3784,7 @@ void shell_paint(struct shell *s, unsigned char *rgba, int stride)
 	if (s->page.doc)
 		soie_layout_damage(s->page.doc, r, 0);
 	s->damage_full = 0;
+	s->pop.dirty = 0;
 }
 
 int shell_paint_changed(struct shell *s, unsigned char *rgba, int stride,
@@ -2922,11 +3793,21 @@ int shell_paint_changed(struct shell *s, unsigned char *rgba, int stride,
 	float f[4 * 32];
 	int n, i, k = 0;
 
+	/* room for the list's rect */
 	if (s->damage_full || !s->page.doc || s->painted != s->page.doc ||
-	    s->painted_scroll != s->page.scroll || max > 32 ||
-	    (n = soie_layout_damage(s->page.doc, f, max)) < 0) {
+	    s->painted_scroll != s->page.scroll || max > 32 || max < 2 ||
+	    (n = soie_layout_damage(s->page.doc, f, max - 1)) < 0) {
 		debug(3, "repaint all");
 		return -1;
+	}
+	if (s->pop.dirty) {
+		/* the list opened, changed or closed */
+		f[n * 4] = (float)s->pop.dmg[0];
+		f[n * 4 + 1] = (float)(s->pop.dmg[1] + s->page.scroll);
+		f[n * 4 + 2] = (float)(s->pop.dmg[2] - s->pop.dmg[0]);
+		f[n * 4 + 3] = (float)(s->pop.dmg[3] - s->pop.dmg[1]);
+		n++;
+		s->pop.dirty = 0;
 	}
 	for (i = 0; i < n; i++) {
 		int x0 = (int)floorf(f[i * 4]);
@@ -2968,7 +3849,9 @@ int shell_paint_scroll(struct shell *s, unsigned char *rgba, int stride,
 	size_t row = (size_t)s->view_w * 4;
 
 	*dy = 0;
-	if (page_changed(s))
+	/* the list opened, changed or closed: its pixels are not the
+	 * page's to move */
+	if (page_changed(s) || s->pop.dirty || (s->pop.sel && d))
 		return 0;
 	/* the old page shown stays until the new one is laid out */
 	if (!s->page.doc || s->painted != s->page.doc || !d)
@@ -3268,12 +4151,14 @@ void shell_free(struct shell *s)
 	auth_forget(s);
 	free(s->found.text);
 	free(s->sel.r);
+	pop_close(s);
 	free(s);
 }
 
 void shell_resize(struct shell *s, int w, int h)
 {
 	debug(2, "resize %dx%d", w, h);
+	pop_close(s);
 	s->view_w = w;
 	s->view_h = h;
 	s->damage_full = 1;
@@ -3292,6 +4177,7 @@ void shell_zoom(struct shell *s, float zoom)
 	if (zoom == s->zoom)
 		return;
 	debug(2, "zoom %.2f", zoom);
+	pop_close(s);
 	/* the same place of the page stays at the top */
 	s->page.scroll = (int)((float)s->page.scroll * zoom / s->zoom);
 	s->zoom = zoom;
@@ -3311,6 +4197,7 @@ void shell_dark(struct shell *s, int on)
 	if (!on == !s->dark)
 		return;
 	debug(2, "%s colours", on ? "dark" : "light");
+	pop_close(s);
 	s->dark = !!on;
 	s->damage_full = 1;
 	if (s->page.doc)

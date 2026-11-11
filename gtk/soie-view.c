@@ -763,8 +763,15 @@ static gboolean focus_in(GtkWidget *w, GdkEventFocus *e)
 
 static gboolean focus_out(GtkWidget *w, GdkEventFocus *e)
 {
+	SoieView *v = SOIE_VIEW(w);
+
 	(void)e;
-	gtk_im_context_focus_out(SOIE_VIEW(w)->im);
+	gtk_im_context_focus_out(v->im);
+	/* a select's open list closes (another window, another tab) */
+	if (v->sh) {
+		shell_focus_out(v->sh);
+		redraw(v);
+	}
 	return FALSE;
 }
 
@@ -812,6 +819,9 @@ static gboolean motion(GtkWidget *w, GdkEventMotion *e)
 	set_cursor(v, shell_hover(v->sh, DEV(v, e->x), DEV(v, e->y), link,
 		sizeof(link)));
 	hovered(v, link);
+	/* the row under the pointer of a select's open list: shown by
+	 * the tick */
+	tick_soon(v);
 	return TRUE;
 }
 

@@ -7,7 +7,8 @@ by RMSE (the 38 sites survey of 2026-11-03).
 
 ## Rendering, in the plan
 
-- Form controls: the pop-up list of a `<select>`, a `range` that
+- Form controls: list boxes (`<select multiple>`, `size` above 1)
+  that scroll, show and pick their selected options, a `range` that
   slides, a color picker, date fields.
 - Shadow DOM, what is left: `slot.assign()` (manual assignment),
   `setHTMLUnsafe()` / `parseHTMLUnsafe()` with declarative roots,

@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<!--
+A select's pop-up list, by hand: browser/xsoie file://$PWD/tests/shell/select.html
+- Click "Fruit": the list opens under it, Banana highlighted. Move over
+  it (the highlight follows), click Cherry: the counts say input 1,
+  change 1, last cherry. Open it again and click Cherry: nothing more.
+- Focus "Fruit" (a click, then Escape closes the list but keeps the
+  focus): Down / Up change the value at once; "d" jumps to Date, "dd"
+  quickly to Durian; Space, Enter, F4 or Alt+Down open the list.
+- In the list: Up, Down, Home, End, Page Up, Page Down move the
+  highlight, Enter or Space picks it, Escape or a click elsewhere
+  closes it unchanged, letters jump (type-ahead).
+- "Groups": bold labels and indented options, Disabled greyed and not
+  picked, Hidden left out.
+- "Long": 200 options, the list fits the view and scrolls (wheel, Page
+  Down, the scroll bar).
+- "Dark": the dark system colours (color-scheme: dark).
+- "Shadow": a select in a shadow tree.
+- "Gone": removed by a script a second after its list opened: the
+  list closes, nothing breaks.
+- "Grows": a script adds an option a second after its list opened:
+  the list closes. "Own": its mousedown is cancelled, a page's own
+  list would show: no list, the focus only.
+- "Bottom", in the fixed bar at the bottom of the view: the list opens
+  upwards. Scroll the page with the list open: it closes.
+-->
+<html>
+<head>
+<meta charset="utf-8">
+<title>Select pop-up</title>
+<style>
+body { font: 16px sans-serif; margin: 10px; height: 2400px; }
+p { margin: 6px 0; }
+#counts { font: bold 18px monospace; background: #ffd; padding: 4px; }
+.dark { color-scheme: dark; background: #1c1b22; color: #fbfbfe;
+	padding: 6px; }
+#bar { position: fixed; left: 0; right: 0; bottom: 0; height: 40px;
+	background: #ccd; padding: 6px; box-sizing: border-box; }
+.big { font: 20px serif; }
+</style>
+</head>
+<body>
+<p id="counts">input 0 change 0 last -</p>
+<form id="f">
+<p>Fruit <select name="fruit" id="fruit">
+<option value="apple">Apple</option>
+<option value="banana" selected>Banana</option>
+<option value="cherry">Cherry</option>
+<option value="date">Date</option>
+<option value="durian">Durian</option>
+<option value="elder">Elderberry</option>
+</select>
+Groups <select id="groups" class="big">
+<option>None</option>
+<optgroup label="Vegetables">
+<option>Carrot</option>
+<option disabled>Disabled leek</option>
+<option>Potato</option>
+<option hidden>Hidden onion</option>
+</optgroup>
+<optgroup label="Off group" disabled>
+<option>In a disabled group</option>
+</optgroup>
+<option label="By its label">text not shown</option>
+<option></option>
+</select>
+Long <select id="long"></select></p>
+</form>
+<div class="dark"><p>Dark <select id="dark">
+<option>One</option><option selected>Two</option><option>Three</option>
+<option disabled>Four (disabled)</option>
+<optgroup label="Group"><option>Five</option></optgroup>
+</select></p></div>
+<p>Shadow <span id="host"><template shadowrootmode="open"><select id="sh">
+<option>Shadow one</option><option>Shadow two</option>
+<option>Shadow three</option></select></template></span>
+Gone <select id="gone"><option>Stays a second</option>
+<option>Then goes</option></select>
+Grows <select id="grows"><option>One</option><option>Two</option></select>
+Own <select id="own"><option>Not opened</option></select>
+Off <select disabled><option>Disabled select</option></select>
+List box <select size="3"><option>L1</option><option>L2</option>
+<option>L3</option><option>L4</option></select></p>
+<div id="bar">Bottom <select id="bottom">
+<option>B1</option><option>B2</option><option>B3</option><option>B4</option>
+<option>B5</option><option>B6</option><option>B7</option><option>B8</option>
+</select></div>
+<script>
+var nin = 0, nch = 0, last = '-';
+function show() {
+	document.getElementById('counts').textContent = 'input ' + nin +
+		' change ' + nch + ' last ' + last;
+	console.log('counts: input ' + nin + ' change ' + nch + ' last ' +
+		last);
+}
+/* both bubble: counted on the document */
+document.addEventListener('input', function (e) {
+	nin++;
+	last = e.target.id + '=' + e.target.value;
+	show();
+});
+document.addEventListener('change', function (e) {
+	nch++;
+	last = e.target.id + '=' + e.target.value;
+	show();
+});
+var host = document.getElementById('host');
+host.shadowRoot.getElementById('sh').addEventListener('change', function (e) {
+	console.log('shadow change ' + e.target.value);
+});
+var l = document.getElementById('long'), i;
+for (i = 1; i <= 200; i++) {
+	var o = document.createElement('option');
+	o.textContent = 'Option number ' + i;
+	o.value = 'n' + i;
+	l.appendChild(o);
+}
+var gone = document.getElementById('gone');
+gone.addEventListener('focus', function () {
+	setTimeout(function () {
+		gone.remove();
+		console.log('gone removed');
+	}, 1000);
+});
+var grows = document.getElementById('grows');
+grows.addEventListener('focus', function () {
+	setTimeout(function () {
+		var o = document.createElement('option');
+		o.textContent = 'Three (added)';
+		grows.appendChild(o);
+		console.log('grows: ' + grows.options.length);
+	}, 1000);
+});
+document.getElementById('own').addEventListener('mousedown',
+	function (e) {
+		e.preventDefault();
+	});
+</script>
+</body>
+</html>

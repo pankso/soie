@@ -1199,7 +1199,8 @@ reversed, edit the entry and say why; do not leave stale rules here.
   felt on the slowest processors; three is what a page of one server
   needs (its connection, plus three for the first resources).
 - Forms: text-like inputs, password, textarea, checkbox, radio,
-  select (a click cycles the options), submit buttons and Enter;
+  select (a pop-up list since, see "The pop-up list of a select"),
+  submit buttons and Enter;
   GET and POST in application/x-www-form-urlencoded. No file upload,
   no multipart yet. The engine paints the controls (value, caret,
   placeholder, checks) and keeps the focus (soie_set_focus()).
@@ -1992,6 +1993,68 @@ on the same frozen DOM.
   threads. It found the generation case above. The paint test checks
   the same at the engine's level: BGRA against RGBA, bands, a rect and
   a scrolled page against the whole.
+
+## The pop-up list of a select
+
+- A click on a drop-down select cycled through its options: no way to
+  see them, a list of fifty meant fifty clicks. It now opens a list of
+  them under it, as every browser does (November 2026).
+- The list is a little page the shell writes (one line per option,
+  the optgroups' labels bold, their options indented, disabled ones
+  in GrayText, hidden ones left out), lays out and paints itself over
+  the page view, last in paint_view(), clipped to the rect painted.
+  The fronts already paint their bars that way: no toolkit, the
+  engine draws the text in the select's font, and the three fronts
+  (xsoie, wsoie, SoieView) have it with no code of their own. The
+  colours are the system colours (Field, FieldText, Highlight,
+  HighlightText, GrayText) of the select's color scheme, as the
+  cascade decides it: dark in a dark section of a light page.
+- Its limit: it lives in the view and never reaches out of it, where
+  an OS window could. It opens under the select when the options fit
+  there, above when they fit there, else on the larger side, as tall
+  as that side and scrolling (a thumb drawn by the shell, the wheel,
+  the keys, a click on the bar pages). A pop-up window could reach
+  past the view, at the price of a window, a grab and a placement in
+  each front's toolkit.
+- Input goes to it first, through what the fronts already call:
+  shell_click() picks a row or, anywhere else, closes it and goes no
+  further (the click that closes a pop-up does nothing else in
+  browsers); shell_hover() highlights the row under the pointer;
+  shell_scroll() scrolls it under the pointer, closes it elsewhere;
+  shell_key() gives it every key before the page's keydown, as a
+  pop-up window would get them. A press it took starts no text
+  selection, a drag over it highlights. Up, Down, Home, End, Page Up
+  and Down move, Enter, Space, Tab, F4 and Alt+Up or Down pick,
+  Escape closes, letters typed within a second of each other jump to
+  the first option they start (the same letter again: the next one).
+  A focused select with its list closed changes at once with the
+  arrows, Home, End and letters, and opens with Space, Enter, F4 or
+  Alt+Down; Enter no longer sends its form.
+- A click focuses the select (focus and blur events, as in browsers;
+  it took no focus before) unless a script cancelled the mousedown,
+  the way pages draw their own list. A pick that changes the value
+  sets `selected` on that option only and fires input then change,
+  once; the same option again fires nothing.
+- It closes when the page scrolls, navigates or goes, the view is
+  resized or zoomed, the colours change, the select loses the focus
+  (a script's blur() too), and when the view loses the keyboard focus
+  (shell_focus_out(): the window or the tab), which the fronts say
+  (xsoie's FocusOut, wsoie's keyboard leave, SoieView's focus-out).
+  Scripts run while it is open: it checks, at each tick and input,
+  that the page's generation did not move, else that its select is
+  still in the document (a walk that compares pointers, the select
+  may be freed) and that its options make the same list; otherwise
+  it closes. Nothing of the page is touched while it is not sure.
+- Repainting: its rect, old and new, is a damage rect of the shell's
+  own, painted by shell_paint_changed() with the engine's; a scroll
+  does not move its pixels (shell_paint_scroll() says no). SoieView
+  ticks after a motion so that the highlight shows.
+- Not done: list boxes (multiple, size above 1) are painted as their
+  first rows, without scrolling nor the selected options, and a click
+  still cycles them; a long press and a release over a row (the
+  drag-to-pick of Windows) does nothing; a double click on the select
+  leaves the list open (front.c makes the second click a word
+  selection, which the list refuses).
 
 ## wsoie: the Wayland front
 

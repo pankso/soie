@@ -1218,6 +1218,11 @@ void front_focus(void)
 	dirty |= D_ALL;
 }
 
+void front_unfocus(void)
+{
+	shell_focus_out(sh);
+}
+
 void front_load(void)
 {
 	front_focus();

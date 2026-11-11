@@ -196,6 +196,9 @@ void shell_scroll_to(shell *s, int y);
 void shell_view(shell *s, int *scroll, int *height, int *view);
 /* The focused page control loses the focus. */
 void shell_blur(shell *s);
+/* The view lost the keyboard focus (its window, another tab shown): an
+ * open select's list closes, the focused control stays so. */
+void shell_focus_out(shell *s);
 /* Edit the value attribute of el (an input) at caret *cp with a key;
  * 1 when it changed. The front's own text fields use it too. */
 int shell_edit(soie_node *el, int *cp, const char *key, const char *text);

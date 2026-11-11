@@ -627,6 +627,8 @@ static void kb_leave(void *data, struct wl_keyboard *k, uint32_t serial,
 	(void)serial;
 	(void)s;
 	repeat_arm(0, 0);
+	front_unfocus();
+	front_redraw();
 }
 
 static void kb_key(void *data, struct wl_keyboard *k, uint32_t serial,
