@@ -3,7 +3,7 @@
 <head>
 	<meta charset="UTF-8">
 	<title>Soie - a light web engine, written to last</title>
-	<meta name="description" content="Soie (French for silk, say swah) is a web engine in plain C99: HTML, CSS, JavaScript and video in under 55,000 lines of code, plus QuickJS and FFmpeg as dependencies, a 700 KB download, for old PCs and new ones." />
+	<meta name="description" content="Soie (French for silk, say swah) is a web engine in plain C99: HTML, CSS, JavaScript and video in under 55,000 lines of code, plus QuickJS and FFmpeg as dependencies, a download under 800 KB, for old PCs and new ones." />
 	<meta name="robots" content="index, follow, all" />
 	<meta name="author" content="Christophe Lincoln"/>
 	<meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -19,14 +19,13 @@
 	<meta property="og:image:height" content="630" />
 	<meta property="og:image:alt" content="The Soie logo, a silk ribbon shaped as an S: Soie, the web, light." />
 	<meta name="twitter:card" content="summary_large_image" />
-	<link rel="stylesheet" href="slitaz-2026.css" />
 	<link rel="stylesheet" href="soie.css" />
 	<link rel="alternate" type="application/atom+xml" title="Soie releases" href="releases.atom" />
 </head>
 <body>
 
 <!-- Header -->
-<header id="header">
+<header id="header"><div class="top">
 	<input type="checkbox" id="nav-toggle">
 	<h1>
 		<a href="./">
@@ -38,12 +37,12 @@
 		<ul>
 			<li><a href="#why">Why</a></li>
 			<li><a href="#bench">Benchmarks</a></li>
-			<li><a href="#get">Get it</a></li>
 			<li><a href="https://hg.slitaz.org/soie">Source</a></li>
+			<li><a href="#get" class="button">Get it</a></li>
 		</ul>
 	</nav>
 	<label for="nav-toggle" id="nav-burger" aria-label="Menu">&#9776;</label>
-</header>
+</div></header>
 
 <!-- Lead -->
 <section class="lead">
@@ -61,8 +60,8 @@
 				the memory of new machines to the work that matters.
 			</p>
 			<div class="hero-buttons">
-				<a href="#get" class="btn btn-primary">Get Soie 0.1.6</a>
-				<a href="#why" class="btn btn-secondary">Why Soie?</a>
+				<a href="#get" class="button">Get Soie 0.1.6</a>
+				<a href="#why" class="button ghost">Why Soie?</a>
 			</div>
 			<small>Free software, BSD licence. Made for and by SliTaz.</small>
 		</div>
@@ -176,7 +175,7 @@
 		</div>
 		</div>
 		<p class="note">Averages over the six pages below.</p>
-		<table class="data">
+		<div class="table"><table class="data">
 			<tr><th>Page</th><th>Memory</th><th>CPU</th><th>Ready</th></tr>
 			<tr><td>www.slitaz.org</td><td><b class="s">16</b> / 392 MB</td><td><b class="s">0.14</b> / 0.83 s</td><td><b class="s">0.6</b> / 0.5 s</td></tr>
 			<tr><td>Wikipedia, Linux</td><td><b class="s">50</b> / 467 MB</td><td><b class="s">2.46</b> / 3.80 s</td><td><b class="s">3.3</b> / 2.0 s</td></tr>
@@ -184,7 +183,7 @@
 			<tr><td>LWN.net</td><td><b class="s">18</b> / 419 MB</td><td><b class="s">0.13</b> / 1.16 s</td><td><b class="s">1.5</b> / 1.4 s</td></tr>
 			<tr><td>MDN, CSS</td><td><b class="s">24</b> / 436 MB</td><td><b class="s">0.28</b> / 1.73 s</td><td><b class="s">1.5</b> / 1.0 s</td></tr>
 			<tr><td>GitHub, torvalds/linux</td><td><b class="s">83</b> / 576 MB</td><td><b class="s">1.56</b> / 6.35 s</td><td><b class="s">2.2</b> / 2.0 s</td></tr>
-		</table>
+		</table></div>
 		<p class="note">In each cell, <b class="s">Soie</b> / Firefox.</p>
 		<p class="note">
 			Measured with <code>tools/browser-bench.sh -W</code> from the
@@ -202,7 +201,7 @@
 			shows every sample.
 		</p>
 
-		<h2 style="margin-top: var(--space-2xl)">The same page, two engines</h2>
+		<h2 class="more">The same page, two engines</h2>
 		<p class="intro">Screenshots of the same 1024&times;768 view, taken the same minute (October 31, 2026). The fonts differ (Soie uses DejaVu, as SliTaz does), the layout is the page's.</p>
 		<h3 class="pair-title">www.slitaz.org</h3>
 		<div class="pair">
@@ -323,16 +322,16 @@
 		<pre><code>spk-add xsoie</code></pre>
 		<p>Soie comes in many packages, so that a system installs only what it
 			needs:</p>
-		<table class="data">
-			<tr><th>Package</th><th style="text-align:left">What it holds</th></tr>
-			<tr><td><b>soie</b></td><td style="text-align:left">the engine, with cookies, content blocking, WebP and JavaScript</td></tr>
-			<tr><td><b>xsoie</b></td><td style="text-align:left">the X11 browser</td></tr>
-			<tr><td><b>wsoie</b></td><td style="text-align:left">the Wayland browser (x86_64)</td></tr>
-			<tr><td><b>soie-gtk</b></td><td style="text-align:left">SoieView, the GTK 3 widget Toile uses</td></tr>
-			<tr><td><b>soie-media</b></td><td style="text-align:left">audio and video, with FFmpeg and ALSA</td></tr>
-			<tr><td><b>soie-dev</b></td><td style="text-align:left">headers, static library, pkg-config files, soie-render</td></tr>
-		</table>
-		<p style="margin-top: var(--space-xl)">From the sources on any
+		<div class="table"><table class="data text">
+			<tr><th>Package</th><th>What it holds</th></tr>
+			<tr><td><b>soie</b></td><td>the engine, with cookies, content blocking, WebP and JavaScript</td></tr>
+			<tr><td><b>xsoie</b></td><td>the X11 browser</td></tr>
+			<tr><td><b>wsoie</b></td><td>the Wayland browser (x86_64)</td></tr>
+			<tr><td><b>soie-gtk</b></td><td>SoieView, the GTK 3 widget Toile uses</td></tr>
+			<tr><td><b>soie-media</b></td><td>audio and video, with FFmpeg and ALSA</td></tr>
+			<tr><td><b>soie-dev</b></td><td>headers, static library, pkg-config files, soie-render</td></tr>
+		</table></div>
+		<p>From the sources on any
 			GNU/Linux with a C99 compiler, GNU make, pkg-config, FreeType,
 			HarfBuzz, libpng and libjpeg (the browsers also want Xlib or
 			Wayland, GnuTLS and zlib; the extensions libwebp, FFmpeg and
@@ -388,7 +387,7 @@ make install PREFIX=/usr</code></pre>
 		<a href="https://hg.slitaz.org/soie">Repository</a>
 		<a href="https://github.com/pankso/soie">GitHub mirror</a>
 		<a href="https://maille.slitaz.org/tags/soie">Forum</a>
-		<a href="https://pkgs.slitaz.org/">Packages</a>
+		<a href="https://x.com/SliTazOS">X</a>
 	</p>
 	<p>Soie is free software, under the BSD licence (2 clauses). This page
 		is rendered by Soie as well as by the others.</p>
