@@ -3524,10 +3524,25 @@ compiled alone.
   extension ABI 0.2 (frame_for and next_frame appended to the media
   hooks, 0.1 extensions still load); public function added
   (soie/layout.h): soie_layout_images().
+- 0.1.10 (2026-11-24): <a download> to blob: and data: URLs, a CORS
+  fix (Filature bug 1062), and the first translations. Same soname;
+  extension ABI 0.3 (download appended to soie_script_host). The
+  texts SoieView and the shell show (context menu; error, login and
+  settings pages, downloads) go through gettext, domain "soie", bound
+  by SoieView: Toile was translated and its menu mixed two languages.
+  po/ is made as Toile's (the .pot generated, never committed), the
+  .mo installed with the GTK widget and packaged in soie-gtk. gettext
+  is in the C library: no new dependency. net.c's errors are marked
+  (N_) and translated where the page shows them, scripts and logs
+  keep the English. xsoie and wsoie set LC_CTYPE alone and stay in
+  English. Left for later, on purpose: the labels the engine draws
+  (Submit, Reset, Browse, Details): they are measured in boxes.c and
+  painted in forms.c, a longer text moves the layout of real pages,
+  and the tests (no locale) would not see it.
 - The site's figures are rounded so that they stay true across
   releases: "under 50,000 lines of code" (tools/loc.sh: 45,503 in
   0.1.2, 47,548 in 0.1.3, 51,661 in 0.1.4, 53,444 in 0.1.5, 54,517
-  in 0.1.6, 54,709 in 0.1.7, 55,353 in 0.1.8, 56,887 in 0.1.9: "under 50,000" became
+  in 0.1.6, 54,709 in 0.1.7, 55,353 in 0.1.8, 56,887 in 0.1.9, 57,021 in 0.1.10: "under 50,000" became
   "under 55,000", then "under 60,000";
   "about 45,000" was out of date one release later). At each release, check them all the
   same: tools/loc.sh, the WPT percentages (tests/wpt/run.sh; the site

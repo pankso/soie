@@ -4,8 +4,15 @@
 	<link href="https://soie.slitaz.org/"/>
 	<link rel="self" href="https://soie.slitaz.org/releases.atom"/>
 	<id>https://soie.slitaz.org/releases.atom</id>
-	<updated>2026-11-18T00:00:00Z</updated>
+	<updated>2026-11-24T00:00:00Z</updated>
 	<author><name>Christophe Lincoln</name></author>
+	<entry>
+		<title>Soie 0.1.10</title>
+		<link href="https://hg.slitaz.org/soie/rev/0.1.10"/>
+		<id>https://soie.slitaz.org/releases/0.1.10</id>
+		<updated>2026-11-24T00:00:00Z</updated>
+		<content type="html">&lt;h3&gt;Added&lt;/h3&gt;&lt;ul&gt;&lt;li&gt;Translations (gettext, domain &lt;code&gt;soie&lt;/code&gt;, &lt;code&gt;po/&lt;/code&gt;): SoieView's context menu and the shell's pages (error, login, settings, downloads) follow the locale of GTK browsers; French comes first. xsoie and wsoie stay in English.&lt;/li&gt;&lt;li&gt;Extension ABI 0.3: &lt;code&gt;download&lt;/code&gt; appended to &lt;code&gt;soie_script_host&lt;/code&gt;; a 0.3 script extension wants a 0.3 host.&lt;/li&gt;&lt;li&gt;&lt;code&gt;&amp;lt;a download&amp;gt;&lt;/code&gt; links to blob: and data: URLs are saved as downloads (GitHub's download button, Filature bug 1062).&lt;/li&gt;&lt;/ul&gt;&lt;h3&gt;Fixed&lt;/h3&gt;&lt;ul&gt;&lt;li&gt;fetch() and XHR of the page's origin redirected to another origin that answers &lt;code&gt;Access-Control-Allow-Origin: *&lt;/code&gt; were refused (GitHub raw files).&lt;/li&gt;&lt;/ul&gt;</content>
+	</entry>
 	<entry>
 		<title>Soie 0.1.9</title>
 		<link href="https://hg.slitaz.org/soie/rev/0.1.9"/>

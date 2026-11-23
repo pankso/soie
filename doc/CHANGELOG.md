@@ -7,7 +7,13 @@ each change are in [DECISIONS.md](DECISIONS.md).
 
 ## [Unreleased]
 
+## [0.1.10] - 2026-11-24
+
 ### Added
+- Translations (gettext, domain `soie`, `po/`): SoieView's context
+  menu and the shell's pages (error, login, settings, downloads) follow
+  the locale of GTK browsers; French comes first. xsoie and wsoie stay
+  in English.
 - Extension ABI 0.3: `download` appended to `soie_script_host`; a 0.3
   script extension wants a 0.3 host.
 - `<a download>` links to blob: and data: URLs are saved as downloads
@@ -540,6 +546,7 @@ each change are in [DECISIONS.md](DECISIONS.md).
 - Browsers: xsoie (X11), wsoie (Wayland), SoieView (GTK 3 widget).
 - soie-render, a headless renderer for tests and screenshots.
 
+[0.1.10]: https://hg.slitaz.org/soie/rev/0.1.10
 [0.1.9]: https://hg.slitaz.org/soie/rev/0.1.9
 [0.1.8]: https://hg.slitaz.org/soie/rev/0.1.8
 [0.1.7]: https://hg.slitaz.org/soie/rev/0.1.7
