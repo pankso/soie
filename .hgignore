@@ -22,3 +22,5 @@ ext/script/dom-js.c
 gtk/gsoie
 asan-build
 *.pc
+po/*.mo
+po/*.pot

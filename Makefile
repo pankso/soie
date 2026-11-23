@@ -277,6 +277,8 @@ gtk/soie-view.o: $(SHELL_HEADERS) gtk/soie-view.h $(HEADERS)
 gtk/gsoie.o: gtk/soie-view.h
 # GTK's headers are not ISO C
 gtk/soie-view.o gtk/gsoie.o: CPPFLAGS += -Ishell $(GTK_CFLAGS)
+# SoieView's texts (its menu), translated in po/
+gtk/soie-view.o: CPPFLAGS += -DLOCALEDIR='"$(PREFIX)/share/locale"'
 gtk/soie-view.o gtk/gsoie.o: CFLAGS += -Wno-pedantic
 
 tests/exttest: tests/exttest.o lib/libsoie.so.$(SOVERSION)
@@ -384,6 +386,7 @@ ifneq ($(GTK),)
 	cp gtk/soie-view.h $(DESTDIR)$(PREFIX)/include/soie/
 	cp gtk/gsoie $(DESTDIR)$(PREFIX)/bin/
 	cp soie-gtk.pc $(DESTDIR)$(PREFIX)/lib/pkgconfig/
+	$(MAKE) -C po install DESTDIR=$(DESTDIR) PREFIX=$(PREFIX)
 endif
 	mkdir -p $(DESTDIR)$(EXTDIR)
 	cp $(EXTS) $(DESTDIR)$(EXTDIR)/
@@ -397,6 +400,7 @@ clean:
 		tests/csstest tests/cssvalue tests/painttest tests/exttest lib/ua-css.c \
 		tests/paint/*.out.png ext/*.so \
 		ext/script/*.o ext/script/dom-js.c
+	$(MAKE) -C po clean
 
 .PHONY: all check check-js check-html5lib check-css asan asan-sites install \
 	clean

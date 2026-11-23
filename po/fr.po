@@ -1,0 +1,36 @@
+# French translations for Soie.
+# This file is distributed under the same license as the soie package.
+msgid ""
+msgstr ""
+"Project-Id-Version: soie\n"
+"Report-Msgid-Bugs-To: \n"
+"POT-Creation-Date: 2026-11-23 23:00+0100\n"
+"PO-Revision-Date: 2026-11-23 23:00+0100\n"
+"Last-Translator: SliTaz Contributors\n"
+"Language-Team: French\n"
+"Language: fr\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=2; plural=(n > 1);\n"
+
+msgid "_Back"
+msgstr "_Précédent"
+
+msgid "_Forward"
+msgstr "_Suivant"
+
+msgid "_Reload"
+msgstr "_Recharger"
+
+msgid "_Copy"
+msgstr "_Copier"
+
+msgid "Copy _Link Address"
+msgstr "Copier l'adresse du _lien"
+
+msgid "Copy _Image Address"
+msgstr "Copier l'adresse de l'_image"
+
+msgid "_Paste"
+msgstr "C_oller"

@@ -13,6 +13,7 @@
  */
 #include <stdlib.h>
 #include <string.h>
+#include <libintl.h>
 #include <glib-unix.h>
 #include <soie/soie.h>
 #include "shell.h"
@@ -23,6 +24,8 @@
  * times the user's zoom. A widget coordinate to the page view's. */
 #define DEV(v, c) ((int)((c) * (v)->scale))
 #define NRECT 8			/* rects of a partial repaint */
+/* The widget's own texts, in its domain: the browser has its own */
+#define _(s) dgettext("soie", s)
 
 struct _SoieView {
 	GtkWidget parent;
@@ -1004,24 +1007,24 @@ static void context_menu(SoieView *v, GdkEventButton *e)
 	g_object_ref_sink(menu);
 	field = shell_hit(v->sh, DEV(v, e->x), DEV(v, e->y), link, image,
 		sizeof(link));
-	menu_item(menu, "_Back", G_CALLBACK(menu_back), v,
+	menu_item(menu, _("_Back"), G_CALLBACK(menu_back), v,
 		soie_view_can_go_back(v));
-	menu_item(menu, "_Forward", G_CALLBACK(menu_forward), v,
+	menu_item(menu, _("_Forward"), G_CALLBACK(menu_forward), v,
 		soie_view_can_go_forward(v));
-	menu_item(menu, "_Reload", G_CALLBACK(menu_reload), v, TRUE);
+	menu_item(menu, _("_Reload"), G_CALLBACK(menu_reload), v, TRUE);
 	text = shell_selection(v->sh);
 	if (*link || *image || field || text)
 		gtk_menu_shell_append(GTK_MENU_SHELL(menu),
 			gtk_separator_menu_item_new());
 	if (text)
-		copy_item(menu, "_Copy", text);
+		copy_item(menu, _("_Copy"), text);
 	free(text);
 	if (*link)
-		copy_item(menu, "Copy _Link Address", link);
+		copy_item(menu, _("Copy _Link Address"), link);
 	if (*image)
-		copy_item(menu, "Copy _Image Address", image);
+		copy_item(menu, _("Copy _Image Address"), image);
 	if (field)
-		menu_item(menu, "_Paste", G_CALLBACK(menu_paste), v, TRUE);
+		menu_item(menu, _("_Paste"), G_CALLBACK(menu_paste), v, TRUE);
 	g_signal_emit(v, sigs[SIG_CONTEXT_MENU], 0, menu, link, image, &stop);
 	if (stop) {
 		gtk_widget_destroy(menu);
@@ -1390,6 +1393,8 @@ static void soie_view_class_init(SoieViewClass *c)
 	GObjectClass *oc = G_OBJECT_CLASS(c);
 	GtkWidgetClass *wc = GTK_WIDGET_CLASS(c);
 
+	bindtextdomain("soie", LOCALEDIR);
+	bind_textdomain_codeset("soie", "UTF-8");
 	oc->get_property = get_property;
 	oc->set_property = set_property;
 	oc->constructed = constructed;
