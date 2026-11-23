@@ -34,6 +34,9 @@
 #include "cache.h"
 #include "debug.h"
 
+/* Errors a page may show: marked for po/, translated where shown */
+#define N_(s) s
+
 #define TIMEOUT_MS 20000
 #define NEXT_MS 3000		/* connecting, with other addresses left */
 #define MAX_BODY (256u << 20)	/* response bodies, files */
@@ -180,11 +183,11 @@ static int dial(const char *host, const char *port, int max, int *level,
 	freeaddrinfo(res);
 	if (fd < 0 && refused && !tried) {
 		debug(1, "private network guard: %s refused", host);
-		set_error(r, max == NET_PUBLIC ? "a public page may not reach "
-			"the local network" : "a local network page may not "
-			"reach this machine");
+		set_error(r, max == NET_PUBLIC ?
+			N_("a public page may not reach the local network") :
+			N_("a local network page may not reach this machine"));
 	} else if (fd < 0) {
-		set_error(r, "could not connect");
+		set_error(r, N_("could not connect"));
 	}
 	return fd;
 }
@@ -233,7 +236,7 @@ static int tls_start(struct conn *c, const char *host, struct response *r)
 	int ret;
 
 	if (!tls_init()) {
-		set_error(r, "TLS unavailable");
+		set_error(r, N_("TLS unavailable"));
 		return -1;
 	}
 	gnutls_init(&c->tls, GNUTLS_CLIENT);
@@ -937,7 +940,7 @@ static int fetch_file(const char *url, const char *headers,
 	if (fstat(fileno(f), &st) || !S_ISREG(st.st_mode) ||
 	    (!range && (unsigned long long)st.st_size > MAX_BODY)) {
 		fclose(f);
-		set_error(r, "not a readable file");
+		set_error(r, N_("not a readable file"));
 		return -1;
 	}
 	if (range) {
@@ -993,7 +996,7 @@ static int fetch_data(const char *url, struct response *r)
 	unsigned v = 0, bits = 0;
 
 	if (!comma || strlen(comma) > MAX_BODY) {
-		set_error(r, "bad data: URL");
+		set_error(r, N_("bad data: URL"));
 		return -1;
 	}
 	url += 5;
@@ -1446,11 +1449,11 @@ static int request(const char *url, const soie_request *rq,
 
 	*location = NULL;
 	if (!is_token(method, strlen(method))) {
-		set_error(r, "bad method");
+		set_error(r, N_("bad method"));
 		return -1;
 	}
 	if (parse_url(url, &u)) {
-		set_error(r, "bad URL");
+		set_error(r, N_("bad URL"));
 		return -1;
 	}
 	memset(&raw, 0, sizeof(raw));
@@ -1546,22 +1549,22 @@ static int request(const char *url, const soie_request *rq,
 		conn_close(&c);
 		if (r->dl && r->dl->fd >= 0) {
 			/* a download cut: not again from the start */
-			set_error(r, r->dl->cancel ? "cancelled" :
-				"download cut");
+			set_error(r, r->dl->cancel ? N_("cancelled") :
+				N_("download cut"));
 			goto out;
 		}
 		if (!reused) {
-			set_error(r, "no response");
+			set_error(r, N_("no response"));
 			goto out;
 		}
 	}
 	if (tries == 2) {
-		set_error(r, "no response");
+		set_error(r, N_("no response"));
 		goto out;
 	}
 	r->cut = raw.cut;
 	if (sscanf(raw.body, "HTTP/%*s %d", &r->status) != 1) {
-		set_error(r, "not HTTP");
+		set_error(r, N_("not HTTP"));
 		goto out;
 	}
 	hend = strstr(raw.body, "\r\n\r\n");
@@ -1608,13 +1611,13 @@ static int request(const char *url, const soie_request *rq,
 	v = header(hb, "Content-Encoding");
 	if (v && (!strncasecmp(v, "gzip", 4) || !strncasecmp(v, "deflate", 7)) &&
 	    inflate_body(r)) {
-		set_error(r, "body too large");
+		set_error(r, N_("body too large"));
 		goto out;
 	}
 #ifdef SOIE_BROTLI
 	if (v && !strncasecmp(v, "br", 2) && header_len(v) == 2 &&
 	    brotli_body(r)) {
-		set_error(r, "body too large");
+		set_error(r, N_("body too large"));
 		goto out;
 	}
 #endif
@@ -1681,7 +1684,7 @@ int net_fetch(const soie_request *rq, struct response *r)
 	r->dl = dl;
 	if (__atomic_load_n(&blocking, __ATOMIC_RELAXED) &&
 	    soie_ext_blocked(rq)) {
-		set_error(r, "blocked");
+		set_error(r, N_("blocked"));
 		return -1;
 	}
 	if (!soie_ext_fetch(rq, &er)) {
@@ -1704,7 +1707,7 @@ int net_fetch(const soie_request *rq, struct response *r)
 		/* local files: for what the user opens, and what local
 		 * pages load; never for a web page */
 		if (rq->first_party && strncmp(rq->first_party, "file://", 7)) {
-			set_error(r, "file:// from a web page");
+			set_error(r, N_("file:// from a web page"));
 			return -1;
 		}
 		snprintf(r->url, sizeof(r->url), "%s", url);
@@ -1716,7 +1719,7 @@ int net_fetch(const soie_request *rq, struct response *r)
 		return fetch_data(url, r);
 	}
 	if (strncmp(url, "http://", 7) && strncmp(url, "https://", 8)) {
-		set_error(r, "unsupported URL scheme");
+		set_error(r, N_("unsupported URL scheme"));
 		return -1;
 	}
 	method = rq->method ? rq->method : body ? "POST" : "GET";
@@ -1782,7 +1785,7 @@ int net_fetch(const soie_request *rq, struct response *r)
 				/* only to the web: no file://, no others */
 				free(next);
 				free(cur);
-				set_error(r, "bad redirection");
+				set_error(r, N_("bad redirection"));
 				return -1;
 			}
 			/* another origin gets none of the caller's headers
@@ -1797,7 +1800,7 @@ int net_fetch(const soie_request *rq, struct response *r)
 				    strcmp(method, "POST")) {
 					free(next);
 					free(cur);
-					set_error(r, "bad redirection");
+					set_error(r, N_("bad redirection"));
 					return -1;
 				}
 			}

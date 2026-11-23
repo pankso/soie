@@ -14,8 +14,12 @@
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
+#include <libintl.h>
 #include "auth.h"
 #include "settings.h"
+
+/* The pages' texts: translated when the front set a locale (po/) */
+#define _(s) dgettext("soie", s)
 
 int auth_url(const char *url)
 {
@@ -79,13 +83,17 @@ char *auth_page(const char *url, const char *realm, const char *said)
 		h += 3;
 		n = strcspn(h, "/?#");
 	}
-	adds(&b, "<!DOCTYPE html><html><head><meta charset=utf-8>"
-		"<title>Log in</title>");
+	adds(&b, "<!DOCTYPE html><html><head><meta charset=utf-8><title>");
+	adds(&b, _("Log in"));
+	adds(&b, "</title>");
 	adds(&b, settings_style);
-	adds(&b, "</head><body><main><h1>Log in</h1>");
+	adds(&b, "</head><body><main><h1>");
+	adds(&b, _("Log in"));
+	adds(&b, "</h1>");
 	if (!h) {
-		adds(&b, "<p>No page is asking for a login.</p>"
-			"</main></body></html>");
+		adds(&b, "<p>");
+		adds(&b, _("No page is asking for a login."));
+		adds(&b, "</p></main></body></html>");
 		return b.s;
 	}
 	if (said) {
@@ -95,24 +103,37 @@ char *auth_page(const char *url, const char *realm, const char *said)
 	}
 	adds(&b, "<section><p><b>");
 	addesc(&b, h, n);
-	adds(&b, "</b> asks for a user name and a password.</p>");
+	adds(&b, "</b>");
+	/* after the host's name, in bold */
+	adds(&b, _(" asks for a user name and a password."));
+	adds(&b, "</p>");
 	if (*realm) {
-		adds(&b, "<p class=hint>The server says: <code>");
+		adds(&b, "<p class=hint>");
+		adds(&b, _("The server says:"));
+		adds(&b, " <code>");
 		addesc(&b, realm, strlen(realm));
 		adds(&b, "</code></p>");
 	}
 	host = strcspn(h, ":/?#");
-	if (!strncasecmp(url, "http:", 5) && !local_host(h, host))
-		adds(&b, "<p class=said>This connection is not encrypted: "
-			"the password goes over the network as it is.</p>");
-	adds(&b, "<form method=post action=\"" AUTH_URL "\">"
-		"<p><label>User name<input type=text name=user></label></p>"
-		"<p><label>Password<input type=password name=password>"
-		"</label></p><p><button class=go type=submit name=login "
-		"value=1>Log in</button> <button type=submit name=cancel "
-		"value=1>Cancel</button></p></form></section>");
-	adds(&b, "<p class=hint>Kept in memory until the browser closes, "
-		"sent to this server only.</p></main></body></html>");
+	if (!strncasecmp(url, "http:", 5) && !local_host(h, host)) {
+		adds(&b, "<p class=said>");
+		adds(&b, _("This connection is not encrypted: "
+			"the password goes over the network as it is."));
+		adds(&b, "</p>");
+	}
+	adds(&b, "<form method=post action=\"" AUTH_URL "\"><p><label>");
+	adds(&b, _("User name"));
+	adds(&b, "<input type=text name=user></label></p><p><label>");
+	adds(&b, _("Password"));
+	adds(&b, "<input type=password name=password></label></p>"
+		"<p><button class=go type=submit name=login value=1>");
+	adds(&b, _("Log in"));
+	adds(&b, "</button> <button type=submit name=cancel value=1>");
+	adds(&b, _("Cancel"));
+	adds(&b, "</button></p></form></section><p class=hint>");
+	adds(&b, _("Kept in memory until the browser closes, "
+		"sent to this server only."));
+	adds(&b, "</p></main></body></html>");
 	return b.s;
 }
 

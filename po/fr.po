@@ -34,3 +34,191 @@ msgstr "Copier l'adresse de l'_image"
 
 msgid "_Paste"
 msgstr "C_oller"
+
+#, c-format
+msgid "not found"
+msgstr "introuvable"
+
+msgid "Error"
+msgstr "Erreur"
+
+msgid "Cannot open this page"
+msgstr "Impossible d'ouvrir cette page"
+
+msgid "Wrong user name or password."
+msgstr "Nom d'utilisateur ou mot de passe incorrect."
+
+#, c-format
+msgid "Downloading to %s"
+msgstr "Téléchargement vers %s"
+
+msgid "cancelled"
+msgstr "annulé"
+
+msgid "failed"
+msgstr "échec"
+
+#, c-format
+msgid "Download failed: %s"
+msgstr "Échec du téléchargement : %s"
+
+#, c-format
+msgid "Saved to %s"
+msgstr "Enregistré dans %s"
+
+msgid "Log in"
+msgstr "Connexion"
+
+msgid "No page is asking for a login."
+msgstr "Aucune page ne demande de connexion."
+
+msgid " asks for a user name and a password."
+msgstr " demande un nom d'utilisateur et un mot de passe."
+
+msgid "The server says:"
+msgstr "Le serveur dit :"
+
+msgid "This connection is not encrypted: the password goes over the network as it is."
+msgstr "Cette connexion n'est pas chiffrée : le mot de passe passe en clair sur le réseau."
+
+msgid "User name"
+msgstr "Nom d'utilisateur"
+
+msgid "Password"
+msgstr "Mot de passe"
+
+msgid "Cancel"
+msgstr "Annuler"
+
+msgid "Kept in memory until the browser closes, sent to this server only."
+msgstr "Gardé en mémoire jusqu'à la fermeture du navigateur, envoyé à ce serveur seulement."
+
+msgid "The cookies and logins are cleared."
+msgstr "Les cookies et les connexions sont effacés."
+
+msgid "Could not write ~/.config/soie/settings."
+msgstr "Impossible d'écrire ~/.config/soie/settings."
+
+msgid "Saved; what was not valid was left as it was."
+msgstr "Enregistré ; ce qui n'était pas valide est resté tel quel."
+
+msgid "Saved."
+msgstr "Enregistré."
+
+msgid "All"
+msgstr "Tous"
+
+msgid "No third-party"
+msgstr "Pas de tiers"
+
+msgid "None"
+msgstr "Aucun"
+
+msgid "As the system's"
+msgstr "Comme le système"
+
+msgid "Light"
+msgstr "Clair"
+
+msgid "Dark"
+msgstr "Sombre"
+
+msgid "Settings"
+msgstr "Réglages"
+
+msgid "Browsing"
+msgstr "Navigation"
+
+msgid "Start page"
+msgstr "Page de démarrage"
+
+#, no-c-format
+msgid "Search with (a URL, %s for the words)"
+msgstr "Rechercher avec (une URL, %s pour les mots)"
+
+msgid "Pages"
+msgstr "Pages"
+
+msgid "Colours:"
+msgstr "Couleurs :"
+
+msgid "Zoom, in percent (30 to 300)"
+msgstr "Zoom, en pour cent (30 à 300)"
+
+msgid "Privacy"
+msgstr "Vie privée"
+
+msgid "Cookies:"
+msgstr "Cookies :"
+
+msgid "Block the hosts of my list"
+msgstr "Bloquer les hôtes de ma liste"
+
+msgid "The list:"
+msgstr "La liste :"
+
+msgid ", a host a line."
+msgstr ", un hôte par ligne."
+
+msgid "Downloads"
+msgstr "Téléchargements"
+
+msgid "Save files in"
+msgstr "Enregistrer les fichiers dans"
+
+msgid "Save"
+msgstr "Enregistrer"
+
+msgid "Clear the cookies and logins"
+msgstr "Effacer les cookies et les connexions"
+
+msgid "Scripts and cookies apply to the next pages; other windows take the settings when they open."
+msgstr "Les scripts et les cookies s'appliquent aux pages suivantes ; les autres fenêtres prennent les réglages à leur ouverture."
+
+msgid "a public page may not reach the local network"
+msgstr "une page publique ne peut pas joindre le réseau local"
+
+msgid "a local network page may not reach this machine"
+msgstr "une page du réseau local ne peut pas joindre cette machine"
+
+msgid "could not connect"
+msgstr "connexion impossible"
+
+msgid "TLS unavailable"
+msgstr "TLS indisponible"
+
+msgid "not a readable file"
+msgstr "fichier illisible"
+
+msgid "bad data: URL"
+msgstr "URL data: invalide"
+
+msgid "bad method"
+msgstr "méthode invalide"
+
+msgid "bad URL"
+msgstr "URL invalide"
+
+msgid "download cut"
+msgstr "téléchargement interrompu"
+
+msgid "no response"
+msgstr "pas de réponse"
+
+msgid "not HTTP"
+msgstr "pas du HTTP"
+
+msgid "body too large"
+msgstr "contenu trop gros"
+
+msgid "blocked"
+msgstr "bloqué"
+
+msgid "file:// from a web page"
+msgstr "file:// depuis une page web"
+
+msgid "unsupported URL scheme"
+msgstr "type d'URL non pris en charge"
+
+msgid "bad redirection"
+msgstr "redirection invalide"

@@ -1,1 +1,5 @@
 gtk/soie-view.c
+shell/shell.c
+shell/auth.c
+shell/settings.c
+shell/net.c

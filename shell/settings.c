@@ -16,10 +16,15 @@
 #include <string.h>
 #include <strings.h>
 #include <sys/stat.h>
+#include <libintl.h>
 #include <soie/soie.h>
 #include "net.h"
 #include "settings.h"
 #include "debug.h"
+
+/* The pages' texts: translated when the front set a locale (po/) */
+#define _(s) dgettext("soie", s)
+#define N_(s) s
 
 static struct shell_settings set = { "", "", "", 1,
 	SHELL_COOKIES_NO_THIRD_PARTY, SHELL_COLORS_SYSTEM, 100, 1 };
@@ -259,7 +264,7 @@ static void choice(struct buf *b, const char *name, const char *const *names,
 		adds(b, " value=");
 		adds(b, names[i]);
 		adds(b, i == cur ? " checked> " : "> ");
-		adds(b, labels[i]);
+		adds(b, _(labels[i]));
 		adds(b, "</label>");
 	}
 }
@@ -334,7 +339,7 @@ static const char *post_apply(const char *post, int *changed, int *ok)
 		net_auth_clear(0);
 		debug(1, "settings: cookies and logins cleared");
 		*ok = 1;
-		return "The cookies and logins are cleared.";
+		return _("The cookies and logins are cleared.");
 	}
 	if (!save)
 		return NULL;
@@ -345,11 +350,11 @@ static const char *post_apply(const char *post, int *changed, int *ok)
 	set = t;
 	apply();
 	if (save_file())
-		return "Could not write ~/.config/soie/settings.";
+		return _("Could not write ~/.config/soie/settings.");
 	debug(1, "settings saved");
 	*ok = !bad;
-	return bad ? "Saved; what was not valid was left as it was." :
-		"Saved.";
+	return bad ? _("Saved; what was not valid was left as it was.") :
+		_("Saved.");
 }
 
 const char settings_style[] =
@@ -385,10 +390,10 @@ const char settings_style[] =
 
 char *settings_page(const char *post, int *changed)
 {
-	static const char *const cookie_labels[] = { "All",
-		"No third-party", "None" };
-	static const char *const color_labels[] = { "As the system's",
-		"Light", "Dark" };
+	static const char *const cookie_labels[] = { N_("All"),
+		N_("No third-party"), N_("None") };
+	static const char *const color_labels[] = {
+		N_("As the system's"), N_("Light"), N_("Dark") };
 	struct buf b = { NULL, 0, 0 };
 	const char *said = NULL;
 	char zoom[16], block[4096];
@@ -397,10 +402,13 @@ char *settings_page(const char *post, int *changed)
 	*changed = 0;
 	if (post)
 		said = post_apply(post, changed, &ok);
-	adds(&b, "<!DOCTYPE html><html><head><meta charset=utf-8>"
-		"<title>Settings</title>");
+	adds(&b, "<!DOCTYPE html><html><head><meta charset=utf-8><title>");
+	adds(&b, _("Settings"));
+	adds(&b, "</title>");
 	adds(&b, settings_style);
-	adds(&b, "</head><body><main><h1>Settings</h1>");
+	adds(&b, "</head><body><main><h1>");
+	adds(&b, _("Settings"));
+	adds(&b, "</h1>");
 	if (said) {
 		adds(&b, ok ? "<p class=\"said ok\">" : "<p class=said>");
 		adds(&b, said);
@@ -409,43 +417,65 @@ char *settings_page(const char *post, int *changed)
 	adds(&b, "<form method=post action=\"" SETTINGS_URL "\">"
 		"<input type=hidden name=save value=1>");
 
-	adds(&b, "<section><h2>Browsing</h2>");
-	field(&b, "home", "Start page", set.home, "about:soie");
-	field(&b, "search", "Search with (a URL, %s for the words)",
+	adds(&b, "<section><h2>");
+	adds(&b, _("Browsing"));
+	adds(&b, "</h2>");
+	field(&b, "home", _("Start page"), set.home, "about:soie");
+	/* xgettext:no-c-format */
+	field(&b, "search", _("Search with (a URL, %s for the words)"),
 		set.search, "https://lite.duckduckgo.com/lite/?q=%s");
 	adds(&b, "</section>");
 
-	adds(&b, "<section><h2>Pages</h2><p>");
+	adds(&b, "<section><h2>");
+	adds(&b, _("Pages"));
+	adds(&b, "</h2><p>");
 	check(&b, "scripts", "JavaScript", set.scripts);
-	adds(&b, "</p><p>Colours: ");
+	adds(&b, "</p><p>");
+	adds(&b, _("Colours:"));
+	adds(&b, " ");
 	choice(&b, "colors", color_names, color_labels, 3, set.colors);
 	snprintf(zoom, sizeof(zoom), "%d", set.zoom);
 	adds(&b, "</p>");
-	field(&b, "zoom", "Zoom, in percent (30 to 300)", zoom, "100");
+	field(&b, "zoom", _("Zoom, in percent (30 to 300)"), zoom, "100");
 	adds(&b, "</section>");
 
-	adds(&b, "<section><h2>Privacy</h2><p>Cookies: ");
+	adds(&b, "<section><h2>");
+	adds(&b, _("Privacy"));
+	adds(&b, "</h2><p>");
+	adds(&b, _("Cookies:"));
+	adds(&b, " ");
 	choice(&b, "cookies", cookie_names, cookie_labels, 3, set.cookies);
 	adds(&b, "</p><p>");
-	check(&b, "block", "Block the hosts of my list", set.block);
-	adds(&b, "</p><p class=hint>The list: <code>");
+	check(&b, "block", _("Block the hosts of my list"), set.block);
+	adds(&b, "</p><p class=hint>");
+	adds(&b, _("The list:"));
+	adds(&b, " <code>");
 	if (getenv("SOIE_BLOCK") && *getenv("SOIE_BLOCK"))
 		snprintf(block, sizeof(block), "%s", getenv("SOIE_BLOCK"));
 	else if (!config_path(block, sizeof(block), "block.txt"))
 		strcpy(block, "~/.config/soie/block.txt");
 	addesc(&b, block);
-	adds(&b, "</code>, a host a line.</p></section>");
+	adds(&b, "</code>");
+	/* after the path of the block list */
+	adds(&b, _(", a host a line."));
+	adds(&b, "</p></section>");
 
-	adds(&b, "<section><h2>Downloads</h2>");
-	field(&b, "downloads", "Save files in", set.downloads, "~/Downloads");
+	adds(&b, "<section><h2>");
+	adds(&b, _("Downloads"));
+	adds(&b, "</h2>");
+	field(&b, "downloads", _("Save files in"), set.downloads,
+		"~/Downloads");
 	adds(&b, "</section>");
 
-	adds(&b, "<p><button class=go type=submit>Save</button></p></form>");
+	adds(&b, "<p><button class=go type=submit>");
+	adds(&b, _("Save"));
+	adds(&b, "</button></p></form>");
 	adds(&b, "<form method=post action=\"" SETTINGS_URL "\"><p>"
-		"<button type=submit name=clear value=1>Clear the cookies and logins"
-		"</button></p></form>");
-	adds(&b, "<p class=hint>Scripts and cookies apply to the next pages; "
-		"other windows take the settings when they open.</p>");
-	adds(&b, "</main></body></html>");
+		"<button type=submit name=clear value=1>");
+	adds(&b, _("Clear the cookies and logins"));
+	adds(&b, "</button></p></form><p class=hint>");
+	adds(&b, _("Scripts and cookies apply to the next pages; "
+		"other windows take the settings when they open."));
+	adds(&b, "</p></main></body></html>");
 	return b.s;
 }

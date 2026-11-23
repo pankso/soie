@@ -24,6 +24,7 @@
 #include <stdint.h>
 #include <sys/stat.h>
 #include <png.h>
+#include <libintl.h>
 #include <soie/soie.h>
 #include "net.h"
 #include "fetch.h"
@@ -34,6 +35,9 @@
 #include "debug.h"
 
 #define HOME SHELL_HOME
+/* The pages' texts: translated when the front set a locale (po/) */
+#define _(s) dgettext("soie", s)
+#define N_(s) s
 
 static const char home_html[] =
 	"<!DOCTYPE html><title>Soie</title><style>body{font-family:sans-serif;"
@@ -328,7 +332,7 @@ static void scheme_answer(int k, const char *url, struct job *j)
 	if (schemes[k].fn(schemes[k].data, url, &body, &len, j->r.type,
 	    sizeof(j->r.type)) || !body) {
 		free(body);
-		snprintf(j->r.error, sizeof(j->r.error), "not found");
+		snprintf(j->r.error, sizeof(j->r.error), N_("not found"));
 		return;
 	}
 	j->ok = 1;
@@ -1233,14 +1237,17 @@ static void doc_arrived(struct shell *s, struct job *j)
 	s->page.level = j->ok ? r->level : NET_PUBLIC;
 	s->host.flags = page_flags(s);
 	if (!j->ok) {
-		char *e = escape_html(r->error), *u = escape_html(j->url);
+		/* The errors are translated here, where they show (not
+		 * "": gettext's header) */
+		char *e = escape_html(*r->error ? _(r->error) : "");
+		char *u = escape_html(j->url);
 		char buf[9000];
 
 		snprintf(s->page.url, sizeof(s->page.url), "%s", j->url);
-		snprintf(buf, sizeof(buf), "<!DOCTYPE html><title>Error</title>"
+		snprintf(buf, sizeof(buf), "<!DOCTYPE html><title>%s</title>"
 			"<body style='font-family:sans-serif;margin:3em'>"
-			"<h1>Cannot open this page</h1><p>%s</p><p>%s</p>", u,
-			e);
+			"<h1>%s</h1><p>%s</p><p>%s</p>", _("Error"),
+			_("Cannot open this page"), u, e);
 		s->page.doc = soie_html_parse(buf, strlen(buf), NULL);
 		free(e);
 		free(u);
@@ -1426,7 +1433,7 @@ static int auth_ask(struct shell *s, struct job *j)
 		net_auth_forget(url, s->private);
 	debug(1, "login asked%s: %s", j->r.auth ? " again" : "", url);
 	html = auth_page(url, realm, j->r.auth ?
-		"Wrong user name or password." : NULL);
+		_("Wrong user name or password.") : NULL);
 	load_here(s, AUTH_URL, html);
 	free(html);
 	return 1;
@@ -1681,7 +1688,7 @@ static struct sdl *dl_new(struct shell *s, struct download *d,
 	} else {
 		char msg[4200];
 
-		snprintf(msg, sizeof(msg), "Downloading to %s", x->dest);
+		snprintf(msg, sizeof(msg), _("Downloading to %s"), x->dest);
 		s->ui.alert(s->ui_data, msg);
 	}
 	if (!*x->dest && d)
@@ -1745,9 +1752,9 @@ static void dl_finish(struct sdl *x, struct job *j)
 	const char *err = NULL;
 
 	if (!*x->dest) {
-		err = "cancelled";
+		err = N_("cancelled");
 	} else if (!j->ok) {
-		err = *j->r.error ? j->r.error : "failed";
+		err = *j->r.error ? j->r.error : N_("failed");
 	} else if (d && d->state == DL_DONE) {
 		if (rename(d->path, x->dest) && (errno != EXDEV ||
 		    copy_file(d->path, x->dest)))
@@ -1755,7 +1762,7 @@ static void dl_finish(struct sdl *x, struct job *j)
 		else
 			*d->path = '\0';	/* taken */
 	} else if (d && d->state != DL_NONE) {
-		err = "failed";
+		err = N_("failed");
 	} else {
 		/* in memory: chunked, compressed */
 		err = dl_write(x->dest, j->r.body, j->r.len);
@@ -1791,8 +1798,11 @@ static void dl_end(struct sdl *x, const char *err)
 	} else if (x->s) {
 		char msg[4200];
 
-		snprintf(msg, sizeof(msg), err ? "Download failed: %s" :
-			"Saved to %s", err ? err : x->dest);
+		if (err)
+			snprintf(msg, sizeof(msg), _("Download failed: %s"),
+				_(err));
+		else
+			snprintf(msg, sizeof(msg), _("Saved to %s"), x->dest);
 		x->s->ui.alert(x->s->ui_data, msg);
 	}
 	for (p = &downloads; *p && *p != x; p = &(*p)->next)
