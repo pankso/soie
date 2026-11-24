@@ -41,6 +41,13 @@ EXTDIR = $(PREFIX)/lib/soie/ext
 INTERNAL = lib/internal.h lib/parser.h lib/tags.h lib/css.h lib/props.h \
 	lib/layout.h lib/font.h lib/paint.h lib/image.h
 
+# The X11 browser when its toolkit and shell libraries are there
+SHELL_PKGS = gnutls zlib libpng
+X_PKGS = x11 xext
+ifeq ($(shell pkg-config --exists $(SHELL_PKGS) $(X_PKGS) && echo y),y)
+XSOIE = browser/xsoie
+endif
+
 # The Wayland browser when its libraries and protocols are there
 ifeq ($(shell pkg-config --exists wayland-client wayland-cursor xkbcommon \
 	wayland-protocols && command -v wayland-scanner >/dev/null && echo y),y)
@@ -85,7 +92,7 @@ QJS_INC = $(QUICKJS)/include/quickjs
 QJS_OBJS = $(QUICKJS)/lib/quickjs/libquickjs.a
 endif
 
-all: lib/libsoie.a lib/libsoie.so.$(SOVERSION) tools/soie-render browser/xsoie \
+all: lib/libsoie.a lib/libsoie.so.$(SOVERSION) tools/soie-render $(XSOIE) \
 	$(WSOIE) $(GTK) $(EXTS) $(PCS)
 
 lib/libsoie.a: $(LIB_OBJS)
@@ -178,7 +185,6 @@ tests/unit: tests/unit.o lib/libsoie.a
 # The shell (shell/: pages, network: GnuTLS, zlib), no toolkit; the
 # browser's fronts (browser/): their common part (front.c) and their
 # toolkits: xsoie on Xlib (MIT-SHM).
-SHELL_PKGS = gnutls zlib libpng
 # Content-Encoding: br when brotli's decoder is there
 ifeq ($(shell pkg-config --exists libbrotlidec && echo y),y)
 BROTLI_LIBS = -lbrotlidec
@@ -192,14 +198,14 @@ FRONT_OBJS = browser/front.o $(SHELL_OBJS)
 browser/xsoie: browser/xsoie.o $(FRONT_OBJS) lib/libsoie.so.$(SOVERSION)
 	$(CC) $(LDFLAGS) $(RPATH) -o $@ browser/xsoie.o $(FRONT_OBJS) \
 		lib/libsoie.so.$(SOVERSION) $(LIBS) \
-		$(shell pkg-config --libs $(SHELL_PKGS) x11 xext) \
+		$(shell pkg-config --libs $(SHELL_PKGS) $(X_PKGS)) \
 		$(BROTLI_LIBS) -lpthread
 
 browser/xsoie.o $(FRONT_OBJS): $(SHELL_HEADERS) browser/front.h $(HEADERS)
 browser/xsoie.o browser/wsoie.o browser/front.o: CPPFLAGS += -Ishell
 $(SHELL_OBJS): CPPFLAGS += $(shell pkg-config --cflags $(SHELL_PKGS)) \
 	-DSOIE_EXT_DIR='"$(EXTDIR)"' $(BROTLI)
-browser/xsoie.o: CPPFLAGS += $(shell pkg-config --cflags x11 xext)
+browser/xsoie.o: CPPFLAGS += $(shell pkg-config --cflags $(X_PKGS))
 
 # wsoie on Wayland, when its libraries are there; xdg-shell's and
 # xdg-decoration's code is made from the protocols by wayland-scanner.
@@ -365,9 +371,11 @@ install: all
 	cp $(HEADERS) $(DESTDIR)$(PREFIX)/include/soie/
 	mkdir -p $(DESTDIR)$(PREFIX)/lib/pkgconfig
 	cp soie.pc $(DESTDIR)$(PREFIX)/lib/pkgconfig/
-	cp tools/soie-render browser/xsoie $(WSOIE) $(DESTDIR)$(PREFIX)/bin/
+	cp tools/soie-render $(XSOIE) $(WSOIE) $(DESTDIR)$(PREFIX)/bin/
 	mkdir -p $(DESTDIR)$(PREFIX)/share/applications
+ifneq ($(XSOIE),)
 	cp browser/xsoie.desktop $(DESTDIR)$(PREFIX)/share/applications/
+endif
 	for s in 16 24 32 48 64 128 256; do \
 		mkdir -p $(DESTDIR)$(PREFIX)/share/icons/hicolor/$${s}x$$s/apps; \
 		cp browser/icons/soie-$$s.png \

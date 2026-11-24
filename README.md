@@ -22,7 +22,9 @@ are welcome, they are read and imported by hand into Mercurial
 
 ## Build
 
-    make                # libsoie, tools/soie-render, browser/xsoie
+    make                # libsoie, tools/soie-render, the browsers and extensions it can
+    make XSOIE=         # without browser/xsoie, even with its libraries there
+    make WSOIE=         # the same for browser/wsoie
     make check          # unit tests and the local corpus, no network
     make check-html5lib # fetches the html5lib corpus, runs it
     make check-css      # fetches css-parsing-tests, runs it (Python 3)
@@ -53,8 +55,8 @@ script extension.
     tools/soie-render -o page.png -a page.html # render the whole page
 
 The browser: `browser/xsoie [URL]` or `browser/xsoie -o out.png URL`
-to render a page without a display. It also needs Xlib, GnuTLS and
-zlib. Its shell (`shell/`) has no toolkit; what its fronts
+to render a page without a display. It is built when pkg-config finds
+Xlib, libXext, GnuTLS, zlib and libpng. Its shell (`shell/`) has no toolkit; what its fronts
 share (bars, keys, repainting only what changed) is `browser/front.c`,
 xsoie is the Xlib part (MIT-SHM), `browser/wsoie` the Wayland one
 (built when wayland-client, wayland-cursor and xkbcommon are there). Ctrl+L address (or words to search for,

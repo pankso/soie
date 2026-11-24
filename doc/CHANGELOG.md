@@ -7,6 +7,10 @@ each change are in [DECISIONS.md](DECISIONS.md).
 
 ## [Unreleased]
 
+### Changed
+- `browser/xsoie` is built and installed only when its libraries are
+  there, like wsoie; `make XSOIE=` leaves it out (Dmitriy Geels).
+
 ## [0.1.10] - 2026-11-24
 
 ### Added
