@@ -37,7 +37,8 @@ and (optional, `make HARFBUZZ=0`) HarfBuzz.
 
 Extensions are modules in `ext/`, installed in `$(PREFIX)/lib/soie/ext`:
 `cookies.so` and `block.so` need nothing, `webp.so` is built when
-pkg-config finds libwebp, `media.so` when it finds FFmpeg and ALSA,
+pkg-config finds libwebp, `media.so` when it finds FFmpeg (4.4 to 9.1)
+and ALSA,
 `script.so` (JavaScript) when quickjs-dev is installed (built with
 -fPIC) or from the QuickJS sources:
 `make QUICKJS_SRC=/path/to/quickjs-2026-06-04`.

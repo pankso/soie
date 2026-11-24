@@ -48,9 +48,32 @@
 #include <libswscale/swscale.h>
 #include <libswresample/swresample.h>
 #include <libavutil/opt.h>
+#include <libavutil/channel_layout.h>
 #include <libavutil/pixdesc.h>
 
 #include <soie/ext.h>
+
+/* FFmpeg 5 made demuxer descriptors const. */
+#if LIBAVFORMAT_VERSION_MAJOR >= 59
+typedef const AVInputFormat input_format;
+#else
+typedef AVInputFormat input_format;
+#endif
+
+/* FFmpeg 5.1 has AVChannelLayout and swr_alloc_set_opts2(). */
+#if LIBAVCODEC_VERSION_INT >= AV_VERSION_INT(59, 24, 100) && \
+    LIBSWRESAMPLE_VERSION_INT >= AV_VERSION_INT(4, 5, 100)
+#define CH_LAYOUT
+#endif
+
+static int64_t frame_duration(const AVFrame *fr)
+{
+#if LIBAVUTIL_VERSION_INT >= AV_VERSION_INT(57, 30, 100)
+	return fr->duration;
+#else
+	return fr->pkt_duration;
+#endif
+}
 
 #define CHUNK (1 << 20)		/* bytes per range request */
 #define NFRAMES 4		/* decoded frames waiting */
@@ -122,7 +145,7 @@ struct player;
 struct sbuf {
 	struct player *p;
 	int used;
-	AVInputFormat *ifmt;
+	input_format *ifmt;
 	pthread_t thread;
 	/* bytes appended, not parsed yet */
 	unsigned char *fifo;
@@ -594,8 +617,9 @@ static void keep_up(struct player *p)
 static void push_video(struct player *p, AVFrame *fr)
 {
 	int64_t ts = fr->best_effort_timestamp;
+	int64_t duration = frame_duration(fr);
 	double pts = ts == AV_NOPTS_VALUE ? 0 : (double)ts * av_q2d(p->vtb);
-	double dur = fr->pkt_duration > 0 ? (double)fr->pkt_duration *
+	double dur = duration > 0 ? (double)duration *
 		av_q2d(p->vtb) : 0.033;
 	struct frame *f;
 	uint8_t *dst[4];
@@ -609,7 +633,7 @@ static void push_video(struct player *p, AVFrame *fr)
 			;
 	}
 	/* what a seek lands past is not shown */
-	if (ts != AV_NOPTS_VALUE && fr->pkt_duration > 0 && pts + dur <= p->skip)
+	if (ts != AV_NOPTS_VALUE && duration > 0 && pts + dur <= p->skip)
 		return;
 	fit(&nw, &nh);
 	if (!nw)
@@ -681,10 +705,11 @@ static void push_audio(struct player *p, AVFrame *fr)
 	int16_t tmp[2 * 4096];
 	uint8_t *out = (uint8_t *)tmp;
 	int64_t ts = fr->best_effort_timestamp;
+	int64_t duration = frame_duration(fr);
 	int n, i, k;
 
-	if (ts != AV_NOPTS_VALUE && fr->pkt_duration > 0 &&
-	    (double)(ts + fr->pkt_duration) * av_q2d(p->atb) <= p->skip)
+	if (ts != AV_NOPTS_VALUE && duration > 0 &&
+	    (double)(ts + duration) * av_q2d(p->atb) <= p->skip)
 		return;
 	n = swr_convert(p->swr, &out, 4096,
 		(const uint8_t **)fr->extended_data, fr->nb_samples);
@@ -731,7 +756,11 @@ static void drain(struct player *p, AVCodecContext *dec, AVFrame *fr,
 static AVCodecContext *open_codec(const AVCodecParameters *par,
 	AVRational tb)
 {
+#if LIBAVCODEC_VERSION_MAJOR >= 59
+	const AVCodec *codec = avcodec_find_decoder(par->codec_id);
+#else
 	AVCodec *codec = avcodec_find_decoder(par->codec_id);
+#endif
 	AVCodecContext *c;
 
 	if (!codec || !(c = avcodec_alloc_context3(codec)))
@@ -754,18 +783,40 @@ static AVCodecContext *open_decoder(AVFormatContext *fmt, int i)
 /* Sound conversion to 16-bit stereo at p->rate (the first stream's) */
 static int open_resampler(struct player *p)
 {
+#ifdef CH_LAYOUT
+	AVChannelLayout stereo = AV_CHANNEL_LAYOUT_STEREO;
+	AVChannelLayout layout = { 0 };
+	int ret;
+#else
 	int64_t layout = p->adec->channel_layout ?
 		(int64_t)p->adec->channel_layout :
 		av_get_default_channel_layout(p->adec->channels);
+#endif
 
 	if (!p->rate)
 		p->rate = p->adec->sample_rate > 0 &&
 			p->adec->sample_rate <= 96000 ? p->adec->sample_rate :
 			48000;
 	swr_free(&p->swr);
+#ifdef CH_LAYOUT
+	/* A channel count without speaker positions needs a default layout. */
+	if (p->adec->ch_layout.order == AV_CHANNEL_ORDER_UNSPEC)
+		av_channel_layout_default(&layout, p->adec->ch_layout.nb_channels);
+	else if (av_channel_layout_copy(&layout, &p->adec->ch_layout) < 0)
+		return -1;
+	ret = swr_alloc_set_opts2(&p->swr, &stereo, AV_SAMPLE_FMT_S16,
+		p->rate, &layout, p->adec->sample_fmt,
+		p->adec->sample_rate, 0, NULL);
+	av_channel_layout_uninit(&layout);
+	if (ret < 0) {
+		swr_free(&p->swr);
+		return -1;
+	}
+#else
 	p->swr = swr_alloc_set_opts(NULL, AV_CH_LAYOUT_STEREO,
 		AV_SAMPLE_FMT_S16, p->rate, layout, p->adec->sample_fmt,
 		p->adec->sample_rate, 0, NULL);
+#endif
 	if (!p->swr || swr_init(p->swr) < 0) {
 		swr_free(&p->swr);
 		return -1;
@@ -1755,12 +1806,12 @@ static char *type_param(const char *type, const char *name, char *out,
 }
 
 /* The demuxer for a SourceBuffer of type, or NULL */
-static AVInputFormat *source_format(const char *type)
+static input_format *source_format(const char *type)
 {
 	char codecs[256], num[32], *c, *next;
 	int video = !strncasecmp(type, "video/", 6);
 	double w, h;
-	AVInputFormat *f;
+	input_format *f;
 
 	if (!strncasecmp(type, "video/mp4", 9) ||
 	    !strncasecmp(type, "audio/mp4", 9))
@@ -2109,7 +2160,7 @@ static void *open_source(void *data)
 static int add_buffer(void *h, const char *type)
 {
 	struct player *p = h;
-	AVInputFormat *f = source_format(type);
+	input_format *f = source_format(type);
 	struct sbuf *b;
 	int i;
 

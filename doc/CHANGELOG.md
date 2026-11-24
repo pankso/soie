@@ -11,6 +11,10 @@ each change are in [DECISIONS.md](DECISIONS.md).
 - `browser/xsoie` is built and installed only when its libraries are
   there, like wsoie; `make XSOIE=` leaves it out (Dmitriy Geels).
 
+### Fixed
+- `ext/media.so` builds with FFmpeg 5 to 9: `AVFrame.duration`,
+  `AVChannelLayout`, const demuxers and codecs (Dmitriy Geels).
+
 ## [0.1.10] - 2026-11-24
 
 ### Added
