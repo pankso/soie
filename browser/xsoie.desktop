@@ -2,7 +2,9 @@
 Type=Application
 Name=Soie
 GenericName=Web Browser
+GenericName[tr]=Net Tarayıcı
 Comment=Browse the web, light
+Comment[tr]=Hafif bir Net Tarayıcısı (X11)
 Exec=xsoie %u
 Icon=soie
 Categories=Network;WebBrowser;

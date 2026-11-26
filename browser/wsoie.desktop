@@ -2,7 +2,9 @@
 Type=Application
 Name=Soie (Wayland)
 GenericName=Web Browser
+GenericName[tr]=Net Tarayıcı
 Comment=Browse the web, light
+Comment[tr]=Hafif bir Net Tarayıcısı (wayland)
 Exec=wsoie %u
 Icon=soie
 Categories=Network;WebBrowser;

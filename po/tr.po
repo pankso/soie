@@ -1,0 +1,301 @@
+# Turkish translations for soie package
+# soie paketi için Türkçe çeviriler.
+# Copyright (C) 2026 THE soie'S COPYRIGHT HOLDER
+# This file is distributed under the same license as the soie package.
+# Mehmet Akif <madanadam@gmail.com>, 2026.
+#
+msgid ""
+msgstr ""
+"Project-Id-Version: soie\n"
+"Report-Msgid-Bugs-To: \n"
+"POT-Creation-Date: 2026-11-26 16:38+0300\n"
+"PO-Revision-Date: 2026-11-26 16:53+0300\n"
+"Last-Translator: Mehmet Akif <madandam@gmail.com>\n"
+"Language-Team: Turkish\n"
+"Language: tr\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=2; plural=(n != 1);\n"
+"X-Generator: Poedit 3.10\n"
+
+#: gtk/soie-view.c:1010
+msgid "_Back"
+msgstr "_Geri"
+
+#: gtk/soie-view.c:1012
+msgid "_Forward"
+msgstr "_İleri"
+
+#: gtk/soie-view.c:1014
+msgid "_Reload"
+msgstr "_Yenile"
+
+#: gtk/soie-view.c:1020
+msgid "_Copy"
+msgstr "_Kopyala"
+
+#: gtk/soie-view.c:1023
+msgid "Copy _Link Address"
+msgstr "_Bağlantı Adresini Kopyala"
+
+#: gtk/soie-view.c:1025
+msgid "Copy _Image Address"
+msgstr "_Resim Adresini Kopyala"
+
+#: gtk/soie-view.c:1027
+msgid "_Paste"
+msgstr "_Yapıştır"
+
+#: shell/shell.c:335
+msgid "not found"
+msgstr "bulunamadı"
+
+#: shell/shell.c:1249
+msgid "Error"
+msgstr "Hata"
+
+#: shell/shell.c:1250
+msgid "Cannot open this page"
+msgstr "Bu sayfa açılamıyor"
+
+#: shell/shell.c:1436
+msgid "Wrong user name or password."
+msgstr "Yanlış kullanıcı adı veya şifre."
+
+#: shell/shell.c:1691
+#, c-format
+msgid "Downloading to %s"
+msgstr "%s'e indiriliyor"
+
+#: shell/shell.c:1755 shell/net.c:1552
+msgid "cancelled"
+msgstr "iptal edildi"
+
+#: shell/shell.c:1757 shell/shell.c:1765
+msgid "failed"
+msgstr "arızalı"
+
+#: shell/shell.c:1802
+#, c-format
+msgid "Download failed: %s"
+msgstr "İndirme başarısız oldu: %s"
+
+#: shell/shell.c:1805
+#, c-format
+msgid "Saved to %s"
+msgstr "%s'e kaydedildi"
+
+#: shell/auth.c:87 shell/auth.c:91 shell/auth.c:130
+msgid "Log in"
+msgstr "Giriş yapmak"
+
+#: shell/auth.c:95
+msgid "No page is asking for a login."
+msgstr "Hiçbir sayfa giriş yapmanızı istemiyor."
+
+#: shell/auth.c:108
+msgid " asks for a user name and a password."
+msgstr " kullanıcı adı ve şifre istiyor."
+
+#: shell/auth.c:112
+msgid "The server says:"
+msgstr "Sunucu şunu söylüyor:"
+
+#: shell/auth.c:120
+msgid ""
+"This connection is not encrypted: the password goes over the network as it is."
+msgstr "Bu bağlantı şifrelenmez: şifre ağ üzerinden olduğu gibi gider."
+
+#: shell/auth.c:125
+msgid "User name"
+msgstr "Kullanıcı adı"
+
+#: shell/auth.c:127
+msgid "Password"
+msgstr "Şifre"
+
+#: shell/auth.c:132
+msgid "Cancel"
+msgstr "İptal"
+
+#: shell/auth.c:134
+msgid "Kept in memory until the browser closes, sent to this server only."
+msgstr "Tarayıcı kapanana kadar hafızada tutulur, sadece bu sunucuya gönderilir."
+
+#: shell/settings.c:342
+msgid "The cookies and logins are cleared."
+msgstr "Çerezler ve oturum açma bilgileri temizlenir."
+
+#: shell/settings.c:353
+msgid "Could not write ~/.config/soie/settings."
+msgstr "~/.config/soie/settings yazılamadı."
+
+#: shell/settings.c:356
+msgid "Saved; what was not valid was left as it was."
+msgstr "Kaydedildi; geçerli olmayan şey olduğu gibi bırakıldı."
+
+#: shell/settings.c:357
+msgid "Saved."
+msgstr "Kaydedildi."
+
+#: shell/settings.c:393
+msgid "All"
+msgstr "Tüm"
+
+#: shell/settings.c:394
+msgid "No third-party"
+msgstr "Üçüncü taraf yok"
+
+#: shell/settings.c:394
+msgid "None"
+msgstr "Hiçbiri"
+
+#: shell/settings.c:396
+msgid "As the system's"
+msgstr "Sistem olarak"
+
+#: shell/settings.c:396
+msgid "Light"
+msgstr "Açık"
+
+#: shell/settings.c:396
+msgid "Dark"
+msgstr "Koyu"
+
+#: shell/settings.c:406 shell/settings.c:410
+msgid "Settings"
+msgstr "Ayarlar"
+
+#: shell/settings.c:421
+msgid "Browsing"
+msgstr "Göz atılıyor"
+
+#: shell/settings.c:423
+msgid "Start page"
+msgstr "Başlangıç sayfası"
+
+#: shell/settings.c:425
+#, no-c-format
+msgid "Search with (a URL, %s for the words)"
+msgstr "Şununla ara: (bir URL, kelimeler için %s)"
+
+#: shell/settings.c:430
+msgid "Pages"
+msgstr "Sayfalar"
+
+#: shell/settings.c:434
+msgid "Colours:"
+msgstr "Renkler:"
+
+#: shell/settings.c:439
+msgid "Zoom, in percent (30 to 300)"
+msgstr "Yakınlaştırma, yüzde olarak (30 ila 300)"
+
+#: shell/settings.c:443
+msgid "Privacy"
+msgstr "Mahremiyet"
+
+#: shell/settings.c:445
+msgid "Cookies:"
+msgstr "Çerezler:"
+
+#: shell/settings.c:449
+msgid "Block the hosts of my list"
+msgstr "Listemdeki ana bilgisayarları engelle"
+
+#: shell/settings.c:451
+msgid "The list:"
+msgstr "Liste:"
+
+#: shell/settings.c:460
+msgid ", a host a line."
+msgstr ", bir ana bilgisayar satırı."
+
+#: shell/settings.c:464
+msgid "Downloads"
+msgstr "İndirilenler"
+
+#: shell/settings.c:466
+msgid "Save files in"
+msgstr "Dosyaları kaydet:"
+
+#: shell/settings.c:471
+msgid "Save"
+msgstr "Kaydet"
+
+#: shell/settings.c:475
+msgid "Clear the cookies and logins"
+msgstr "Çerezleri ve oturum açma bilgilerini temizle"
+
+#: shell/settings.c:477
+msgid ""
+"Scripts and cookies apply to the next pages; other windows take the settings "
+"when they open."
+msgstr ""
+"Komut dosyaları ve çerezler sonraki sayfalar için geçerlidir; diğer pencereler "
+"açıldığında ayarları alır."
+
+#: shell/net.c:187
+msgid "a public page may not reach the local network"
+msgstr "herkese açık bir sayfa yerel ağa ulaşamayabilir"
+
+#: shell/net.c:188
+msgid "a local network page may not reach this machine"
+msgstr "yerel ağ sayfası bu makineye ulaşamayabilir"
+
+#: shell/net.c:190
+msgid "could not connect"
+msgstr "bağlanılamadı"
+
+#: shell/net.c:239
+msgid "TLS unavailable"
+msgstr "TLS kullanılamıyor"
+
+#: shell/net.c:943
+msgid "not a readable file"
+msgstr "okunabilir bir dosya değil"
+
+#: shell/net.c:999
+msgid "bad data: URL"
+msgstr "hatalı veri: URL"
+
+#: shell/net.c:1452
+msgid "bad method"
+msgstr "kötü yöntem"
+
+#: shell/net.c:1456
+msgid "bad URL"
+msgstr "hatalı URL"
+
+#: shell/net.c:1553
+msgid "download cut"
+msgstr "indir kesildi"
+
+#: shell/net.c:1557 shell/net.c:1562
+msgid "no response"
+msgstr "yanıt yok"
+
+#: shell/net.c:1567
+msgid "not HTTP"
+msgstr "HTTP değil"
+
+#: shell/net.c:1614 shell/net.c:1620
+msgid "body too large"
+msgstr "body çok büyük"
+
+#: shell/net.c:1687
+msgid "blocked"
+msgstr "engellendi"
+
+#: shell/net.c:1710
+msgid "file:// from a web page"
+msgstr "bir web sayfasından file://"
+
+#: shell/net.c:1722
+msgid "unsupported URL scheme"
+msgstr "desteklenmeyen URL şeması"
+
+#: shell/net.c:1788 shell/net.c:1803
+msgid "bad redirection"
+msgstr "hatalı yönlendirme"
