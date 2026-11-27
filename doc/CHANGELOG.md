@@ -7,6 +7,17 @@ each change are in [DECISIONS.md](DECISIONS.md).
 
 ## [Unreleased]
 
+### Added
+- Iframes show their pages: each is loaded when it first shows, in a
+  page view of its own without scripts, and painted in its box in the
+  page's paint order; clicks, keys and the wheel over it are its own.
+  `srcdoc`, `sandbox` (forms, popups, top navigation), links to
+  `_top` and `_parent`, X-Frame-Options and CSP `frame-ancestors`.
+  An iframe's requests keep its parent's private network guard and
+  are third-party for cookies; it never downloads a file nor asks for
+  a login. 16 a page, three deep. `soie_document_frames()` in
+  libsoie, no ABI change.
+
 ### Changed
 - `browser/xsoie` is built and installed only when its libraries are
   there, like wsoie; `make XSOIE=` leaves it out (Dmitriy Geels).

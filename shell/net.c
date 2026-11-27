@@ -476,6 +476,174 @@ int net_shown(const char *h)
 		strstr(type, "javascript");
 }
 
+/*
+ * Iframes: may a page be shown in another's? CSP frame-ancestors (CSP 3
+ * 7.7.3, a source list each ancestor must match), else X-Frame-Options
+ * (RFC 7034: DENY, SAMEORIGIN; anything else is ignored, as browsers
+ * do). Paths in sources are not looked at: a source with one matches
+ * the whole host, more than browsers allow, never less.
+ */
+
+static int same_origin(const char *a, const char *b);
+
+/* Does the ancestor at a match source src (len bytes) of the policy of
+ * the page at self? */
+static int source_match(const char *src, size_t len, const char *a,
+	const char *self)
+{
+	struct url u;
+	char host[256], port[8] = "";
+	const char *p = src, *e = src + len, *h, *c;
+	size_t sl = 0;
+	int ok, web;
+
+	if (len == 6 && !strncasecmp(src, "'self'", 6))
+		return same_origin(a, self);
+	if (*src == '\'')
+		return 0;	/* 'none', nonces, hashes: no ancestor */
+	if (parse_url(a, &u))
+		return 0;
+	web = !strcasecmp(u.scheme, "http") || !strcasecmp(u.scheme, "https");
+	free(u.path);
+	if (len == 1 && *src == '*')
+		return web;
+	/* a scheme alone, "https:"; http: allows https too */
+	if (src[len - 1] == ':' && !memchr(src, '/', len))
+		return (len - 1 == strlen(u.scheme) &&
+			!strncasecmp(src, u.scheme, len - 1)) ||
+			(len == 5 && !strncasecmp(src, "http:", 5) &&
+			 !strcasecmp(u.scheme, "https"));
+	/* [scheme://]host[:port][/path] */
+	if ((h = strstr(src, "://")) && h < e) {
+		sl = (size_t)(h - src);
+		if (!(sl == strlen(u.scheme) && !strncasecmp(src, u.scheme,
+		    sl)) && !(sl == 4 && !strncasecmp(src, "http", 4) &&
+		    !strcasecmp(u.scheme, "https")))
+			return 0;
+		p = h + 3;
+	} else if (!web) {
+		return 0;
+	}
+	for (h = p; h < e && *h != ':' && *h != '/'; h++)
+		;
+	if ((size_t)(h - p) >= sizeof(host) || h == p)
+		return 0;
+	memcpy(host, p, (size_t)(h - p));
+	host[h - p] = '\0';
+	if (h < e && *h == ':') {
+		for (c = ++h; c < e && *c != '/'; c++)
+			;
+		if ((size_t)(c - h) >= sizeof(port))
+			return 0;
+		memcpy(port, h, (size_t)(c - h));
+		port[c - h] = '\0';
+	}
+	if (*host == '*' && host[1] == '.') {
+		size_t k = strlen(host + 1), m = strlen(u.host);
+
+		/* *.example.com: its subdomains, not example.com */
+		ok = m > k && !strcasecmp(u.host + m - k, host + 1);
+	} else {
+		ok = !strcasecmp(u.host, host);
+	}
+	if (ok && strcmp(port, "*")) {
+		/* no port: the scheme's (of the source, else the page's) */
+		if (!*port)
+			strcpy(port, sl ? (sl == 5 && !strncasecmp(src,
+				"https", 5) ? "443" : "80") :
+				!strcasecmp(u.scheme, "https") ? "443" : "80");
+		ok = !strcmp(port, u.port) || (!strcmp(port, "80") &&
+			!strcmp(u.port, "443") && !strcasecmp(u.scheme,
+			"https"));
+	}
+	return ok;
+}
+
+/* A frame-ancestors directive, v its sources: do all ancestors match? */
+static int ancestors_match(const char *v, size_t len, const char *self,
+	const char *const *anc, int n)
+{
+	int i;
+
+	for (i = 0; i < n; i++) {
+		size_t k = 0, b;
+		int ok = 0;
+
+		while (k < len && !ok) {
+			while (k < len && (v[k] == ' ' || v[k] == '\t'))
+				k++;
+			b = k;
+			while (k < len && v[k] != ' ' && v[k] != '\t')
+				k++;
+			if (k > b)
+				ok = source_match(v + b, k - b, anc[i], self);
+		}
+		if (!ok)
+			return 0;
+	}
+	return 1;
+}
+
+/* The frame-ancestors policies in the CSP headers: -1 none, else 0 or 1 */
+static int csp_ancestors(const char *h, const char *self,
+	const char *const *anc, int n)
+{
+	int found = -1;
+
+	for (; h && *h; h = strchr(h, '\n') ? strchr(h, '\n') + 1 : NULL) {
+		const char *v, *e, *d;
+
+		if (strncasecmp(h, "content-security-policy:", 24))
+			continue;
+		v = h + 24;
+		e = v + strcspn(v, "\r\n");
+		/* policies by commas, directives by semicolons */
+		for (d = v; d < e; ) {
+			const char *de = d, *name;
+			size_t nl;
+
+			while (de < e && *de != ';' && *de != ',')
+				de++;
+			while (d < de && (*d == ' ' || *d == '\t'))
+				d++;
+			name = d;
+			while (d < de && *d != ' ' && *d != '\t')
+				d++;
+			nl = (size_t)(d - name);
+			if (nl == 15 && !strncasecmp(name, "frame-ancestors",
+			    15)) {
+				if (!ancestors_match(d, (size_t)(de - d), self,
+				    anc, n))
+					return 0;
+				found = 1;
+			}
+			d = de < e ? de + 1 : e;
+		}
+	}
+	return found;
+}
+
+int net_framable(const char *h, const char *url, const char *const *anc,
+	int n)
+{
+	const char *v;
+	int c = csp_ancestors(h, url, anc, n), i;
+
+	if (c >= 0)
+		return c;
+	for (; h && (v = header(h, "X-Frame-Options")); h = v) {
+		size_t len = header_len(v);
+
+		if (has_token(v, len, "deny"))
+			return 0;
+		if (has_token(v, len, "sameorigin"))
+			for (i = 0; i < n; i++)
+				if (!same_origin(anc[i], url))
+					return 0;
+	}
+	return 1;
+}
+
 /* Downloads: the body bytes read so far to the file, at most up to
  * want with a Content-Length; -1 when the file cannot take them. */
 static int dl_flush(struct response *raw, size_t head, size_t *streamed,

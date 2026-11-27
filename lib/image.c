@@ -877,6 +877,43 @@ void draw_fitted(struct canvas *c, const struct box *b,
 	draw_placed(c, b, im, x, y, w, h, cur);
 }
 
+void soie_document_frames(soie_node *doc, soie_frame_fn fn, void *data)
+{
+	if (!doc || doc->type != SOIE_DOCUMENT)
+		return;
+	doc->u.doc->frame_fn = fn;
+	doc->u.doc->frame_data = data;
+}
+
+/* An iframe: the pixels of its page, from the host, on whole pixels at
+ * the content box's corner and clipped to it, as a video frame */
+static void paint_frame(struct canvas *c, const struct box *b)
+{
+	const struct docinfo *d = b->node->doc->u.doc;
+	float box[4];
+	struct image im;
+
+	/* not in what this paint covers: not asked (an iframe out of view
+	 * is not loaded) */
+	if (!d->frame_fn || b->x - c->ox >= (float)c->cx1 ||
+	    b->x + b->w - c->ox <= (float)c->cx0 ||
+	    b->y - c->oy >= (float)c->cy1 || b->y + b->h - c->oy <= (float)c->cy0)
+		return;
+	box[0] = b->x;
+	box[1] = b->y;
+	box[2] = b->w;
+	box[3] = b->h;
+	memset(&im, 0, sizeof(im));
+	im.rgba = (unsigned char *)d->frame_fn(d->frame_data,
+		(soie_node *)b->node, box, c->bgr, &im.w, &im.h);
+	if (!im.rgba || im.w <= 0 || im.h <= 0)
+		return;
+	im.opaque = 1;
+	im.bgr = c->bgr;
+	draw_placed(c, b, &im, roundf(b->x), roundf(b->y), (float)im.w,
+		(float)im.h, NULL);
+}
+
 void paint_replaced(struct canvas *c, const struct box *b)
 {
 	const struct style *st = b->style;
@@ -902,6 +939,10 @@ void paint_replaced(struct canvas *c, const struct box *b)
 	if (b->node->ns == SOIE_NS_HTML && (!strcmp(b->node->name, "video") ||
 	    !strcmp(b->node->name, "audio"))) {
 		paint_media(c, b);
+		return;
+	}
+	if (is_html(b->node, TAG_IFRAME)) {
+		paint_frame(c, b);
 		return;
 	}
 	color_to_rgba(st->v[P_COLOR].u.color, cur);

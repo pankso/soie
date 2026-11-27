@@ -78,6 +78,28 @@ struct poprow {
 	float y, h;		/* the line's, in the list's page */
 };
 
+/*
+ * An iframe of the page (DECISIONS "Iframes"): its page is a shell of
+ * its own, without scripts, that the page's shell ticks, paints into
+ * px and gives the input to; the engine shows px in the iframe's box.
+ */
+#define FRAMES_MAX 16	/* iframes loaded in a page */
+#define FRAMES_DEPTH 3	/* iframes in iframes */
+/* What a sandbox attribute allows (none: all) */
+enum { SB_TOP = 1, SB_POPUPS = 2, SB_FORMS = 4, SB_ALL = 7 };
+struct frame {
+	soie_node *doc, *el;	/* the iframe, in that page */
+	struct shell *kid;	/* its page; NULL: none (yet) */
+	int tried;		/* loaded from src, or found nothing to load */
+	char *src;		/* its src, or srcdoc's text, when loaded */
+	int srcdoc;
+	int box[4];		/* its content box at the last paint, x y w h
+				 * in page px */
+	unsigned char *px;	/* the kid's pixels, w x h */
+	int w, h;
+	int stale;		/* px is to paint again */
+};
+
 struct shell {
 	struct {
 		char url[4096];
@@ -200,6 +222,18 @@ struct shell {
 	} ta;
 	char loading_text[64];	/* shell_loading()'s */
 	struct download *page_dl;	/* the page load's, its job's */
+	/* Iframes: an iframe's page knows its parent; a page its frames,
+	 * the one that has the keys, what of them is to paint again */
+	struct shell *parent;
+	int depth;		/* iframes above it, 0 for a view */
+	int sandbox;		/* SB_*: what its iframe allows it */
+	int frame_guard;	/* its parent's guard: SOIE_REQ_NO_* */
+	struct frame frames[FRAMES_MAX];
+	int nframes;
+	struct frame *kfocus;
+	int fdirty;		/* fdmg is to paint: page px x0 y0 x1 y1 */
+	int fdmg[4];
+	int mx, my;		/* the pointer, last seen: for the wheel */
 };
 
 /* A download: a page load that was not a page. They are the process's:
@@ -237,6 +271,13 @@ static struct shell *shells;
 static unsigned gens;		/* the last load's gen */
 
 static int page_changed(struct shell *s);
+static void frames_free(struct shell *s);
+static const unsigned char *frame_px(void *data, soie_node *el,
+	const float *box, int bgra, int *w, int *h);
+static const char *site_of(struct shell *s);
+static const char *link_target(struct shell *s, soie_node *a);
+static void frame_navigate_up(struct shell *s, const char *target,
+	const char *href);
 static void pop_close(struct shell *s);
 
 /* Fetching */
@@ -293,8 +334,9 @@ static int scheme_of(const char *url)
  */
 static int page_flags(struct shell *s)
 {
-	return s->private | (s->page.level == NET_PUBLIC ? SOIE_REQ_NO_LAN :
-		s->page.level == NET_LAN ? SOIE_REQ_NO_LOOPBACK : 0);
+	return s->private | s->frame_guard | (s->page.level == NET_PUBLIC ?
+		SOIE_REQ_NO_LAN : s->page.level == NET_LAN ?
+		SOIE_REQ_NO_LOOPBACK : 0);
 }
 
 /*
@@ -364,7 +406,7 @@ static void res_fetch(struct shell *s, struct res *r, int urgent)
 	struct job j;
 
 	if (k < 0) {
-		fetch_add(r->url, NULL, s->page.url, r->kind, s->page.gen,
+		fetch_add(r->url, NULL, site_of(s), r->kind, s->page.gen,
 			urgent, page_flags(s), NULL);
 		return;
 	}
@@ -1224,6 +1266,7 @@ static void doc_arrived(struct shell *s, struct job *j)
 	else
 		debug(1, "page failed, %s: %s", r->error, j->url);
 	debug_page(j->ok ? r->url : j->url);
+	frames_free(s);
 	drop_resources(s);
 	s->focus = NULL;
 	if (s->page.old)
@@ -1244,10 +1287,17 @@ static void doc_arrived(struct shell *s, struct job *j)
 		char buf[9000];
 
 		snprintf(s->page.url, sizeof(s->page.url), "%s", j->url);
-		snprintf(buf, sizeof(buf), "<!DOCTYPE html><title>%s</title>"
-			"<body style='font-family:sans-serif;margin:3em'>"
-			"<h1>%s</h1><p>%s</p><p>%s</p>", _("Error"),
-			_("Cannot open this page"), u, e);
+		if (s->parent)
+			/* an iframe: the reason, small, in its box */
+			snprintf(buf, sizeof(buf), "<!DOCTYPE html><title>%s"
+				"</title><body style='font:13px sans-serif;"
+				"margin:8px;color:#666;background:#f4f4f4'>"
+				"<p>%s</p>", _("Error"), e);
+		else
+			snprintf(buf, sizeof(buf), "<!DOCTYPE html><title>%s"
+				"</title><body style='font-family:sans-serif;"
+				"margin:3em'><h1>%s</h1><p>%s</p><p>%s</p>",
+				_("Error"), _("Cannot open this page"), u, e);
 		s->page.doc = soie_html_parse(buf, strlen(buf), NULL);
 		free(e);
 		free(u);
@@ -1295,6 +1345,7 @@ static void doc_arrived(struct shell *s, struct job *j)
 		debug_js_start(s);
 		free(html);
 	}
+	soie_document_frames(s->page.doc, frame_px, s);
 	free(s->page.user_css);
 	s->page.user_css = soie_ext_user_css(NULL, s->page.url);
 	soie_ext_document(s->page.doc, s->page.url);
@@ -1533,16 +1584,17 @@ static void load(struct shell *s, const char *url, const char *post, int push)
 		const char *dir = debug_dir();
 		struct download *d = NULL;
 
-		if (dir && (d = calloc(1, sizeof(*d)))) {
+		if (dir && !s->parent && (d = calloc(1, sizeof(*d)))) {
 			d->fd = -1;
 			snprintf(d->path, sizeof(d->path), "%s/dl-XXXXXX", dir);
 		}
 		s->page_dl = d;
-		fetch_add(url, post, NULL, K_DOC, s->page.gen, 1, s->private |
-			(s->reload ? NET_RELOAD : 0) | s->nav_guard, d);
+		fetch_add(url, post, s->parent ? site_of(s) : NULL, K_DOC,
+			s->page.gen, 1, s->private | (s->reload ? NET_RELOAD :
+			0) | s->nav_guard | s->frame_guard, d);
 		/* while the page comes, connections for its resources (not
 		 * opened ahead where the guard may refuse them) */
-		if (!s->nav_guard)
+		if (!s->nav_guard && !s->frame_guard)
 			fetch_preconnect(url, PRECONNECT, s->page.gen);
 	}
 	s->page.loading = L_DOC;
@@ -1849,6 +1901,410 @@ void shell_download_cancel(unsigned id)
 }
 
 /* The page's load, finished: a page, or a download after all */
+/*
+ * Iframes (DECISIONS "Iframes"). A paint that reaches an iframe asks
+ * frame_px() for its pixels: that is how the shell learns that it
+ * shows, where and at which size, so an iframe out of view is never
+ * loaded. The next tick loads it in a shell of its own (no scripts),
+ * ticks it with this one and paints it into px when it changed; the
+ * page is then painted again there. Clicks, keys, the pointer and the
+ * wheel over it go to it.
+ */
+
+static struct shell *top_of(struct shell *s)
+{
+	while (s->parent)
+		s = s->parent;
+	return s;
+}
+
+/* The page whose site the requests of s are made for: cookies and
+ * the cache's partition are the top page's */
+static const char *site_of(struct shell *s)
+{
+	return top_of(s)->page.url;
+}
+
+static struct frame *frame_of(struct shell *s, const soie_node *el)
+{
+	int i;
+
+	for (i = 0; i < s->nframes; i++)
+		if (s->frames[i].el == el &&
+		    s->frames[i].doc == soie_node_document(el))
+			return &s->frames[i];
+	return NULL;
+}
+
+static void frame_drop(struct frame *f)
+{
+	shell_free(f->kid);
+	f->kid = NULL;
+	free(f->px);
+	f->px = NULL;
+	f->w = f->h = 0;
+	free(f->src);
+	f->src = NULL;
+}
+
+/* The page changed or went: its frames go with it */
+static void frames_free(struct shell *s)
+{
+	int i;
+
+	for (i = 0; i < s->nframes; i++)
+		frame_drop(&s->frames[i]);
+	memset(s->frames, 0, sizeof(s->frames));
+	s->nframes = 0;
+	s->kfocus = NULL;
+	s->fdirty = 0;
+}
+
+/* The engine's paint asks for an iframe's pixels (soie_frame_fn) */
+static const unsigned char *frame_px(void *data, soie_node *el,
+	const float *box, int bgra, int *w, int *h)
+{
+	struct shell *s = data;
+	struct frame *f = frame_of(s, el);
+
+	if (!f) {
+		if (soie_node_document(el) != s->page.doc ||
+		    s->nframes >= FRAMES_MAX || s->depth >= FRAMES_DEPTH)
+			return NULL;
+		f = &s->frames[s->nframes++];
+		memset(f, 0, sizeof(*f));
+		f->doc = s->page.doc;
+		f->el = el;
+		/* loaded at the next tick: the loop is woken for it */
+		fetch_wake();
+	}
+	f->box[0] = (int)roundf(box[0]);
+	f->box[1] = (int)roundf(box[1]);
+	f->box[2] = (int)roundf(box[2]);
+	f->box[3] = (int)roundf(box[3]);
+	if (!f->px || !bgra != !s->bgra)
+		return NULL;
+	*w = f->w;
+	*h = f->h;
+	return f->px;
+}
+
+/* Its box is to paint again in the page */
+static void frame_damage(struct shell *s, const struct frame *f)
+{
+	int r[4];
+
+	r[0] = f->box[0];
+	r[1] = f->box[1];
+	r[2] = f->box[0] + f->box[2];
+	r[3] = f->box[1] + f->box[3];
+	if (r[0] >= r[2] || r[1] >= r[3])
+		return;
+	if (!s->fdirty) {
+		memcpy(s->fdmg, r, sizeof(r));
+		s->fdirty = 1;
+		return;
+	}
+	s->fdmg[0] = r[0] < s->fdmg[0] ? r[0] : s->fdmg[0];
+	s->fdmg[1] = r[1] < s->fdmg[1] ? r[1] : s->fdmg[1];
+	s->fdmg[2] = r[2] > s->fdmg[2] ? r[2] : s->fdmg[2];
+	s->fdmg[3] = r[3] > s->fdmg[3] ? r[3] : s->fdmg[3];
+}
+
+static void frame_paint(struct shell *s, struct frame *f)
+{
+	int w = f->kid->view_w, h = f->kid->view_h;
+
+	if (w <= 0 || h <= 0)
+		return;
+	if (w != f->w || h != f->h) {
+		unsigned char *p = realloc(f->px, (size_t)w * (size_t)h * 4);
+
+		if (!p)
+			return;
+		f->px = p;
+		f->w = w;
+		f->h = h;
+	}
+	f->kid->bgra = s->bgra;
+	shell_paint(f->kid, f->px, w * 4);
+	f->stale = 0;
+	frame_damage(s, f);
+}
+
+/* An iframe of the page whose address is url: a page inside itself */
+static int frame_loop(struct shell *s, const char *url)
+{
+	size_t n = strcspn(url, "#");
+
+	for (; s; s = s->parent)
+		if (strcspn(s->page.url, "#") == n &&
+		    !strncmp(s->page.url, url, n))
+			return 1;
+	return 0;
+}
+
+/* What the sandbox attribute of el allows (HTML 7.1.5) */
+static int sandbox_of(soie_node *el)
+{
+	const char *v = soie_element_get_attr(el, "sandbox"), *p;
+	int sb = 0;
+
+	if (!v)
+		return SB_ALL;
+	for (p = v; *p; ) {
+		size_t n;
+
+		p += strspn(p, " \t\r\n\f");
+		n = strcspn(p, " \t\r\n\f");
+		if ((n == 20 && !strncasecmp(p, "allow-top-navigation", 20)) ||
+		    (n == 36 && !strncasecmp(p,
+		    "allow-top-navigation-by-user-activation", 36)))
+			sb |= SB_TOP;
+		else if (n == 12 && !strncasecmp(p, "allow-popups", 12))
+			sb |= SB_POPUPS;
+		else if (n == 11 && !strncasecmp(p, "allow-forms", 11))
+			sb |= SB_FORMS;
+		p += n;
+	}
+	return sb;
+}
+
+/* A link of an iframe's page opens a new window: the view's front does */
+static void frame_open(void *data, const char *url)
+{
+	struct shell *t = top_of(data);
+
+	if (t->ui.open)
+		t->ui.open(t->ui_data, url);
+}
+
+/* Load the page of f: its srcdoc, else its src. Nothing to load (no
+ * src, about:blank) leaves the box empty, as is the page under it. */
+static void frame_start(struct shell *s, struct frame *f)
+{
+	const char *sd = soie_element_get_attr(f->el, "srcdoc");
+	const char *src = soie_element_get_attr(f->el, "src");
+	struct shell_ui ui;
+	char *abs = NULL;
+	struct shell *k;
+
+	f->tried = 1;
+	free(f->src);
+	f->src = strdup(sd ? sd : src ? src : "");
+	f->srcdoc = sd != NULL;
+	if (!sd) {
+		if (!src || !*src || !(abs = soie_url_resolve(s->page.url, src)))
+			return;
+		if (!strncasecmp(abs, "about:blank", 11) ||
+		    !strncasecmp(abs, "javascript:", 11) ||
+		    !scheme_allowed(s->page.url, abs) || frame_loop(s, abs)) {
+			debug(1, "iframe not loaded: %s", abs);
+			free(abs);
+			return;
+		}
+	}
+	memset(&ui, 0, sizeof(ui));
+	k = shell_new(&ui, s, 0);
+	k->parent = s;
+	k->depth = s->depth + 1;
+	k->sandbox = sandbox_of(f->el) & (s->parent ? s->sandbox : SB_ALL);
+	if (top_of(s)->ui.open && (k->sandbox & SB_POPUPS))
+		k->ui.open = frame_open;
+	/* nothing more private than its parent may have: its guard too */
+	k->frame_guard = (page_flags(s) | s->frame_guard) & ~SOIE_REQ_PRIVATE;
+	if (s->private)
+		shell_private(k);
+	k->bgra = s->bgra;
+	k->zoom = s->zoom;
+	k->dark = s->dark;
+	k->view_w = f->box[2] > 0 ? f->box[2] : 300;
+	k->view_h = f->box[3] > 0 ? f->box[3] : 150;
+	f->kid = k;
+	if (sd) {
+		/* about:srcdoc, with its parent's address for its links */
+		debug(1, "iframe srcdoc, %zu bytes", strlen(sd));
+		load_start(k, s->page.url, 1);
+		load_here(k, s->page.url, sd);
+	} else {
+		debug(1, "iframe %s", abs);
+		load(k, abs, NULL, 1);
+		free(abs);
+	}
+	f->stale = 1;
+}
+
+/* Its src or srcdoc changed (a script): what it loaded goes */
+static int frame_moved(struct frame *f)
+{
+	const char *sd = soie_element_get_attr(f->el, "srcdoc");
+	const char *src = soie_element_get_attr(f->el, "src");
+	const char *now = sd ? sd : src ? src : "";
+
+	return f->tried && (!f->src || !sd != !f->srcdoc ||
+		strcmp(now, f->src));
+}
+
+/* Tick the frames: loaded when first painted, sized as their boxes,
+ * painted when they changed. Returns ms until the next tick, -1 none. */
+static int frames_tick(struct shell *s, int *repaint)
+{
+	int i, t = -1;
+
+	for (i = 0; i < s->nframes; i++) {
+		struct frame *f = &s->frames[i];
+		int r = 0, m;
+
+		if (f->doc != s->page.doc)
+			continue;
+		if (frame_moved(f)) {
+			if (s->kfocus == f)
+				s->kfocus = NULL;
+			frame_drop(f);
+			f->tried = 0;
+			frame_damage(s, f);
+		}
+		if (!f->tried)
+			frame_start(s, f);
+		if (!f->kid)
+			continue;
+		if (f->box[2] > 0 && f->box[3] > 0 &&
+		    (f->box[2] != f->kid->view_w ||
+		     f->box[3] != f->kid->view_h)) {
+			shell_resize(f->kid, f->box[2], f->box[3]);
+			f->stale = 1;
+		}
+		m = shell_tick(f->kid, &r);
+		if (r)
+			f->stale = 1;
+		if (f->stale)
+			frame_paint(s, f);
+		if (m >= 0 && (t < 0 || m < t))
+			t = m;
+	}
+	if (s->fdirty && !*repaint)
+		*repaint = 1;
+	return t;
+}
+
+/* Still loading, an iframe or one inside it (offscreen renders wait) */
+static int frames_busy(struct shell *s)
+{
+	int i;
+
+	for (i = 0; i < s->nframes; i++) {
+		struct frame *f = &s->frames[i];
+
+		if (f->doc != s->page.doc)
+			continue;
+		if (!f->tried || (f->kid && (f->kid->page.loading != L_NONE ||
+		    res_pending(f->kid, -1) || frames_busy(f->kid))))
+			return 1;
+	}
+	return 0;
+}
+
+/* The iframe at view point x, y with a page, and that page's point; not
+ * when something of the page lies over it there */
+static struct frame *frame_at(struct shell *s, int x, int y, int *kx,
+	int *ky)
+{
+	soie_node *n;
+	int i;
+
+	if (!s->nframes || !s->page.doc)
+		return NULL;
+	n = soie_hit_test(s->page.doc, (float)x, (float)(y + s->page.scroll));
+	for (i = 0; n && i < s->nframes; i++) {
+		struct frame *f = &s->frames[i];
+
+		if (f->el != n || f->doc != s->page.doc || !f->kid)
+			continue;
+		*kx = x - f->box[0];
+		*ky = y + s->page.scroll - f->box[1];
+		/* its border and padding are the page's */
+		if (*kx < 0 || *ky < 0 || *kx >= f->box[2] ||
+		    *ky >= f->box[3])
+			return NULL;
+		return f;
+	}
+	return NULL;
+}
+
+/* Input went to f: painted again at the next tick */
+static void frame_touched(struct frame *f)
+{
+	f->stale = 1;
+	fetch_wake();
+}
+
+/* The keys go to f now (NULL: the page), the one before loses its focus */
+static void frame_focus(struct shell *s, struct frame *f)
+{
+	if (s->kfocus && s->kfocus != f && s->kfocus->kid) {
+		shell_blur(s->kfocus->kid);
+		frame_touched(s->kfocus);
+	}
+	s->kfocus = f && f->kid ? f : NULL;
+}
+
+/* A link of an iframe's page, target _top or _parent: that page goes
+ * there, after the click (it may free this one) */
+static void frame_navigate_up(struct shell *s, const char *target,
+	const char *href)
+{
+	struct shell *to = !strcasecmp(target, "_top") ? top_of(s) : s->parent;
+	char *abs = soie_url_resolve(s->page.url, href);
+
+	if (!abs || !(s->sandbox & SB_TOP) ||
+	    !scheme_allowed(s->page.url, abs)) {
+		debug(1, "not from this frame: %s", abs ? abs : href);
+		free(abs);
+		return;
+	}
+	free(to->pending_nav);
+	to->pending_nav = abs;
+	to->pending_replace = 0;
+	to->pending_guard = 1;
+}
+
+/* The target of a link of s: its own, else its page's <base target> */
+static const char *link_target(struct shell *s, soie_node *a)
+{
+	const char *t = soie_element_get_attr(a, "target");
+	soie_node *b;
+
+	if (t || !s->parent)
+		return t;
+	b = find_tag(s->page.doc, "base");
+	return b ? soie_element_get_attr(b, "target") : NULL;
+}
+
+/* May an iframe's page show this answer? The parent's sites allow it
+ * (X-Frame-Options, frame-ancestors), and it is a page, not a file */
+static int frame_allows(struct shell *s, struct job *j)
+{
+	const char *anc[FRAMES_DEPTH + 1];
+	const char *url = *j->r.url ? j->r.url : j->url;
+	struct shell *p;
+	int n = 0;
+
+	if (j->r.status / 100 == 2 && j->r.headers &&
+	    !net_shown(j->r.headers)) {
+		snprintf(j->r.error, sizeof(j->r.error), "%s",
+			N_("Files are not downloaded from frames"));
+		return 0;
+	}
+	for (p = s->parent; p && n < FRAMES_DEPTH + 1; p = p->parent)
+		anc[n++] = p->page.url;
+	if (!net_framable(j->r.headers, url, anc, n)) {
+		snprintf(j->r.error, sizeof(j->r.error), "%s",
+			N_("This site does not allow its pages in frames"));
+		return 0;
+	}
+	return 1;
+}
+
 static void doc_or_download(struct shell *s, struct job *j)
 {
 	struct download *d = j->r.dl;
@@ -1856,6 +2312,14 @@ static void doc_or_download(struct shell *s, struct job *j)
 
 	if (d && d == s->page_dl)
 		s->page_dl = NULL;
+	/* an iframe's page: no login asked, no file saved, and only
+	 * where its site allows it */
+	if (s->parent) {
+		if (j->ok && !frame_allows(s, j))
+			j->ok = 0;
+		doc_arrived(s, j);
+		return;
+	}
 	if (auth_ask(s, j))
 		return;
 	if ((d && d->state != DL_NONE) || (j->ok && j->r.status / 100 == 2 &&
@@ -2210,6 +2674,11 @@ static void submit(struct shell *s, soie_node *form, soie_node *submitter)
 	char *q, *abs, *url;
 	size_t len = 0;
 
+	/* a sandboxed iframe's page sends none without allow-forms */
+	if (s->parent && !(s->sandbox & SB_FORMS)) {
+		debug(1, "form not sent from a sandboxed frame");
+		return;
+	}
 	if (!s->quiet_submit && (fire(s, form, "submit", 0, 0, NULL, 0) ||
 	    s->pending_nav))
 		return;
@@ -3266,10 +3735,18 @@ static void click(struct shell *s, int x, int y, int mods)
 		return;
 	if ((a = ancestor(n, "a")) && soie_element_get_attr(a, "href")) {
 		const char *h = soie_element_get_attr(a, "href");
+		const char *tg = link_target(s, a);
 		char *abs;
 
-		if (s->ui.open && new_window(soie_element_get_attr(a,
-		    "target")) && strncasecmp(h, "javascript:", 11) &&
+		/* an iframe's link to the page it is in */
+		if (s->parent && tg && (!strcasecmp(tg, "_top") ||
+		    !strcasecmp(tg, "_parent"))) {
+			if (strncasecmp(h, "javascript:", 11))
+				frame_navigate_up(s, tg, h);
+			return;
+		}
+		if (s->ui.open && new_window(tg) &&
+		    strncasecmp(h, "javascript:", 11) &&
 		    (abs = soie_url_resolve(s->page.url, h))) {
 			open_window(s, abs);
 			free(abs);
@@ -3282,13 +3759,23 @@ static void click(struct shell *s, int x, int y, int mods)
 
 void shell_click(struct shell *s, int x, int y, int mods)
 {
+	struct frame *f;
+	int kx, ky;
+
 	debug(2, "click %d,%d (scroll %d)", x, y, s->page.scroll);
 	s->in_input++;
 	s->pop.ate = 0;
 	if (pop_check(s)) {
 		pop_click(s, x, y);
 		s->pop.ate = 1;
+	} else if ((f = frame_at(s, x, y, &kx, &ky))) {
+		/* in an iframe: its page's click, and its keys after */
+		set_page_focus(s, NULL, 0);
+		frame_focus(s, f);
+		shell_click(f->kid, kx, ky, mods);
+		frame_touched(f);
 	} else {
+		frame_focus(s, NULL);
 		click(s, x, y, mods);
 	}
 	after_scripts(s);
@@ -3579,6 +4066,13 @@ int shell_key(struct shell *s, const char *key, const char *text, int mods)
 {
 	int r;
 
+	/* an iframe has the keys: what its page does not take is this
+	 * page's (it scrolls, or the front's shortcuts) */
+	if (s->kfocus && !s->pop.sel &&
+	    (r = shell_key(s->kfocus->kid, key, text, mods))) {
+		frame_touched(s->kfocus);
+		return 1;
+	}
 	s->in_input++;
 	r = key_in(s, key, text, mods);
 	pop_wanted(s);
@@ -3589,12 +4083,18 @@ int shell_key(struct shell *s, const char *key, const char *text, int mods)
 int shell_hover(struct shell *s, int x, int y, char *link, size_t size)
 {
 	soie_node *n, *a;
+	struct frame *f;
+	int kx, ky;
 
 	*link = '\0';
+	s->mx = x;
+	s->my = y;
 	if (pop_check(s)) {
 		pop_hover(s, x, y);
 		if (pop_in(s, x, y))
 			return SHELL_ARROW;
+	} else if ((f = frame_at(s, x, y, &kx, &ky))) {
+		return shell_hover(f->kid, kx, ky, link, size);
 	}
 	n = s->page.doc ? soie_hit_test(s->page.doc, (float)x,
 		(float)(y + s->page.scroll)) : NULL;
@@ -3612,10 +4112,16 @@ int shell_hover(struct shell *s, int x, int y, char *link, size_t size)
 int shell_hit(struct shell *s, int x, int y, char *link, char *image,
 	size_t size)
 {
-	soie_node *n = s->page.doc ? soie_hit_test(s->page.doc, (float)x,
-		(float)(y + s->page.scroll)) : NULL, *a;
+	soie_node *n, *a;
 	const char *v;
 	char *abs;
+	struct frame *f;
+	int kx, ky;
+
+	if ((f = frame_at(s, x, y, &kx, &ky)))
+		return shell_hit(f->kid, kx, ky, link, image, size);
+	n = s->page.doc ? soie_hit_test(s->page.doc, (float)x,
+		(float)(y + s->page.scroll)) : NULL;
 
 	*link = *image = '\0';
 	if ((a = ancestor(n, "a")) && (v = soie_element_get_attr(a, "href")) &&
@@ -3644,6 +4150,23 @@ void shell_scroll(struct shell *s, int dy)
 		}
 		pop_close(s);
 	}
+	/* over an iframe its page scrolls, the page when it cannot */
+	{
+		struct frame *f;
+		int kx, ky, was;
+		char link[8];
+
+		if ((f = frame_at(s, s->mx, s->my, &kx, &ky))) {
+			was = f->kid->page.scroll;
+			/* its own iframes see where the pointer is */
+			shell_hover(f->kid, kx, ky, link, sizeof(link));
+			shell_scroll(f->kid, dy);
+			if (f->kid->page.scroll != was) {
+				frame_touched(f);
+				return;
+			}
+		}
+	}
 	s->page.scroll += dy;
 	clamp_scroll(s);
 }
@@ -3664,12 +4187,15 @@ void shell_view(struct shell *s, int *scroll, int *height, int *view)
 
 void shell_blur(struct shell *s)
 {
+	frame_focus(s, NULL);
 	pop_close(s);
 	set_page_focus(s, NULL, 0);
 }
 
 void shell_focus_out(struct shell *s)
 {
+	if (s->kfocus)
+		shell_focus_out(s->kfocus->kid);
 	pop_close(s);
 }
 
@@ -3696,6 +4222,10 @@ int shell_paste(struct shell *s, const char *text)
 	size_t len;
 	int multi, lo, hi;
 
+	if (s->kfocus) {
+		frame_touched(s->kfocus);
+		return shell_paste(s->kfocus->kid, text);
+	}
 	if (!is_text_control(s->focus))
 		return 0;
 	field_range(s, &lo, &hi);
@@ -3743,7 +4273,13 @@ static char *field_selection(struct shell *s)
 
 char *shell_cut(struct shell *s)
 {
-	char *t = field_selection(s);
+	char *t;
+
+	if (s->kfocus) {
+		frame_touched(s->kfocus);
+		return shell_cut(s->kfocus->kid);
+	}
+	t = field_selection(s);
 
 	if (t) {
 		s->in_input++;
@@ -3764,6 +4300,8 @@ const char *shell_field(struct shell *s)
 	/* an open list takes Escape as a field would (front.c) */
 	if (s->pop.sel)
 		return "";
+	if (s->kfocus)
+		return shell_field(s->kfocus->kid);
 	if (!is_text_control(s->focus))
 		return NULL;
 	v = soie_element_get_attr(s->focus, "value");
@@ -3852,10 +4390,11 @@ static int sel_rects(struct shell *s)
 int shell_select_start(struct shell *s, int x, int y, int unit)
 {
 	char link[16];
-	int had;
+	int had, kx, ky;
 
-	/* the press was the list's (it opened, picked or closed it) */
-	if (s->pop.sel || s->pop.ate)
+	/* the press was the list's (it opened, picked or closed it), or
+	 * an iframe's: no selection there yet */
+	if (s->pop.sel || s->pop.ate || frame_at(s, x, y, &kx, &ky))
 		return 0;
 	had = sel_rects(s) > 0;
 	s->sel.doc = NULL;
@@ -3941,7 +4480,9 @@ char *shell_selection(struct shell *s)
 {
 	char *t;
 
-	/* the field's selection first, then the page's */
+	/* an iframe's field, the field's selection first, then the page's */
+	if (s->kfocus && (t = shell_selection(s->kfocus->kid)))
+		return t;
 	if ((t = field_selection(s)))
 		return t;
 	if (!sel_rects(s))
@@ -4009,6 +4550,9 @@ int shell_tick(struct shell *s, int *repaint)
 	pop_check(s);
 	if (s->pop.dirty && !*repaint)
 		*repaint = 1;
+	m = frames_tick(s, repaint);
+	if (m >= 0 && (t < 0 || m < t))
+		t = m;
 	if (s->page.doc && !s->page.done && s->page.loading == L_NONE &&
 	    !res_pending(s, -1)) {
 		int i, failed = 0;
@@ -4171,6 +4715,7 @@ void shell_paint(struct shell *s, unsigned char *rgba, int stride)
 		soie_layout_damage(s->page.doc, r, 0);
 	s->damage_full = 0;
 	s->pop.dirty = 0;
+	s->fdirty = 0;
 }
 
 /* Add rect c (x0 y0 x1 y1) to the n of r. With one it meets it becomes
@@ -4209,8 +4754,8 @@ int shell_paint_changed(struct shell *s, unsigned char *rgba, int stride,
 	stick(s);
 	/* room for the list's rect */
 	if (s->damage_full || !s->page.doc || s->painted != s->page.doc ||
-	    s->painted_scroll != s->page.scroll || max > 32 || max < 2 ||
-	    (n = soie_layout_damage(s->page.doc, f, max - 1)) < 0) {
+	    s->painted_scroll != s->page.scroll || max > 32 || max < 3 ||
+	    (n = soie_layout_damage(s->page.doc, f, max - 2)) < 0) {
 		debug(3, "repaint all");
 		return -1;
 	}
@@ -4222,6 +4767,15 @@ int shell_paint_changed(struct shell *s, unsigned char *rgba, int stride,
 		f[n * 4 + 3] = (float)(s->pop.dmg[3] - s->pop.dmg[1]);
 		n++;
 		s->pop.dirty = 0;
+	}
+	if (s->fdirty) {
+		/* iframes' pages that changed */
+		f[n * 4] = (float)s->fdmg[0];
+		f[n * 4 + 1] = (float)s->fdmg[1];
+		f[n * 4 + 2] = (float)(s->fdmg[2] - s->fdmg[0]);
+		f[n * 4 + 3] = (float)(s->fdmg[3] - s->fdmg[1]);
+		n++;
+		s->fdirty = 0;
 	}
 	for (i = 0; i < n; i++) {
 		int c[4];
@@ -4270,7 +4824,7 @@ int shell_paint_scroll(struct shell *s, unsigned char *rgba, int stride,
 	*dy = 0;
 	/* the list opened, changed or closed: its pixels are not the
 	 * page's to move */
-	if (page_changed(s) || s->pop.dirty || (s->pop.sel && d))
+	if (page_changed(s) || s->pop.dirty || (s->pop.sel && d) || s->fdirty)
 		return 0;
 	/* the old page shown stays until the new one is laid out */
 	if (!s->page.doc || s->painted != s->page.doc || !d)
@@ -4578,6 +5132,7 @@ void shell_free(struct shell *s)
 	for (x = downloads; x; x = x->next)
 		if (x->s == s)
 			x->s = NULL;
+	frames_free(s);
 	/* soie_node_free() stops their scripts */
 	if (s->page.doc)
 		soie_node_free(s->page.doc);
@@ -4618,6 +5173,8 @@ void shell_resize(struct shell *s, int w, int h)
 
 void shell_zoom(struct shell *s, float zoom)
 {
+	int i;
+
 	if (zoom < 0.1f)
 		zoom = 0.1f;
 	if (zoom > 10)
@@ -4630,6 +5187,11 @@ void shell_zoom(struct shell *s, float zoom)
 	s->page.scroll = (int)((float)s->page.scroll * zoom / s->zoom);
 	s->zoom = zoom;
 	s->damage_full = 1;
+	for (i = 0; i < s->nframes; i++)
+		if (s->frames[i].kid) {
+			shell_zoom(s->frames[i].kid, zoom);
+			s->frames[i].stale = 1;
+		}
 	if (s->page.doc)
 		relayout(s);
 	clamp_scroll(s);
@@ -4642,12 +5204,19 @@ float shell_get_zoom(struct shell *s)
 
 void shell_dark(struct shell *s, int on)
 {
+	int i;
+
 	if (!on == !s->dark)
 		return;
 	debug(2, "%s colours", on ? "dark" : "light");
 	pop_close(s);
 	s->dark = !!on;
 	s->damage_full = 1;
+	for (i = 0; i < s->nframes; i++)
+		if (s->frames[i].kid) {
+			shell_dark(s->frames[i].kid, on);
+			s->frames[i].stale = 1;
+		}
 	if (s->page.doc)
 		relayout(s);
 }
@@ -4857,6 +5426,24 @@ static void pump(struct shell *s)
 	apply_late(s, &r);
 }
 
+/* Offscreen: the iframes the paint found, loaded and painted, 20 s at
+ * most */
+static void pump_frames(struct shell *s)
+{
+	double end = now_s() + 20;
+	struct pollfd p;
+	int r = 0;
+
+	frames_tick(s, &r);
+	while (frames_busy(s) && now_s() < end) {
+		p.fd = fetch_fd;
+		p.events = POLLIN;
+		poll(&p, 1, 200);
+		frames_tick(s, &r);
+	}
+	frames_tick(s, &r);
+}
+
 /* Offscreen: let scripts navigate and their timers run, 3 s at most. */
 static void settle_offscreen(struct shell *s)
 {
@@ -4907,11 +5494,12 @@ static int render_png(struct shell *s, const char *path)
 		return 1;
 	/* background images are asked for when painted: paint again
 	 * once they came */
-	for (round = 0; round < 3; round++) {
+	for (round = 0; round < 4; round++) {
 		soie_paint(s->page.doc, px, s->view_w, h, s->view_w * 4, 0, 0);
-		if (!res_pending(s, -1))
+		if (!res_pending(s, -1) && !frames_busy(s))
 			break;
 		pump(s);
+		pump_frames(s);
 	}
 	p = png_create_write_struct(PNG_LIBPNG_VER_STRING, NULL, NULL, NULL);
 	info = png_create_info_struct(p);

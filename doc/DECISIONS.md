@@ -2702,6 +2702,78 @@ MSE, not through an HLS/DASH loader of our own.
   beyond what is stored, EME (no DRM: such videos do not play),
   `playbackRate`.
 
+## Iframes
+
+- An iframe's page is a shell of its own (shell/shell.c, struct
+  frame): the page's shell ticks it with itself, paints it into a
+  buffer of its box's size and passes it the input over it. The
+  engine stays one page, one pixel buffer: soie_document_frames()
+  gives it a callback that a paint calls for each iframe it reaches,
+  and the pixels it answers are drawn in the content box like a video
+  frame, in the paint order (what lies over the iframe stays over it,
+  clips and masks apply). Tabs already were shells: an iframe needed
+  no second loader, cache or input path.
+- Loaded when first painted: being asked for its pixels is how the
+  shell learns that an iframe shows, where and at which size, so one
+  out of view (ads down the page, widgets at the bottom) costs nothing
+  until scrolled to; display: none ones never load. The callback only
+  records it and wakes the loop (fetch_wake()), the tick loads it: a
+  paint never loads or lays out another page. Browsers load every
+  iframe at once unless `loading=lazy`; this is the RAM the old
+  machines keep.
+- Step 1 of the plan (TODO): no scripts in an iframe's page,
+  `<noscript>` shows there; contentWindow and contentDocument stay
+  null. What still works: static widgets, srcdoc, documentation and
+  forum embeds, maps and videos that have a no-script page. Most video
+  and map embeds are scripts, the next step.
+- What an iframe's page may do, the guards of a page and more:
+  - its requests carry its parent's private network guard (a public
+    page's iframe reaches neither the local network nor this machine,
+    through redirects too), and are made for the top page's site
+    (first party): with the default "no third-party cookies" an
+    iframe of another site gets none, the cache is partitioned by the
+    top page;
+  - X-Frame-Options (DENY, SAMEORIGIN against every ancestor) and CSP
+    frame-ancestors (which wins when present: 'none', 'self', *,
+    schemes, hosts with *. and ports; paths are not looked at, a
+    source with one matches its whole host) are honoured
+    (net_framable()): a refused page shows a short line in the box;
+  - no download (a body that is not a page shows "Files are not
+    downloaded from frames": a visible iframe must not drop files in
+    ~/Downloads), no HTTP login (a frame's 401 shows the server's own
+    page, never about:auth), no front scheme, file:// or
+    about:settings from the web (scheme_allowed(), as links);
+  - sandbox: without allow-forms its forms are not sent, without
+    allow-popups its target=_blank links open in the frame, without
+    allow-top-navigation its _top and _parent links do nothing. A
+    nested frame has its parent's limits too.
+  - target _top and _parent (on the link, or the page's `<base
+    target>`) navigate that page, after the click: the load may free
+    the frame whose click it was.
+- Limits: 16 iframes a page, three deep; an iframe whose address
+  (without fragment) is an ancestor's is not loaded. `/` and
+  `/index.html` are two addresses, so a page in itself shows once,
+  as in browsers.
+- Input: a click over an iframe (the hit test says the iframe is what
+  is there: an overlay on top keeps the click) is its page's, and its
+  keys go there until a click elsewhere; what its page does not take
+  (Page Down at its end, the front's shortcuts) is the page's. The
+  wheel scrolls the iframe under the pointer, the page when it cannot
+  move. No text selection inside iframes yet.
+- Painting: an iframe that changed (its tick, input) is painted
+  whole into its buffer and its box is a damage rect of the page
+  (shell_paint_changed()); offscreen renders (`xsoie -o`) paint,
+  load the iframes found, paint again.
+- reCAPTCHA is not a goal: its risk analysis fingerprints the browser
+  (canvas, WebGL, timing) and gives a rare one endless challenges at
+  best. Iframes are wanted for what they unlock on their own.
+- Next: each iframe's shell may run its own scripts in its own
+  QuickJS runtime, isolated from its parent's as a cross-origin frame
+  is (nothing shared, window.top is itself): embeds that only talk to
+  their own server (videos, maps) would work before any WindowProxy
+  exists. The cost is a runtime and dom.js per iframe (20 ms here, a
+  quarter second on an Atom): bytecode built at make time first.
+
 ## Security
 
 An outside audit (Grok, GROK-AUDIT.md, October 2026) found holes,

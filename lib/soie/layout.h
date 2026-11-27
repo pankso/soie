@@ -60,6 +60,22 @@ int soie_paint_bgra(soie_node *doc, unsigned char *bgra, int width,
 	int height, int stride, int sx, int sy);
 
 /*
+ * Iframes: the host loads and paints their pages, the engine shows the
+ * pixels in the iframe's content box, in its paint order (clips,
+ * masks, what lies over it). A paint that reaches an iframe of doc
+ * asks fn for them, with the content box (x, y, w, h, page
+ * coordinates in device pixels) and the paint's byte order (bgra 1:
+ * B G R A); fn answers opaque pixels in that order, w x h tight rows,
+ * kept until the paint returns, or NULL (nothing, the box stays
+ * empty). Being asked is how the host learns that an iframe shows,
+ * and at which size: what it answers may be of the size before, until
+ * it has painted the new one. NULL fn: iframes stay empty.
+ */
+typedef const unsigned char *(*soie_frame_fn)(void *data, soie_node *el,
+	const float *box, int bgra, int *w, int *h);
+void soie_document_frames(soie_node *doc, soie_frame_fn fn, void *data);
+
+/*
  * What changed in the painting since the last call: up to max rects
  * (x, y, w, h each, page coordinates) into rects, their number (more
  * become their union); -1 when it may be all of it (a first layout,

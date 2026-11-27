@@ -84,6 +84,9 @@ struct docinfo {
 	int shadows;		/* shadow roots made: 0, no shadow work */
 	struct shadow_css *css;	/* adopted sheets of its shadow roots */
 	struct shadow_css *sheets;	/* their <style> texts (cascade.c) */
+	/* the pixels of its iframes, from the host (soie_document_frames) */
+	soie_frame_fn frame_fn;
+	void *frame_data;
 	/* the custom states of its elements (soie_element_set_states()):
 	 * few, found from the node's flag */
 	struct cstates {

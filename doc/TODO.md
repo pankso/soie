@@ -7,6 +7,13 @@ by RMSE (the 38 sites survey of 2026-11-03).
 
 ## Rendering, in the plan
 
+- Iframes, the next steps (the first, pages without scripts, is in):
+  scripts in an iframe's page, in a runtime of its own (embedded
+  videos, maps); a realm shared with same-origin parents
+  (contentWindow, contentDocument); postMessage across origins
+  through an opaque WindowProxy (payment forms, Turnstile, hCaptcha);
+  third-party cookies partitioned by top-level site. Text selection
+  inside an iframe.
 - Form controls: list boxes (`<select multiple>`, `size` above 1)
   that scroll, show and pick their selected options, a `range` that
   slides, a color picker, date fields.
@@ -52,7 +59,6 @@ by RMSE (the 38 sites survey of 2026-11-03).
 - `unhandledrejection` is never fired.
 - Error and DOMException objects cannot be cloned (postMessage,
   structuredClone throw).
-- No JavaScript in iframes (no realm of their own): no reCAPTCHA.
 - `navigator.hardwareConcurrency` is 1: ALTCHA runs a single worker.
 
 ## Speed

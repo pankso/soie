@@ -71,6 +71,14 @@ static void *worker(void *arg)
 	return NULL;
 }
 
+void fetch_wake(void)
+{
+	char c = 0;
+
+	if (pipefd[1] >= 0)
+		(void)!write(pipefd[1], &c, 1);
+}
+
 int fetch_start(int threads)
 {
 	pthread_t t;

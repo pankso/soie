@@ -39,5 +39,8 @@ struct job *fetch_done(void);
 void job_free(struct job *j);
 /* Drop the jobs of page generation gen that no thread started. */
 void fetch_drop(unsigned gen);
+/* Make the descriptor readable, with no job: the shells' loop runs (an
+ * iframe a paint found has to be loaded). */
+void fetch_wake(void);
 
 #endif

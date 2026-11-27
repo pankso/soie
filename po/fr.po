@@ -45,6 +45,12 @@ msgstr "Erreur"
 msgid "Cannot open this page"
 msgstr "Impossible d'ouvrir cette page"
 
+msgid "This site does not allow its pages in frames"
+msgstr "Ce site n'autorise pas ses pages dans un cadre"
+
+msgid "Files are not downloaded from frames"
+msgstr "Les fichiers ne sont pas téléchargés depuis un cadre"
+
 msgid "Wrong user name or password."
 msgstr "Nom d'utilisateur ou mot de passe incorrect."
 

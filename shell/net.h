@@ -86,5 +86,10 @@ int net_auth_basic(const char *headers, char *realm, size_t size);
 /* Is a response with these headers (a header block, or "name: value"
  * lines) shown as a page, or downloaded? */
 int net_shown(const char *headers);
+/* May the page at url, answered with these headers, show in an iframe
+ * inside the pages anc (n of them, its parent first)? CSP
+ * frame-ancestors decides when a policy has it, else X-Frame-Options. */
+int net_framable(const char *headers, const char *url,
+	const char *const *anc, int n);
 
 #endif
